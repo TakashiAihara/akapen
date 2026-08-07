@@ -1,7 +1,16 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
-import { mkdirSync, readFileSync, writeFileSync, renameSync, existsSync } from 'node:fs';
+import {
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  writeFileSync,
+  renameSync,
+  statSync,
+  unlinkSync,
+  existsSync,
+} from 'node:fs';
 
 export type Comment = {
   id: string;
@@ -54,26 +63,71 @@ function reviewFile(filePath: string): string {
 }
 
 function writeAtomic(target: string, data: string): void {
-  const tmp = `${target}.tmp`;
-  writeFileSync(tmp, data);
-  renameSync(tmp, target);
+  // 一時ファイル名を一意にする。固定名だと 2 プロセスが同じ tmp を truncate し合い、
+  // renameSync が atomic でも確定する内容が壊れる (同じ md を 2 回開くと store を共有するため)。
+  const tmp = `${target}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`;
+  try {
+    writeFileSync(tmp, data);
+    renameSync(tmp, target);
+  } catch (e) {
+    try {
+      unlinkSync(tmp);
+    } catch {
+      /* 消せなくても元の失敗を潰さない */
+    }
+    throw e;
+  }
+}
+
+function isRoundMeta(v: unknown): v is RoundMeta {
+  if (typeof v !== 'object' || v === null) return false;
+  const r = v as RoundMeta;
+  return (
+    Number.isInteger(r.n) &&
+    r.n > 0 &&
+    typeof r.createdAt === 'string' &&
+    (r.closedAt === null || typeof r.closedAt === 'string')
+  );
+}
+
+/**
+ * ラウンドの実体 (content.md があるディレクトリ) からメタ情報を組み直す。
+ * 時刻は content.md の mtime から取る。凍結した本文そのものは失われないので、
+ * review.json を正としてラウンド番号を 0 に戻すより、実体を信じる方が安全。
+ */
+function roundsOnDisk(filePath: string): RoundMeta[] {
+  const dir = join(storeDir(filePath), 'rounds');
+  if (!existsSync(dir)) return [];
+  const ns = readdirSync(dir)
+    .map((name) => Number.parseInt(name, 10))
+    .filter((n) => Number.isInteger(n) && n > 0 && existsSync(join(roundDir(filePath, n), 'content.md')))
+    .sort((a, b) => a - b);
+  const createdAt = (n: number) => statSync(join(roundDir(filePath, n), 'content.md')).mtime.toISOString();
+  return ns.map((n, i) => ({
+    n,
+    createdAt: createdAt(n),
+    closedAt: i < ns.length - 1 ? createdAt(ns[i + 1]!) : null,
+  }));
 }
 
 export function loadReview(filePath: string): Review {
-  const empty: Review = { version: 2, path: resolve(filePath), currentRound: 0, rounds: [] };
   const f = reviewFile(filePath);
-  if (!existsSync(f)) return empty;
-  try {
-    const parsed = JSON.parse(readFileSync(f, 'utf8')) as Partial<Review>;
-    return {
-      version: 2,
-      path: resolve(filePath),
-      currentRound: parsed.currentRound ?? 0,
-      rounds: parsed.rounds ?? [],
-    };
-  } catch {
-    return empty;
+  if (existsSync(f)) {
+    try {
+      const parsed = JSON.parse(readFileSync(f, 'utf8')) as Partial<Review>;
+      const rounds = Array.isArray(parsed.rounds) ? parsed.rounds.filter(isRoundMeta) : null;
+      const currentRound = parsed.currentRound;
+      if (rounds && Number.isInteger(currentRound) && currentRound! >= 0) {
+        return { version: 2, path: resolve(filePath), currentRound: currentRound!, rounds };
+      }
+    } catch {
+      /* 壊れている。下の復元に落とす */
+    }
   }
+  // review.json が無い / 壊れている場合はラウンドの実体から復元する。
+  // ここで currentRound を 0 に戻すと openRound が 001 を上書きし、凍結済みの本文とコメントが消える。
+  const rounds = roundsOnDisk(filePath);
+  return { version: 2, path: resolve(filePath), currentRound: rounds.at(-1)?.n ?? 0, rounds };
 }
 
 export function saveReview(review: Review): void {
@@ -89,7 +143,8 @@ export function saveReview(review: Review): void {
 export function openRound(filePath: string, source: string): Review {
   const review = loadReview(filePath);
   const now = new Date().toISOString();
-  const n = review.currentRound + 1;
+  // review.json が古い状態のまま (バックアップから戻した等) でも既存ラウンドを踏まない
+  const n = Math.max(review.currentRound, roundsOnDisk(filePath).at(-1)?.n ?? 0) + 1;
 
   const dir = roundDir(filePath, n);
   mkdirSync(dir, { recursive: true });

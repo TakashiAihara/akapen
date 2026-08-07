@@ -5,17 +5,19 @@
  *   2. 表 / ネストリスト / フェンスで行がズレないか (行の取りこぼしと重複が無いか)
  *   3. ラウンドが凍結として機能するか (live の書き換えが過去ラウンドに波及しないか)
  */
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildDoc } from '../src/blocks.ts';
 import {
   ensureRound,
   loadComments,
+  loadReview,
   makeComment,
   openRound,
   roundContent,
   saveComments,
+  storeDir,
 } from '../src/store.ts';
 
 const target = process.argv[2];
@@ -137,6 +139,30 @@ const reproducible = comments.every(
   (c) => roundContent(work, 1).split('\n').slice(c.startLine - 1, c.endLine).join('\n') === c.anchor,
 );
 ok('ラウンド番号 + content.md + 行番号で指摘箇所を再現できる', reproducible);
+
+// review.json はメタ情報でしかない。これを失って凍結済みの本文が消えるのが最悪の壊れ方なので、
+// 壊れた場合と消えた場合の両方でラウンドの実体を守れることを見る。
+for (const [label, corrupt] of [
+  ['壊れた', () => writeFileSync(join(storeDir(work), 'review.json'), '{ broken')],
+  ['消えた', () => rmSync(join(storeDir(work), 'review.json'))],
+  ['rounds が配列でない', () => writeFileSync(join(storeDir(work), 'review.json'), '{"currentRound":2,"rounds":{}}')],
+] as const) {
+  corrupt();
+  const recovered = loadReview(work);
+  ok(`${label} review.json からラウンド番号を復元する`, recovered.currentRound === 2, `R${String(recovered.currentRound).padStart(3, '0')}`);
+
+  ensureRound(work, edited);
+  ok(
+    `${label} review.json でも凍結済みのラウンドを上書きしない`,
+    roundContent(work, 1) === source && JSON.stringify(loadComments(work, 1)) === JSON.stringify(comments),
+  );
+}
+
+// review.json が古い番号を指していても、実体のあるラウンドを踏まない
+writeFileSync(join(storeDir(work), 'review.json'), JSON.stringify({ version: 2, currentRound: 1, rounds: [] }));
+const r4 = openRound(work, edited);
+ok('古い review.json でも既存ラウンドを踏まずに次を開く', r4.currentRound === 3, `R${String(r4.currentRound).padStart(3, '0')}`);
+ok('踏まれていないこと (R001 / R002 が不変)', roundContent(work, 1) === source && roundContent(work, 2) === edited);
 
 console.log(`\n${failures === 0 ? 'すべて PASS' : `${failures} 件 FAIL`}`);
 process.exit(failures === 0 ? 0 : 1);
