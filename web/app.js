@@ -1,11 +1,35 @@
 const docEl = document.getElementById('doc');
 const filePathEl = document.getElementById('filePath');
 const countEl = document.getElementById('count');
+const roundEl = document.getElementById('round');
+const bannerEl = document.getElementById('banner');
+const bannerTextEl = document.getElementById('bannerText');
+const nextRoundBtn = document.getElementById('nextRound');
 const showLines = document.getElementById('showLines');
 
-let state = { doc: null, comments: [] };
+let state = { doc: null, comments: [], round: null };
 let drag = null; // { start, end }
 let mermaidLib = null;
+
+nextRoundBtn.addEventListener('click', async () => {
+  nextRoundBtn.disabled = true;
+  try {
+    await fetch('/api/rounds', { method: 'POST' });
+  } finally {
+    nextRoundBtn.disabled = false;
+  }
+});
+
+// live の変更で本文は差し替えない。何回変わったかを出して、進むかどうかは人が決める。
+function renderBanner(changed) {
+  if (!changed || !changed.dirty) {
+    bannerEl.hidden = true;
+    return;
+  }
+  const n = changed.changes;
+  bannerTextEl.textContent = n > 1 ? `⟳ 本文が ${n} 回更新されています` : '⟳ 本文が更新されています';
+  bannerEl.hidden = false;
+}
 
 showLines.addEventListener('change', () => {
   document.body.classList.toggle('show-lines', showLines.checked);
@@ -30,9 +54,10 @@ function commentsFor(block) {
 }
 
 function render() {
-  const { doc, comments } = state;
+  const { doc, comments, round } = state;
   if (!doc) return;
   filePathEl.textContent = doc.path;
+  roundEl.textContent = round ? `R${String(round.n).padStart(3, '0')}` : '';
   const open = comments.filter((c) => !c.resolved).length;
   countEl.textContent = `${open} open / ${comments.length}`;
 
@@ -76,15 +101,6 @@ function render() {
     for (const c of mine) docEl.append(threadEl(c));
   }
 
-  // drifted なコメントは元の行が消えている。文書末にまとめて出し、無視できないようにする
-  const drifted = comments.filter((c) => c.drifted);
-  if (drifted.length) {
-    const box = el('div', 'thread');
-    box.append(el('div', 'thread-head', `<span class="badge">drifted</span> 原文が見つからないコメント ${drifted.length} 件`));
-    for (const c of drifted) box.append(el('div', 'thread-body', `${escapeHtml(c.body)}\n<code>${escapeHtml(c.anchor.slice(0, 120))}</code>`));
-    docEl.append(box);
-  }
-
   renderMermaid();
 }
 
@@ -97,7 +113,6 @@ function threadEl(c) {
   const head = el('div', 'thread-head');
   head.append(el('span', null, `@${escapeHtml(c.author)}`));
   head.append(el('span', null, `L${c.startLine}${c.endLine !== c.startLine ? `-${c.endLine}` : ''}`));
-  if (c.drifted) head.append(el('span', 'badge', 'drifted'));
   const spacer = el('span', null, '');
   spacer.style.flex = '1';
   head.append(spacer);
@@ -182,8 +197,16 @@ async function renderMermaid() {
 const sse = new EventSource('/events');
 sse.onmessage = (e) => {
   const payload = JSON.parse(e.data);
+
+  // 本文が変わっただけならバナーを出すだけ。再描画すると読んでいる位置と選択が飛ぶ。
+  if (payload.type === 'changed') {
+    renderBanner(payload);
+    return;
+  }
+
   const y = window.scrollY;
-  state = { doc: payload.doc, comments: payload.comments };
+  state = { doc: payload.doc, comments: payload.comments, round: payload.round };
   render();
+  renderBanner(payload.changed);
   window.scrollTo(0, y);
 };

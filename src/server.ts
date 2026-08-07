@@ -1,7 +1,17 @@
 import { readFileSync, watch, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { buildDoc } from './blocks.ts';
-import { load, makeComment, reanchor, save, storeDir, type Store } from './store.ts';
+import {
+  ensureRound,
+  loadComments,
+  makeComment,
+  openRound,
+  roundContent,
+  saveComments,
+  storeDir,
+  type Comment,
+  type Review,
+} from './store.ts';
 
 const WEB = join(import.meta.dir, '..', 'web');
 
@@ -21,31 +31,58 @@ const MIME: Record<string, string> = {
 
 export function startServer(opts: ServeOptions) {
   const file = resolve(opts.file);
-  let store: Store = load(file);
+
+  let review: Review = ensureRound(file, readFileSync(file, 'utf8'));
+  // 画面に出すのは live のファイルではなく現ラウンドのスナップショット。
+  // コメントが紐づく相手を凍結することで、書いている最中に位置が競合する経路を構造から消す。
+  let snapshot = roundContent(file, review.currentRound);
+  let comments: Comment[] = loadComments(file, review.currentRound);
+  let changes = 0;
+
   const clients = new Set<(data: string) => void>();
-
-  const read = () => readFileSync(file, 'utf8');
-
-  const docPayload = () => {
-    const source = read();
-    return JSON.stringify({
-      type: 'doc',
-      doc: buildDoc(file, source),
-      comments: store.comments,
-    });
+  const broadcast = (payload: string) => {
+    for (const send of clients) send(payload);
   };
 
-  // ファイル変更のたびに再アンカーする。行番号ではなく原文で貼り直すため、
-  // エージェントが上に段落を足しても既存コメントは同じ文を指し続ける。
+  const readLive = (): string | null => {
+    try {
+      return readFileSync(file, 'utf8');
+    } catch {
+      return null;
+    }
+  };
+
+  const changedState = () => {
+    const live = readLive();
+    return { changes, dirty: live !== null && live !== snapshot };
+  };
+
+  const roundState = () => ({
+    n: review.currentRound,
+    total: review.rounds.length,
+    createdAt: review.rounds.find((r) => r.n === review.currentRound)?.createdAt ?? null,
+  });
+
+  const docPayload = () =>
+    JSON.stringify({
+      type: 'doc',
+      doc: buildDoc(file, snapshot),
+      comments,
+      round: roundState(),
+      changed: changedState(),
+    });
+
+  // live の変更で本文を差し替えない。「変わりました」を伝えるだけにして、
+  // 次のラウンドへ進むかどうかの判断は人に残す。
   let timer: ReturnType<typeof setTimeout> | null = null;
   watch(file, () => {
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => {
-      const source = read();
-      store = { ...store, comments: reanchor(store.comments, source) };
-      save(store);
-      const payload = docPayload();
-      for (const send of clients) send(payload);
+      const live = readLive();
+      if (live === null) return;
+      // 内容が現ラウンドと同じに戻ったら数え直す (保存しただけ / 変更を戻した場合)
+      changes = live === snapshot ? 0 : changes + 1;
+      broadcast(JSON.stringify({ type: 'changed', ...changedState() }));
     }, 80);
   });
 
@@ -61,28 +98,42 @@ export function startServer(opts: ServeOptions) {
       }
 
       if (path === '/api/comments' && req.method === 'GET') {
-        return Response.json(store.comments);
+        return Response.json(comments);
       }
 
       if (path === '/api/comments' && req.method === 'POST') {
         const b = (await req.json()) as { startLine: number; endLine: number; body: string };
-        const c = makeComment(read(), b.startLine, b.endLine, b.body, opts.author);
-        store.comments.push(c);
-        save(store);
-        const payload = docPayload();
-        for (const send of clients) send(payload);
+        const c = makeComment(snapshot, b.startLine, b.endLine, b.body, opts.author);
+        comments.push(c);
+        saveComments(file, review.currentRound, comments);
+        broadcast(docPayload());
         return Response.json(c);
       }
 
       const resolveMatch = /^\/api\/comments\/([^/]+)\/resolve$/.exec(path);
       if (resolveMatch && req.method === 'POST') {
-        const c = store.comments.find((x) => x.id === resolveMatch[1]);
+        const c = comments.find((x) => x.id === resolveMatch[1]);
         if (!c) return new Response('not found', { status: 404 });
         c.resolved = !c.resolved;
-        save(store);
-        const payload = docPayload();
-        for (const send of clients) send(payload);
+        saveComments(file, review.currentRound, comments);
+        broadcast(docPayload());
         return Response.json(c);
+      }
+
+      // ラウンドを切るのは人。エージェントの途中保存では刻まない。
+      if (path === '/api/rounds' && req.method === 'POST') {
+        const live = readLive();
+        if (live === null) return new Response('cannot read file', { status: 500 });
+        review = openRound(file, live);
+        snapshot = live;
+        comments = [];
+        changes = 0;
+        broadcast(docPayload());
+        return Response.json(roundState());
+      }
+
+      if (path === '/api/rounds' && req.method === 'GET') {
+        return Response.json({ current: review.currentRound, rounds: review.rounds });
       }
 
       if (path === '/events') {
@@ -131,5 +182,5 @@ export function startServer(opts: ServeOptions) {
     },
   });
 
-  return { server, storeDir: storeDir(file) };
+  return { server, storeDir: storeDir(file), round: review.currentRound };
 }

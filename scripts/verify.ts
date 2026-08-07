@@ -3,10 +3,20 @@
  * 「作るのが現実的か」を推測ではなく実測で答えるために、非自明な 3 点だけを検証する。
  *   1. frontmatter を 1 ソース行 = 1 ブロックで描けるか
  *   2. 表 / ネストリスト / フェンスで行がズレないか (行の取りこぼしと重複が無いか)
- *   3. ファイルが書き換わった後もコメントが同じ文を指し続けるか
+ *   3. ラウンドが凍結として機能するか (live の書き換えが過去ラウンドに波及しないか)
  */
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { buildDoc } from '../src/blocks.ts';
-import { makeComment, reanchor } from '../src/store.ts';
+import {
+  ensureRound,
+  loadComments,
+  makeComment,
+  openRound,
+  roundContent,
+  saveComments,
+} from '../src/store.ts';
 
 const target = process.argv[2];
 if (!target) {
@@ -78,11 +88,26 @@ ok('表の各行が列を落とさずに割れている', tableRows.length > 0 &
 const nested = doc.blocks.filter((b) => b.kind === 'list-item' && b.depth > 0);
 ok('ネストしたリスト項目が深さ付きで割れている', nested.length > 0, `${nested.length} items`);
 
-// --- 3. 再アンカー ---
+// --- 3. ラウンドの凍結 ---
+// 実ストアを汚さないよう AKAPEN_HOME を temp に向ける。対象の md 自体もコピーを使う。
 console.log('');
+const sandbox = mkdtempSync(join(tmpdir(), 'akapen-verify-'));
+process.env.AKAPEN_HOME = join(sandbox, 'home');
+const work = join(sandbox, 'note.md');
+writeFileSync(work, source);
+
+const r1 = ensureRound(work, source);
+ok('最初のラウンドが開く', r1.currentRound === 1, `R${String(r1.currentRound).padStart(3, '0')}`);
+ok('スナップショットが原文と一致する', roundContent(work, 1) === source);
+
 const pickables = doc.blocks.filter((b) => b.kind === 'paragraph' || b.kind === 'list-item' || b.kind === 'heading');
 const targets = [fm.find((b) => b.text.startsWith('status:'))!, pickables[3]!, pickables[Math.floor(pickables.length / 2)]!, pickables.at(-2)!].filter(Boolean);
 const comments = targets.map((b, i) => makeComment(source, b.startLine, b.endLine, `テストコメント ${i + 1}`, 'verify'));
+saveComments(work, 1, comments);
+
+const snap1 = roundContent(work, 1).split('\n');
+const anchorsMatch = comments.every((c) => snap1.slice(c.startLine - 1, c.endLine).join('\n') === c.anchor);
+ok('コメントの anchor がスナップショットの該当行と一致する', anchorsMatch, `${comments.length} 件`);
 
 // エージェントの編集を模す: 冒頭に段落を足し、途中のセクションを書き換え、末尾に追記する
 const edited = (() => {
@@ -93,29 +118,25 @@ const edited = (() => {
   l.push('', '## 追記', '', 'エージェントが末尾に足した節。');
   return l.join('\n');
 })();
+writeFileSync(work, edited);
 
-const moved = reanchor(comments, edited);
-const editedLines = edited.split('\n');
-for (const [i, c] of moved.entries()) {
-  const before = comments[i]!;
-  const nowText = editedLines.slice(c.startLine - 1, c.endLine).join('\n');
-  const pointsAtSameText = !c.drifted && nowText === before.anchor;
-  ok(
-    `再アンカー ${i + 1}: L${before.startLine} → ${c.drifted ? 'drifted' : `L${c.startLine}`}`,
-    pointsAtSameText,
-    c.drifted ? '(原文が消えたので drifted。位置を推測していない)' : `"${nowText.slice(0, 36)}"`,
-  );
-}
+// live を書き換えても、ラウンドを切るまで凍結側は動かない
+ok('live を書き換えても現ラウンドのスナップショットは変わらない', roundContent(work, 1) === source);
+ok('live を書き換えても現ラウンドのコメントは動かない', JSON.stringify(loadComments(work, 1)) === JSON.stringify(comments));
 
-// 原文が消えたコメントは黙って動かさず drifted になること
-const removedTarget = pickables[3] ?? pickables[0];
-if (!removedTarget) {
-  console.log(`\n${failures === 0 ? 'すべて PASS' : `${failures} 件 FAIL`}`);
-  process.exit(failures === 0 ? 0 : 1);
-}
-const removed = lines.filter((_, i) => i !== removedTarget.startLine - 1).join('\n');
-const [driftedComment] = reanchor([makeComment(source, removedTarget.startLine, removedTarget.endLine, 'x', 'verify')], removed);
-ok('原文が消えたコメントは drifted になる (位置を推測しない)', driftedComment!.drifted === true);
+const r2 = openRound(work, edited);
+ok('ラウンドを切ると番号が進む', r2.currentRound === 2, `R001 → R${String(r2.currentRound).padStart(3, '0')}`);
+ok('新ラウンドのスナップショットが編集後の内容になる', roundContent(work, 2) === edited);
+ok('新ラウンドにコメントを持ち越さない', loadComments(work, 2).length === 0);
+ok('過去ラウンドのスナップショットが不変', roundContent(work, 1) === source);
+ok('過去ラウンドのコメントが不変', JSON.stringify(loadComments(work, 1)) === JSON.stringify(comments));
+ok('前のラウンドが閉じた時刻を持つ', r2.rounds.find((r) => r.n === 1)?.closedAt != null);
+
+// 当時の本文 + 当時の行番号で、指した箇所がそのまま再現できること (W-4 の前提)
+const reproducible = comments.every(
+  (c) => roundContent(work, 1).split('\n').slice(c.startLine - 1, c.endLine).join('\n') === c.anchor,
+);
+ok('ラウンド番号 + content.md + 行番号で指摘箇所を再現できる', reproducible);
 
 console.log(`\n${failures === 0 ? 'すべて PASS' : `${failures} 件 FAIL`}`);
 process.exit(failures === 0 ? 0 : 1);

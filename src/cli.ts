@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { startServer } from './server.ts';
-import { load, reanchor } from './store.ts';
+import { loadComments, loadReview } from './store.ts';
 
 const USAGE = `akapen — markdown inline review (PoC)
 
@@ -48,18 +48,22 @@ if (positional[0] === 'comments') {
     console.error(`akapen: no such file: ${file ?? '(missing)'}`);
     process.exit(1);
   }
-  const store = load(file);
-  const comments = reanchor(store.comments, readFileSync(file, 'utf8')).filter((c) => args.all || !c.resolved);
+  // 行番号はラウンドのスナップショット内でのもの。live のファイルとは一致しないので、
+  // エージェントは anchor (当時の原文) で現在のファイルを照合する。
+  const review = loadReview(file);
+  const comments = (review.currentRound > 0 ? loadComments(file, review.currentRound) : []).filter(
+    (c) => args.all || !c.resolved,
+  );
   console.log(
     JSON.stringify(
       comments.map((c) => ({
         id: c.id,
         path: resolve(file),
+        round: review.currentRound,
         start_line: c.startLine,
         end_line: c.endLine,
         body: c.body,
         anchor: c.anchor,
-        drifted: c.drifted,
         author: c.author,
       })),
       null,
@@ -77,7 +81,7 @@ if (!existsSync(file)) {
 
 const host = (args.host as string) ?? '127.0.0.1';
 const port = Number(args.port ?? 4300);
-const { server, storeDir } = startServer({
+const { server, storeDir, round } = startServer({
   file,
   host,
   port,
@@ -87,5 +91,6 @@ const { server, storeDir } = startServer({
 
 console.log(`akapen  ${resolve(file)}`);
 console.log(`  url     http://${host}:${server.port}`);
+console.log(`  round   ${String(round).padStart(3, '0')}`);
 console.log(`  store   ${storeDir}`);
 if (host !== '127.0.0.1') console.log(`  note    認証はありません。到達できる範囲に注意してください。`);

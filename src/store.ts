@@ -1,28 +1,37 @@
 import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
-import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync, renameSync, existsSync } from 'node:fs';
 
 export type Comment = {
   id: string;
+  /** 紐づくラウンドのスナップショット内での行番号。live のファイルに対しては意味を持たない。 */
   startLine: number;
   endLine: number;
   body: string;
   author: string;
   createdAt: string;
   resolved: boolean;
-  /** 作成時点のアンカー範囲の原文。再アンカーの鍵。 */
+  /**
+   * スナップショットから切り出した原文。ラウンドをまたいで位置を伝えるのはこちらの役目。
+   * エージェントは行番号ではなく原文で現在のファイルを照合するので、他の修正で行がズレても当たる。
+   */
   anchor: string;
-  before: string;
-  after: string;
-  /** 原文が見つからなくなった状態。位置は最後に判っていた行のまま。 */
-  drifted: boolean;
 };
 
-export type Store = {
-  version: 1;
+export type RoundMeta = {
+  n: number;
+  createdAt: string;
+  /** 次のラウンドを開いた時刻。現ラウンドは null。 */
+  closedAt: string | null;
+};
+
+export type Review = {
+  version: 2;
   path: string;
-  comments: Comment[];
+  /** 0 はラウンドがまだ 1 つも無い状態。 */
+  currentRound: number;
+  rounds: RoundMeta[];
 };
 
 /**
@@ -32,54 +41,101 @@ export type Store = {
 export function storeDir(filePath: string): string {
   const abs = resolve(filePath);
   const hash = createHash('sha1').update(abs).digest('hex').slice(0, 12);
-  return join(homedir(), '.akapen', 'reviews', `${basename(abs).replace(/\.md$/, '')}-${hash}`);
+  const root = process.env.AKAPEN_HOME ?? join(homedir(), '.akapen');
+  return join(root, 'reviews', `${basename(abs).replace(/\.md$/, '')}-${hash}`);
 }
 
-function storeFile(filePath: string): string {
-  return join(storeDir(filePath), 'comments.json');
+export function roundDir(filePath: string, n: number): string {
+  return join(storeDir(filePath), 'rounds', String(n).padStart(3, '0'));
 }
 
-export function load(filePath: string): Store {
-  const f = storeFile(filePath);
-  if (!existsSync(f)) return { version: 1, path: resolve(filePath), comments: [] };
+function reviewFile(filePath: string): string {
+  return join(storeDir(filePath), 'review.json');
+}
+
+function writeAtomic(target: string, data: string): void {
+  const tmp = `${target}.tmp`;
+  writeFileSync(tmp, data);
+  renameSync(tmp, target);
+}
+
+export function loadReview(filePath: string): Review {
+  const empty: Review = { version: 2, path: resolve(filePath), currentRound: 0, rounds: [] };
+  const f = reviewFile(filePath);
+  if (!existsSync(f)) return empty;
   try {
-    const parsed = JSON.parse(readFileSync(f, 'utf8')) as Store;
-    return { version: 1, path: resolve(filePath), comments: parsed.comments ?? [] };
+    const parsed = JSON.parse(readFileSync(f, 'utf8')) as Partial<Review>;
+    return {
+      version: 2,
+      path: resolve(filePath),
+      currentRound: parsed.currentRound ?? 0,
+      rounds: parsed.rounds ?? [],
+    };
   } catch {
-    return { version: 1, path: resolve(filePath), comments: [] };
+    return empty;
   }
 }
 
-export function save(store: Store): void {
-  const dir = storeDir(store.path);
+export function saveReview(review: Review): void {
+  mkdirSync(storeDir(review.path), { recursive: true });
+  writeAtomic(reviewFile(review.path), JSON.stringify(review, null, 2));
+}
+
+/**
+ * 現在のファイル内容を凍結して次のラウンドを開く。
+ * コメントは持ち越さない。ラウンドをまたいだ位置合わせをしないのがラウンド制の要点で、
+ * 持ち越すと結局「どの本文に対する指摘か」が曖昧になって再アンカーの問題が戻る。
+ */
+export function openRound(filePath: string, source: string): Review {
+  const review = loadReview(filePath);
+  const now = new Date().toISOString();
+  const n = review.currentRound + 1;
+
+  const dir = roundDir(filePath, n);
   mkdirSync(dir, { recursive: true });
-  const tmp = join(dir, 'comments.json.tmp');
-  writeFileSync(tmp, JSON.stringify(store, null, 2));
-  writeFileSync(storeFile(store.path), readFileSync(tmp));
+  writeAtomic(join(dir, 'content.md'), source);
+  writeAtomic(join(dir, 'comments.json'), JSON.stringify([], null, 2));
+
+  const prev = review.rounds.find((r) => r.n === review.currentRound);
+  if (prev) prev.closedAt = now;
+  review.rounds.push({ n, createdAt: now, closedAt: null });
+  review.currentRound = n;
+
+  saveReview(review);
+  return review;
 }
 
-function rangeText(lines: string[], start: number, end: number): string {
-  return lines.slice(start - 1, end).join('\n');
-}
-
-function neighbours(lines: string[], start: number, end: number): { before: string; after: string } {
-  let before = '';
-  for (let i = start - 2; i >= 0; i--) {
-    if (lines[i]!.trim()) {
-      before = lines[i]!;
-      break;
-    }
+/** ラウンドがまだ無い / スナップショットが失われている場合だけ新しく開く。 */
+export function ensureRound(filePath: string, source: string): Review {
+  const review = loadReview(filePath);
+  if (review.currentRound > 0 && existsSync(join(roundDir(filePath, review.currentRound), 'content.md'))) {
+    return review;
   }
-  let after = '';
-  for (let i = end; i < lines.length; i++) {
-    if (lines[i]!.trim()) {
-      after = lines[i]!;
-      break;
-    }
-  }
-  return { before, after };
+  return openRound(filePath, source);
 }
 
+export function roundContent(filePath: string, n: number): string {
+  return readFileSync(join(roundDir(filePath, n), 'content.md'), 'utf8');
+}
+
+export function loadComments(filePath: string, n: number): Comment[] {
+  const f = join(roundDir(filePath, n), 'comments.json');
+  if (!existsSync(f)) return [];
+  try {
+    const parsed = JSON.parse(readFileSync(f, 'utf8'));
+    return Array.isArray(parsed) ? (parsed as Comment[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveComments(filePath: string, n: number, comments: Comment[]): void {
+  const dir = roundDir(filePath, n);
+  mkdirSync(dir, { recursive: true });
+  writeAtomic(join(dir, 'comments.json'), JSON.stringify(comments, null, 2));
+}
+
+/** source はラウンドのスナップショット。live のファイルを渡すと anchor が本文とズレる。 */
 export function makeComment(
   source: string,
   startLine: number,
@@ -88,7 +144,6 @@ export function makeComment(
   author: string,
 ): Comment {
   const lines = source.split('\n');
-  const { before, after } = neighbours(lines, startLine, endLine);
   return {
     id: `c_${createHash('sha1').update(`${startLine}:${endLine}:${body}:${Date.now()}`).digest('hex').slice(0, 6)}`,
     startLine,
@@ -97,54 +152,6 @@ export function makeComment(
     author,
     createdAt: new Date().toISOString(),
     resolved: false,
-    anchor: rangeText(lines, startLine, endLine),
-    before,
-    after,
-    drifted: false,
+    anchor: lines.slice(startLine - 1, endLine).join('\n'),
   };
-}
-
-/**
- * ファイルが書き換わった後にコメントを貼り直す。
- * 行番号は最初に捨てて原文で探す。行番号を信じると、エージェントが上に段落を足しただけで
- * 全コメントが無関係な位置を指す (= 誤った指摘がそのままエージェントに渡る) 事故になる。
- */
-export function reanchor(comments: Comment[], source: string): Comment[] {
-  const lines = source.split('\n');
-  return comments.map((c) => {
-    const span = c.endLine - c.startLine + 1;
-
-    // 1. 同じ位置に同じ原文があるならそのまま
-    if (rangeText(lines, c.startLine, c.endLine) === c.anchor) {
-      return { ...c, drifted: false };
-    }
-
-    // 2. 原文をファイル全体から探す
-    const hits: number[] = [];
-    for (let start = 1; start + span - 1 <= lines.length; start++) {
-      if (rangeText(lines, start, start + span - 1) === c.anchor) hits.push(start);
-    }
-
-    if (hits.length === 1) {
-      const start = hits[0]!;
-      const end = start + span - 1;
-      return { ...c, startLine: start, endLine: end, ...neighbours(lines, start, end), drifted: false };
-    }
-
-    if (hits.length > 1) {
-      // 3. 同じ原文が複数あるときは前後の行で絞り、それでも決まらなければ元の位置に近い方
-      const scored = hits.map((start) => {
-        const end = start + span - 1;
-        const n = neighbours(lines, start, end);
-        const score = (n.before === c.before ? 2 : 0) + (n.after === c.after ? 2 : 0);
-        return { start, end, n, score, distance: Math.abs(start - c.startLine) };
-      });
-      scored.sort((a, b) => b.score - a.score || a.distance - b.distance);
-      const best = scored[0]!;
-      return { ...c, startLine: best.start, endLine: best.end, ...best.n, drifted: false };
-    }
-
-    // 4. 見つからない。位置を推測せず drifted として人に判断させる
-    return { ...c, drifted: true };
-  });
 }
