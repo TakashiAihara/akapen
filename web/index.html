@@ -12,10 +12,16 @@
 <header class="topbar">
   <span class="brand">akapen</span>
   <span class="file" id="filePath"></span>
+  <span class="round" id="round"></span>
   <span class="spacer"></span>
   <label class="toggle"><input type="checkbox" id="showLines"> 行番号</label>
   <span class="count" id="count"></span>
 </header>
+<!-- 本文は現ラウンドの凍結スナップショット。live の変更はここで知らせるだけで、進むのは人が押した時 -->
+<div class="banner" id="banner" hidden>
+  <span class="banner-text" id="bannerText"></span>
+  <button class="primary" id="nextRound">このラウンドを終える</button>
+</div>
 <main id="doc" class="doc"></main>
 <script type="module" src="/app.js"></script>
 </body>

@@ -61,6 +61,29 @@ body {
 .spacer { flex: 1; }
 .toggle { color: var(--ak-fg-muted); user-select: none; }
 .count { color: var(--ak-fg-muted); }
+.round {
+  font-family: var(--ak-mono);
+  color: var(--ak-fg-muted);
+  border: 1px solid var(--ak-border);
+  border-radius: 999px;
+  padding: 0 8px;
+}
+
+.banner {
+  position: sticky;
+  top: 37px;
+  z-index: 9;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  font-size: 13px;
+  color: var(--ak-warn);
+  background: var(--ak-accent-subtle);
+  border-bottom: 1px solid var(--ak-border);
+}
+.banner[hidden] { display: none; }
+.banner-text { flex: 1; }
 
 .doc {
   max-width: var(--ak-content-width);
@@ -196,14 +219,7 @@ body.show-lines .lineno { display: inline; }
   font-size: 0.8rem;
 }
 .thread-body { padding: 8px 10px; white-space: pre-wrap; }
-.badge {
-  font-size: 0.72rem;
-  padding: 1px 6px;
-  border-radius: 999px;
-  border: 1px solid var(--ak-warn);
-  color: var(--ak-warn);
-}
-.thread button, .form button {
+.thread button, .form button, .banner button {
   font: inherit;
   font-size: 0.8rem;
   padding: 3px 10px;
@@ -227,4 +243,4 @@ body.show-lines .lineno { display: inline; }
 }
 .form-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 6px; align-items: center; }
 .form-range { margin-right: auto; color: var(--ak-fg-muted); font-size: 0.8rem; font-family: var(--ak-mono); }
-.form button.primary { background: var(--ak-accent); color: #fff; border-color: var(--ak-accent); }
+.form button.primary, .banner button.primary { background: var(--ak-accent); color: #fff; border-color: var(--ak-accent); }
