@@ -1,0 +1,21 @@
+{
+  "name": "akapen",
+  "version": "0.0.1",
+  "private": true,
+  "description": "markdown inline review — comments stay out of the file",
+  "type": "module",
+  "bin": { "akapen": "./src/cli.ts" },
+  "scripts": {
+    "start": "bun run src/cli.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "highlight.js": "^11.11.1",
+    "markdown-it": "^15.0.0",
+    "mermaid": "^11.16.1"
+  },
+  "devDependencies": {
+    "@types/markdown-it": "^14.1.2",
+    "typescript": "^5.9.3"
+  }
+}

@@ -1,0 +1,10 @@
+/* 拡張 CSS の例。akapen は /custom.css を必ず最後に読むので、既定値はすべて上書きできる。
+   crit で Stylus を入れないと不可能だったことが、--css 一発でできる。 */
+:root {
+  --ak-content-width: 1080px;
+  --ak-line-height: 1.5;
+  --ak-block-gap: 1px;
+  --ak-para-gap: 3px;
+}
+.body h1, .body h2, .body h3, .body h4, .body h5, .body h6 { margin: 12px 0 3px; }
+.split-table td, .split-table th { padding: 3px 8px; font-size: 0.88rem; }
