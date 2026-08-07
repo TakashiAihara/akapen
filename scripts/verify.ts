@@ -103,8 +103,19 @@ ok('最初のラウンドが開く', r1.currentRound === 1, `R${String(r1.curren
 ok('スナップショットが原文と一致する', roundContent(work, 1) === source);
 
 const pickables = doc.blocks.filter((b) => b.kind === 'paragraph' || b.kind === 'list-item' || b.kind === 'heading');
-const targets = [fm.find((b) => b.text.startsWith('status:'))!, pickables[3]!, pickables[Math.floor(pickables.length / 2)]!, pickables.at(-2)!].filter(Boolean);
-const comments = targets.map((b, i) => makeComment(source, b.startLine, b.endLine, `テストコメント ${i + 1}`, 'verify'));
+// 足りない対象を黙って落とすと、コメント数が減ったまま PASS してカバレッジが縮む。
+// 「対象が無い」は検証結果ではなく fixture の不備なので、ここで止める。
+const targets = [
+  fm.find((b) => b.text.startsWith('status:')),
+  pickables[3],
+  pickables[Math.floor(pickables.length / 2)],
+  pickables.at(-2),
+];
+if (targets.some((b) => !b)) {
+  console.error(`検証対象のブロックが揃っていません: ${target} に frontmatter の status 行と本文ブロック 4 つが要ります`);
+  process.exit(1);
+}
+const comments = targets.map((b, i) => makeComment(source, b!.startLine, b!.endLine, `テストコメント ${i + 1}`, 'verify'));
 saveComments(work, 1, comments);
 
 const snap1 = roundContent(work, 1).split('\n');
@@ -163,6 +174,7 @@ writeFileSync(join(storeDir(work), 'review.json'), JSON.stringify({ version: 2, 
 const r4 = openRound(work, edited);
 ok('古い review.json でも既存ラウンドを踏まずに次を開く', r4.currentRound === 3, `R${String(r4.currentRound).padStart(3, '0')}`);
 ok('踏まれていないこと (R001 / R002 が不変)', roundContent(work, 1) === source && roundContent(work, 2) === edited);
+ok('R003 の実体が作られている', roundContent(work, 3) === edited && loadComments(work, 3).length === 0);
 
 console.log(`\n${failures === 0 ? 'すべて PASS' : `${failures} 件 FAIL`}`);
 process.exit(failures === 0 ? 0 : 1);
