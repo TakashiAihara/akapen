@@ -18,7 +18,24 @@ options:
   --all            comments: 解決済みも含める
 `;
 
-type Args = { _: string[]; [k: string]: string | boolean | string[] };
+/**
+ * 受け付けるフラグを名前で持つ。
+ *
+ * index signature だけにすると `args.port` が noPropertyAccessFromIndexSignature に
+ * 引っかかり、全部 bracket 記法になって読めなくなる。既知のフラグを並べておけば
+ * dot で書けるうえに、何を受け付けるかが型に出る。
+ */
+type Args = {
+  _: string[];
+  help?: string | boolean;
+  host?: string | boolean;
+  port?: string | boolean;
+  css?: string | boolean;
+  keymap?: string | boolean;
+  author?: string | boolean;
+  all?: string | boolean;
+  [k: string]: string | boolean | string[] | undefined;
+};
 
 function parseArgs(argv: string[]): Args {
   const args: Args = { _: [] };
@@ -89,9 +106,11 @@ const { server, storeDir, round } = startServer({
   file,
   host,
   port,
-  author: (args.author as string) ?? process.env.USER ?? 'user',
-  cssPath: args.css ? resolve(args.css as string) : undefined,
-  keymapPath: args.keymap ? resolve(args.keymap as string) : undefined,
+  author: (args.author as string) ?? process.env['USER'] ?? 'user',
+  // exactOptionalPropertyTypes: `?:` は「省略できる」であって「undefined を渡せる」ではない。
+  // 指定が無いなら鍵ごと落とす
+  ...(args.css ? { cssPath: resolve(args.css as string) } : {}),
+  ...(args.keymap ? { keymapPath: resolve(args.keymap as string) } : {}),
 });
 
 console.log(`akapen  ${resolve(file)}`);
