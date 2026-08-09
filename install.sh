@@ -66,9 +66,15 @@ echo "akapen: チェックサム OK"
 
 # 注意: この checksum は Release と同じ場所から取っているので、改竄されれば両方差し替えられる。
 # 真正性まで見るなら gh が要る (任意):
-#   gh attestation verify <binary> --repo TakashiAihara/akapen
+#   gh attestation verify <binary> --repo TakashiAihara/akapen \
+#     --signer-workflow TakashiAihara/akapen/.github/workflows/release.yml
+#
+# --repo だけだと同じ repository の別 workflow が作った attestation でも通るので、
+# 署名元の workflow まで固定する。
 if command -v gh >/dev/null 2>&1 && [ "${AKAPEN_VERIFY_ATTESTATION:-0}" = 1 ]; then
-  gh attestation verify "${tmp}/akapen" --repo "$REPO" >/dev/null 2>&1 \
+  gh attestation verify "${tmp}/akapen" \
+    --repo "$REPO" \
+    --signer-workflow "${REPO}/.github/workflows/release.yml" >/dev/null 2>&1 \
     && echo "akapen: attestation OK" \
     || die "attestation の検証に失敗しました"
 fi

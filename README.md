@@ -40,8 +40,12 @@ curl -fsSL https://raw.githubusercontent.com/TakashiAihara/akapen/main/install.s
 `AKAPEN_VERIFY_ATTESTATION=1` を付けると、`gh` がある環境で build provenance も検証する。checksum は Release と同じ場所から取っているので、改竄されれば両方差し替えられる。真正性まで見たい場合はこちら。
 
 ```bash
-gh attestation verify ~/.local/bin/akapen --repo TakashiAihara/akapen
+gh attestation verify ~/.local/bin/akapen \
+  --repo TakashiAihara/akapen \
+  --signer-workflow TakashiAihara/akapen/.github/workflows/release.yml
 ```
+
+`--repo` だけだと同じ repository の別 workflow が作った attestation でも通るので、署名元の workflow まで固定する。
 
 対応は linux / darwin の x64 と arm64。バイナリは GitHub Actions が tag push で作り、Release に上げている (`.github/workflows/release.yml`)。
 
