@@ -164,6 +164,17 @@ body.show-lines .lineno { display: inline; }
   font-size: 10px;
   line-height: 1;
   cursor: pointer;
+  position: relative;
+}
+/* 見た目は小さいまま、押せる範囲だけ 24px 角にする (WCAG 2.5.8) */
+.marker::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: max(100%, 24px);
+  height: 24px;
+  transform: translate(-50%, -50%);
 }
 body.rail-overlay .marker { display: inline-flex; align-items: center; justify-content: center; }
 
@@ -262,7 +273,9 @@ body.rail-overlay .marker { display: inline-flex; align-items: center; justify-c
   max-height: 12em;
   overflow-y: auto;
 }
-.bubble.active .bubble-body { max-height: none; }
+.bubble.active .bubble-body, .bubble:focus-within .bubble-body { max-height: none; }
+.bubble:focus-visible, .row:focus-visible { outline: 2px solid var(--ak-accent); outline-offset: 1px; }
+.bubble-error { padding: 0 10px 8px; color: var(--ak-warn); font-size: 0.8rem; }
 
 .bubble.draft { background: var(--ak-bg); border-color: var(--ak-accent); }
 .bubble textarea {
@@ -309,9 +322,14 @@ body.rail-overlay .marker { display: inline-flex; align-items: center; justify-c
     background: var(--ak-bg);
     border-left: 1px solid var(--ak-border);
     transform: translateX(100%);
-    transition: transform 0.15s ease-out;
+    visibility: hidden;
+    transition: transform 0.15s ease-out, visibility 0s linear 0.15s;
   }
-  body.rail-open .rail { transform: none; }
+  body.rail-open .rail {
+    transform: none;
+    visibility: visible;
+    transition: transform 0.15s ease-out, visibility 0s;
+  }
   .bubble { position: static; width: auto; margin-bottom: var(--ak-bubble-gap); }
   .rail-close {
     display: block;
