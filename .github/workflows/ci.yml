@@ -1,0 +1,28 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+
+      - name: 不変条件 (行マッピング / ラウンドの凍結 / 横断読み)
+        run: bun run scripts/verify.ts examples/sample.md
+
+      - name: docs 配下の全 md でブロック分割を確認
+        run: bun run scripts/sweep.ts docs
+
+      # リリース時に初めて壊れているのが分かるのを避ける。
+      # 埋め込みは静的解析でしか効かないので、web/ にファイルを足して
+      # src/assets.ts への追記を忘れると、ここで 404 になって落ちる。
+      - name: 単一バイナリのビルドと動作確認
+        run: bun run scripts/smoke-binary.ts
