@@ -60,7 +60,10 @@ export function keyOf(e) {
 }
 
 function isTyping(target) {
-  return target instanceof HTMLElement && (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT' || target.isContentEditable);
+  return (
+    target instanceof HTMLElement &&
+    (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT' || target.isContentEditable)
+  );
 }
 
 /**

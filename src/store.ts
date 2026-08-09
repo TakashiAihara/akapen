@@ -101,7 +101,7 @@ function roundsOnDisk(filePath: string): RoundMeta[] {
   const ns = readdirSync(dir)
     .map((name) => Number.parseInt(name, 10))
     .filter((n) => Number.isInteger(n) && n > 0 && existsSync(join(roundDir(filePath, n), 'content.md')))
-    .sort((a, b) => a - b);
+    .toSorted((a, b) => a - b);
   const createdAt = (n: number) => statSync(join(roundDir(filePath, n), 'content.md')).mtime.toISOString();
   return ns.map((n, i) => ({
     n,
@@ -122,7 +122,7 @@ export function loadReview(filePath: string): Review {
         // 戻した / 途中で落ちた)。実体を正として突き合わせないと、横断読みが静かに取りこぼす。
         const disk = roundsOnDisk(filePath);
         const known = new Set(rounds.map((r) => r.n));
-        const merged = [...rounds, ...disk.filter((r) => !known.has(r.n))].sort((a, b) => a.n - b.n);
+        const merged = [...rounds, ...disk.filter((r) => !known.has(r.n))].toSorted((a, b) => a.n - b.n);
         return {
           version: 2,
           path: resolve(filePath),
@@ -207,7 +207,7 @@ export type RoundComment = Comment & { round: number };
 export function loadAllComments(filePath: string): RoundComment[] {
   const review = loadReview(filePath);
   const out: RoundComment[] = [];
-  for (const r of [...review.rounds].sort((a, b) => b.n - a.n)) {
+  for (const r of review.rounds.toSorted((a, b) => b.n - a.n)) {
     for (const c of loadComments(filePath, r.n)) out.push({ ...c, round: r.n });
   }
   return out;
@@ -235,7 +235,7 @@ export function carriedOver(filePath: string): RoundComment[] {
 export function pendingComments(filePath: string, includeResolved = false): RoundComment[] {
   return loadAllComments(filePath)
     .filter((c) => includeResolved || !c.resolved)
-    .sort((a, b) => b.round - a.round || a.startLine - b.startLine);
+    .toSorted((a, b) => b.round - a.round || a.startLine - b.startLine);
 }
 
 /**
@@ -251,7 +251,7 @@ export function updateComment(
   patch: (c: Comment) => void,
 ): RoundComment | null {
   const review = loadReview(filePath);
-  for (const r of [...review.rounds].sort((a, b) => b.n - a.n)) {
+  for (const r of review.rounds.toSorted((a, b) => b.n - a.n)) {
     const comments = loadComments(filePath, r.n);
     const target = comments.find((c) => c.id === id);
     if (!target) continue;
