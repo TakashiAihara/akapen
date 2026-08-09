@@ -72,11 +72,14 @@ echo "akapen: チェックサム OK"
 # --repo だけだと同じ repository の別 workflow が作った attestation でも通るので、
 # 署名元の workflow まで固定する。
 if command -v gh >/dev/null 2>&1 && [ "${AKAPEN_VERIFY_ATTESTATION:-0}" = 1 ]; then
-  gh attestation verify "${tmp}/akapen" \
+  # A && B || C は if-then-else ではない。echo が失敗しただけで die に落ちる (SC2015)
+  if gh attestation verify "${tmp}/akapen" \
     --repo "$REPO" \
-    --signer-workflow "${REPO}/.github/workflows/release.yml" >/dev/null 2>&1 \
-    && echo "akapen: attestation OK" \
-    || die "attestation の検証に失敗しました"
+    --signer-workflow "${REPO}/.github/workflows/release.yml" >/dev/null 2>&1; then
+    echo "akapen: attestation OK"
+  else
+    die "attestation の検証に失敗しました"
+  fi
 fi
 
 chmod +x "${tmp}/akapen"

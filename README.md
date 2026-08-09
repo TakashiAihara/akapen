@@ -226,6 +226,13 @@ bun run sweep <dir>                # ディレクトリ内の全 md でブロッ
 bun run scripts/smoke-binary.ts    # 単一バイナリを作ってアセットの埋め込みを確認
 ```
 
+`install.sh` と GitHub Actions のワークフローは CI で見ている。手元で回すなら docker で。
+
+```bash
+docker run --rm -v "$PWD:/mnt" koalaman/shellcheck:stable install.sh
+docker run --rm -v "$PWD:/repo" --workdir /repo rhysd/actionlint:latest -color
+```
+
 `tests/` は 2 層に分かれている。
 
 - `tests/*.test.ts` — 行マッピングとラウンドの保存層。ここが崩れると、指したい行が画面に無かったり、凍結したはずの本文が消える

@@ -6,6 +6,22 @@ on:
   pull_request:
 
 jobs:
+  # ワークフローと installer の誤りは、CI では拾われず「タグを打った時」や
+  # 「利用者が curl | sh した時」に初めて分かる。そこを手前に持ってくる。
+  static:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # curl | sh で流し込むファイルなので、この repo で最も事故が高くつく
+      - name: shellcheck (install.sh)
+        run: shellcheck install.sh
+
+      # #30 で踏んだような workflow の誤りを、タグを打つ前に落とす
+      - uses: docker://rhysd/actionlint:latest
+        with:
+          args: -color
+
   unit:
     runs-on: ubuntu-latest
     steps:
