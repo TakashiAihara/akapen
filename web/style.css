@@ -102,7 +102,34 @@ body {
 }
 .doc { min-width: 0; }
 
-.rail { position: relative; min-width: 0; }
+.rail { min-width: 0; }
+.rail-anchored { position: relative; }
+.round-pick {
+  font: inherit;
+  font-size: 12px;
+  font-family: var(--ak-mono);
+  padding: 1px 4px;
+  border-radius: 6px;
+  border: 1px solid var(--ak-border);
+  background: var(--ak-bg);
+  color: var(--ak-fg);
+}
+.banner.history { color: var(--ak-fg-muted); background: var(--ak-bg-subtle); }
+
+/* 過去ラウンドの未解決。アンカーが現ラウンドに無いので通常フローで積む */
+.rail-carried { margin-top: var(--ak-bubble-gap); border-top: 1px dashed var(--ak-border); padding-top: 10px; }
+.rail-carried[hidden] { display: none; }
+.rail-carried > h2 { margin: 0 0 6px; font-size: 0.78rem; color: var(--ak-fg-muted); font-weight: 600; }
+.rail-carried .bubble { position: static; width: auto; margin-bottom: var(--ak-bubble-gap); }
+.bubble .round-tag {
+  font-family: var(--ak-mono);
+  font-size: 0.7rem;
+  border: 1px solid var(--ak-border);
+  border-radius: 999px;
+  padding: 0 5px;
+}
+body.viewing-history .add, body.viewing-history .row:hover { opacity: 1; }
+body.viewing-history .add { display: none; }
 .rail-close { display: none; }
 
 /* ===== 行ブロック ===== */

@@ -10,14 +10,18 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildDoc } from '../src/blocks.ts';
 import {
+  carriedOver,
   ensureRound,
+  loadAllComments,
   loadComments,
   loadReview,
   makeComment,
   openRound,
   roundContent,
+  roundNumbersOnDisk,
   saveComments,
   storeDir,
+  updateComment,
 } from '../src/store.ts';
 
 const target = process.argv[2];
@@ -175,6 +179,37 @@ const r4 = openRound(work, edited);
 ok('古い review.json でも既存ラウンドを踏まずに次を開く', r4.currentRound === 3, `R${String(r4.currentRound).padStart(3, '0')}`);
 ok('踏まれていないこと (R001 / R002 が不変)', roundContent(work, 1) === source && roundContent(work, 2) === edited);
 ok('R003 の実体が作られている', roundContent(work, 3) === edited && loadComments(work, 3).length === 0);
+
+// --- 4. ラウンドをまたいだ読み取り ---
+// 持ち越さない設計なので、「過去に何を指摘したか」は横断読みでしか分からない。
+// UI の履歴も comments の受け渡しもここに乗るため、崩れると指摘が静かに失われる。
+console.log('');
+const all = loadAllComments(work);
+ok('全ラウンドのコメントを横断して読める', all.length === comments.length, `${all.length} 件`);
+// review.json が古くてもディスク上のラウンドを取りこぼさないこと (直前の節でわざと古くしてある)
+ok(
+  'review.json に載っていないラウンドも横断読みに入る',
+  new Set(loadAllComments(work).map((c) => c.round)).size >= 1 &&
+    roundNumbersOnDisk(work).every((n) => loadReview(work).rounds.some((r) => r.n === n)),
+  `disk: ${roundNumbersOnDisk(work).join(',')} / review: ${loadReview(work).rounds.map((r) => r.n).join(',')}`,
+);
+ok('新しいラウンドから順に並ぶ', all.every((c, i) => i === 0 || all[i - 1]!.round >= c.round));
+ok('どのラウンドのものか付いている', all.every((c) => c.round === 1));
+
+// R001 の 1 件を解決して、未解決だけが持ち越し扱いになること
+const closing = comments[0]!;
+const updated = updateComment(work, closing.id, (c) => {
+  c.resolved = true;
+});
+ok('ラウンドを指定せずコメントを更新できる', updated?.round === 1 && updated.resolved === true);
+ok('更新が R001 の comments.json に書かれている', loadComments(work, 1).find((c) => c.id === closing.id)?.resolved === true);
+
+const carried = carriedOver(work);
+ok('現ラウンド (R003) より前の未解決だけが持ち越しに出る', carried.length === comments.length - 1, `${carried.length} 件`);
+ok('解決済みは持ち越しに出ない', !carried.some((c) => c.id === closing.id));
+ok('現ラウンドのコメントは持ち越しに混ざらない', carried.every((c) => c.round !== loadReview(work).currentRound));
+
+ok('存在しない id の更新は null を返す', updateComment(work, 'c_nope', () => {}) === null);
 
 console.log(`\n${failures === 0 ? 'すべて PASS' : `${failures} 件 FAIL`}`);
 process.exit(failures === 0 ? 0 : 1);

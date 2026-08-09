@@ -118,7 +118,17 @@ export function loadReview(filePath: string): Review {
       const rounds = Array.isArray(parsed.rounds) ? parsed.rounds.filter(isRoundMeta) : null;
       const currentRound = parsed.currentRound;
       if (rounds && Number.isInteger(currentRound) && currentRound! >= 0) {
-        return { version: 2, path: resolve(filePath), currentRound: currentRound!, rounds };
+        // review.json に載っていないラウンドがディスクにあることがある (古い review.json を
+        // 戻した / 途中で落ちた)。実体を正として突き合わせないと、横断読みが静かに取りこぼす。
+        const disk = roundsOnDisk(filePath);
+        const known = new Set(rounds.map((r) => r.n));
+        const merged = [...rounds, ...disk.filter((r) => !known.has(r.n))].sort((a, b) => a.n - b.n);
+        return {
+          version: 2,
+          path: resolve(filePath),
+          currentRound: Math.max(currentRound!, merged.at(-1)?.n ?? 0),
+          rounds: merged,
+        };
       }
     } catch {
       /* 壊れている。下の復元に落とす */
@@ -182,6 +192,60 @@ export function loadComments(filePath: string, n: number): Comment[] {
   } catch {
     return [];
   }
+}
+
+/** どのラウンドのコメントかを付けて返す。ラウンドをまたいで扱う経路は必ずこれを通す。 */
+export type RoundComment = Comment & { round: number };
+
+/**
+ * 全ラウンドのコメントを新しいラウンドから順に返す。
+ *
+ * ラウンド制ではコメントを持ち越さないので、「過去に何を指摘したか」を知る手段は
+ * 各ラウンドの comments.json を横断して読むことしかない。UI の履歴 (#4) も
+ * エージェントへの受け渡し (#5) も同じ問いなので、読む場所を 1 つにしておく。
+ */
+export function loadAllComments(filePath: string): RoundComment[] {
+  const review = loadReview(filePath);
+  const out: RoundComment[] = [];
+  for (const r of [...review.rounds].sort((a, b) => b.n - a.n)) {
+    for (const c of loadComments(filePath, r.n)) out.push({ ...c, round: r.n });
+  }
+  return out;
+}
+
+/** 横断読みが取りこぼしていないかの自己点検用。ディスク上のラウンド番号を返す。 */
+export function roundNumbersOnDisk(filePath: string): number[] {
+  return roundsOnDisk(filePath).map((r) => r.n);
+}
+
+/** 現ラウンドより前の未解決コメント。画面から消えても指摘は消えていない、を表す。 */
+export function carriedOver(filePath: string): RoundComment[] {
+  const review = loadReview(filePath);
+  return loadAllComments(filePath).filter((c) => c.round !== review.currentRound && !c.resolved);
+}
+
+/**
+ * ラウンドを指定せずにコメントの状態だけを更新する。
+ *
+ * 過去ラウンドの「読み取り専用」はスナップショットと行アンカーの話であって、
+ * ステータスまで凍らせると未解決コメントを閉じる手段が無くなり、
+ * `akapen comments` (#5) が同じ指摘を永遠に出し続ける。
+ */
+export function updateComment(
+  filePath: string,
+  id: string,
+  patch: (c: Comment) => void,
+): RoundComment | null {
+  const review = loadReview(filePath);
+  for (const r of [...review.rounds].sort((a, b) => b.n - a.n)) {
+    const comments = loadComments(filePath, r.n);
+    const target = comments.find((c) => c.id === id);
+    if (!target) continue;
+    patch(target);
+    saveComments(filePath, r.n, comments);
+    return { ...target, round: r.n };
+  }
+  return null;
 }
 
 export function saveComments(filePath: string, n: number, comments: Comment[]): void {

@@ -2,6 +2,7 @@ import { readFileSync, watch, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { buildDoc } from './blocks.ts';
 import {
+  carriedOver,
   ensureRound,
   loadComments,
   makeComment,
@@ -9,6 +10,7 @@ import {
   roundContent,
   saveComments,
   storeDir,
+  updateComment,
   type Comment,
   type Review,
 } from './store.ts';
@@ -62,6 +64,7 @@ export function startServer(opts: ServeOptions) {
     n: review.currentRound,
     total: review.rounds.length,
     createdAt: review.rounds.find((r) => r.n === review.currentRound)?.createdAt ?? null,
+    all: review.rounds.map((r) => ({ n: r.n, createdAt: r.createdAt, closedAt: r.closedAt })),
   });
 
   const docPayload = () =>
@@ -70,6 +73,21 @@ export function startServer(opts: ServeOptions) {
       doc: buildDoc(file, snapshot),
       comments,
       round: roundState(),
+      // 現ラウンドより前の未解決コメント。持ち越さない代わりに「消えていない」ことを示す
+      carried: carriedOver(file),
+      changed: changedState(),
+    });
+
+  // 過去ラウンドの表示。当時の本文と当時のコメントをそのまま返す。
+  // 本文と行アンカーは凍結済みなので読み取り専用。
+  const historyPayload = (n: number) =>
+    JSON.stringify({
+      type: 'doc',
+      history: true,
+      doc: buildDoc(file, roundContent(file, n)),
+      comments: loadComments(file, n),
+      round: { ...roundState(), viewing: n },
+      carried: carriedOver(file),
       changed: changedState(),
     });
 
@@ -95,6 +113,11 @@ export function startServer(opts: ServeOptions) {
       const path = url.pathname;
 
       if (path === '/api/doc') {
+        const want = Number(url.searchParams.get('round') ?? review.currentRound);
+        if (want !== review.currentRound) {
+          if (!review.rounds.some((r) => r.n === want)) return new Response('no such round', { status: 404 });
+          return new Response(historyPayload(want), { headers: { 'content-type': 'application/json' } });
+        }
         return new Response(docPayload(), { headers: { 'content-type': 'application/json' } });
       }
 
@@ -111,14 +134,17 @@ export function startServer(opts: ServeOptions) {
         return Response.json(c);
       }
 
+      // resolve は過去ラウンドのコメントにも効かせる。ステータスまで凍らせると
+      // 未解決コメントを閉じる手段が無くなり、エージェントへの受け渡しが詰まる。
       const resolveMatch = /^\/api\/comments\/([^/]+)\/resolve$/.exec(path);
       if (resolveMatch && req.method === 'POST') {
-        const c = comments.find((x) => x.id === resolveMatch[1]);
-        if (!c) return new Response('not found', { status: 404 });
-        c.resolved = !c.resolved;
-        saveComments(file, review.currentRound, comments);
+        const updated = updateComment(file, resolveMatch[1]!, (c) => {
+          c.resolved = !c.resolved;
+        });
+        if (!updated) return new Response('not found', { status: 404 });
+        if (updated.round === review.currentRound) comments = loadComments(file, review.currentRound);
         broadcast(docPayload());
-        return Response.json(c);
+        return Response.json(updated);
       }
 
       // ラウンドを切るのは人。エージェントの途中保存では刻まない。
