@@ -278,13 +278,29 @@ function draftBubble() {
   return box;
 }
 
+/**
+ * 下書きの吹き出しだけは作り直さず、DOM に置いたまま残す。
+ *
+ * IME で変換中の textarea は、DOM から外れた時点で変換が打ち切られる。退避して戻す形も
+ * 同じなので、そもそも触らない。フォーカスとキャレット (#26) もこれで自然に残る。
+ */
 function renderRail() {
-  anchoredEl.textContent = '';
-  const items = state.comments.map((c) => ({ line: c.startLine, node: () => bubbleFor(c) }));
-  if (draft) items.push({ line: draft.startLine, node: draftBubble });
-  // アンカー行の順に積まないと「重なったら下にずらす」が意味を成さない
-  items.sort((a, b) => a.line - b.line);
-  for (const it of items) anchoredEl.append(it.node());
+  for (const b of anchoredEl.querySelectorAll('.bubble:not(.draft)')) b.remove();
+
+  const existing = anchoredEl.querySelector('.bubble.draft');
+  if (!draft) {
+    existing?.remove();
+  } else if (!existing || existing.dataset.line !== String(draft.startLine)) {
+    // 対象範囲が変わった時だけ作り直す。この時は変換中でないので外して問題ない
+    existing?.remove();
+    anchoredEl.append(draftBubble());
+  }
+
+  // 行順に積む。位置合わせは data-line でやるので描画には効かないが、
+  // Tab の順序は DOM 順なので、揃えないとキーボードで飛び回ることになる
+  for (const c of [...state.comments].sort((a, b) => a.startLine - b.startLine)) {
+    anchoredEl.append(bubbleFor(c));
+  }
   renderCarried();
 }
 
@@ -313,7 +329,11 @@ function renderCarried() {
  * 強制同期レイアウトが走り、textarea の 1 文字ごとに呼ばれるこの関数が長い文書で目に見えて遅くなる。
  */
 function layoutRail() {
-  const bubbles = [...anchoredEl.querySelectorAll('.bubble')];
+  // 下書きを動かさないため DOM の順序は当てにできない。アンカー行で並べ替えてから積む。
+  // 順序が崩れると「重なったら下にずらす」が意味を成さない。
+  const bubbles = [...anchoredEl.querySelectorAll('.bubble')].sort(
+    (a, b) => Number(a.dataset.line) - Number(b.dataset.line),
+  );
   if (!bubbles.length || document.body.classList.contains('rail-overlay')) {
     for (const b of bubbles) b.style.top = '';
     anchoredEl.style.height = '';
