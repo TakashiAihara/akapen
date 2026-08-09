@@ -2,6 +2,12 @@ import { bindKeys, loadKeymap } from './keys.js';
 
 const docEl = document.getElementById('doc');
 const railEl = document.getElementById('rail');
+const anchoredEl = document.getElementById('railAnchored');
+const carriedEl = document.getElementById('railCarried');
+const roundPickEl = document.getElementById('roundPick');
+const historyBarEl = document.getElementById('historyBar');
+const historyTextEl = document.getElementById('historyText');
+const backBtn = document.getElementById('backToCurrent');
 const railCloseEl = document.getElementById('railClose');
 const filePathEl = document.getElementById('filePath');
 const countEl = document.getElementById('count');
@@ -11,7 +17,8 @@ const bannerTextEl = document.getElementById('bannerText');
 const nextRoundBtn = document.getElementById('nextRound');
 const showLines = document.getElementById('showLines');
 
-let state = { doc: null, comments: [], round: null };
+// viewing は「いま画面に出しているラウンド」。現ラウンドと違う間は読み取り専用。
+let state = { doc: null, comments: [], round: null, carried: [], history: false };
 let drag = null; // { start, end } ガター上のドラッグ中だけ立つ
 // 選択範囲。マウスもキーボードも最終的にここを動かし、startDraft に入る。
 // 経路を 1 本にしないと「マウスでは範囲が取れるがキーボードでは取れない」がすぐ生える。
@@ -163,13 +170,23 @@ function rangeLabel(startLine, endLine) {
   return `L${startLine}${endLine !== startLine ? `-${endLine}` : ''}`;
 }
 
-function bubbleFor(c) {
-  const box = el('div', `bubble${c.resolved ? ' resolved' : ''}`);
+function bubbleFor(c, opts = {}) {
+  const box = el('div', `bubble${c.resolved ? ' resolved' : ''}${opts.past ? ' past' : ''}`);
   box.dataset.id = c.id;
   box.dataset.line = c.startLine;
 
   const head = el('div', 'bubble-head');
   head.append(el('span', 'who', `@${escapeHtml(c.author)}`));
+  if (opts.past) {
+    // どのラウンドのどの行に対する指摘かを持たせる。押すとその当時の本文へ飛ぶ
+    const tag = el('button', 'round-tag', `R${String(c.round).padStart(3, '0')}`);
+    tag.title = `R${String(c.round).padStart(3, '0')} の本文を見る`;
+    tag.addEventListener('click', (e) => {
+      e.stopPropagation();
+      showRound(c.round, c.id);
+    });
+    head.append(tag);
+  }
   head.append(el('span', 'at', rangeLabel(c.startLine, c.endLine)));
   const spacer = el('span', null, '');
   spacer.style.flex = '1';
@@ -191,7 +208,7 @@ function bubbleFor(c) {
   box.append(head, el('div', 'bubble-body', escapeHtml(c.body)));
   // 折りたたんだ本文を開く手段がマウスだけだと、キーボードでは 12em 以降が読めない
   box.tabIndex = 0;
-  box.addEventListener('click', () => setActive(c.id, 'doc'));
+  box.addEventListener('click', () => (opts.past ? showRound(c.round, c.id) : setActive(c.id, 'doc')));
   box.addEventListener('focus', () => setActive(c.id));
   return box;
 }
@@ -262,13 +279,30 @@ function draftBubble() {
 }
 
 function renderRail() {
-  // 閉じるボタンは残す。消すのは吹き出しだけ
-  for (const b of [...railEl.querySelectorAll('.bubble')]) b.remove();
+  anchoredEl.textContent = '';
   const items = state.comments.map((c) => ({ line: c.startLine, node: () => bubbleFor(c) }));
   if (draft) items.push({ line: draft.startLine, node: draftBubble });
   // アンカー行の順に積まないと「重なったら下にずらす」が意味を成さない
   items.sort((a, b) => a.line - b.line);
-  for (const it of items) railEl.append(it.node());
+  for (const it of items) anchoredEl.append(it.node());
+  renderCarried();
+}
+
+/**
+ * 過去ラウンドの未解決コメント。現ラウンドの本文にアンカーが無いので位置は合わせられない。
+ * それでも出すのは、持ち越さない設計では「画面から消えた = 解決した」に見えてしまうため。
+ */
+function renderCarried() {
+  carriedEl.textContent = '';
+  const carried = state.history ? [] : state.carried;
+  if (!carried.length) {
+    carriedEl.hidden = true;
+    return;
+  }
+  carriedEl.hidden = false;
+  const h = el('h2', null, `過去ラウンドの未解決 ${carried.length} 件`);
+  carriedEl.append(h);
+  for (const c of carried) carriedEl.append(bubbleFor(c, { past: true }));
 }
 
 /**
@@ -279,10 +313,10 @@ function renderRail() {
  * 強制同期レイアウトが走り、textarea の 1 文字ごとに呼ばれるこの関数が長い文書で目に見えて遅くなる。
  */
 function layoutRail() {
-  const bubbles = [...railEl.querySelectorAll('.bubble')];
+  const bubbles = [...anchoredEl.querySelectorAll('.bubble')];
   if (!bubbles.length || document.body.classList.contains('rail-overlay')) {
     for (const b of bubbles) b.style.top = '';
-    railEl.style.height = '';
+    anchoredEl.style.height = '';
     return;
   }
 
@@ -292,7 +326,7 @@ function layoutRail() {
     end: Number(r.dataset.end),
     top: r.getBoundingClientRect().top,
   }));
-  const railTop = railEl.getBoundingClientRect().top;
+  const railTop = anchoredEl.getBoundingClientRect().top;
   const heights = bubbles.map((b) => b.offsetHeight);
   const gap = Number.parseInt(getComputedStyle(document.documentElement).getPropertyValue('--ak-bubble-gap'), 10) || 8;
 
@@ -311,7 +345,7 @@ function layoutRail() {
 
   // --- 書き ---
   for (const [i, b] of bubbles.entries()) b.style.top = `${tops[i]}px`;
-  railEl.style.height = `${cursor}px`;
+  anchoredEl.style.height = `${cursor}px`;
 }
 
 function setActive(id, scroll) {
@@ -377,6 +411,7 @@ function clearSelection() {
 
 function startDraft() {
   if (!sel) return;
+  if (state.history) return; // 履歴は読み取り専用。当時の本文にいま指摘を足せてしまうと再現性が壊れる
   const lo = Math.min(sel.start, sel.end);
   const hi = Math.max(sel.start, sel.end);
   draft = { startLine: lo, endLine: hi, text: draft?.text ?? '' };
@@ -420,12 +455,13 @@ function moveFocus(step, extend) {
 /* ===== 描画 ===== */
 
 function render() {
-  const { doc, comments, round } = state;
+  const { doc, comments } = state;
   if (!doc) return;
   filePathEl.textContent = doc.path;
-  roundEl.textContent = round ? `R${String(round.n).padStart(3, '0')}` : '';
+  renderRoundControls();
   const open = comments.filter((c) => !c.resolved).length;
-  countEl.textContent = `${open} open / ${comments.length}`;
+  const carried = state.carried.length;
+  countEl.textContent = `${open} open / ${comments.length}${carried ? ` (+ 過去 ${carried})` : ''}`;
 
   renderDoc();
   paintSelection();
@@ -459,6 +495,70 @@ railOverlayQuery.addEventListener('change', () => {
 window.addEventListener('resize', () => layoutRail());
 
 syncRailMode();
+
+/* ===== ラウンドの切り替え (履歴) ===== */
+
+/**
+ * 過去ラウンドを表示する。当時の本文と当時のコメントをそのまま出す。
+ * 本文と行アンカーは凍結済みなので、この間はコメントを打てない。
+ */
+async function showRound(n, focusId) {
+  try {
+    const res = await fetch(`/api/doc?round=${n}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const payload = await res.json();
+    draft = null;
+    sel = null;
+    focusLine = null;
+    active = focusId ?? null;
+    applyPayload(payload);
+    if (focusId) setActive(focusId, 'doc');
+  } catch (err) {
+    historyTextEl.textContent = `ラウンドを開けませんでした (${err.message})`;
+    historyBarEl.hidden = false;
+  }
+}
+
+async function showCurrent() {
+  const res = await fetch('/api/doc');
+  if (!res.ok) return;
+  active = null;
+  applyPayload(await res.json());
+}
+
+backBtn.addEventListener('click', () => showCurrent());
+roundPickEl.addEventListener('change', () => {
+  const n = Number(roundPickEl.value);
+  if (n === state.round?.n) showCurrent();
+  else showRound(n);
+});
+
+function renderRoundControls() {
+  const round = state.round;
+  if (!round) return;
+  const viewing = round.viewing ?? round.n;
+  roundEl.textContent = `R${String(viewing).padStart(3, '0')}`;
+
+  const rounds = round.all ?? [];
+  const want = rounds.map((r) => r.n).join(',');
+  if (roundPickEl.dataset.rounds !== want) {
+    roundPickEl.textContent = '';
+    for (const r of rounds) {
+      const o = el('option', null, `R${String(r.n).padStart(3, '0')}${r.n === round.n ? ' (現在)' : ''}`);
+      o.value = String(r.n);
+      roundPickEl.append(o);
+    }
+    roundPickEl.dataset.rounds = want;
+  }
+  roundPickEl.value = String(viewing);
+  roundPickEl.hidden = rounds.length < 2;
+
+  document.body.classList.toggle('viewing-history', state.history);
+  historyBarEl.hidden = !state.history;
+  if (state.history) {
+    historyTextEl.textContent = `R${String(viewing).padStart(3, '0')} の当時の本文を見ています (読み取り専用)`;
+  }
+}
 
 /* ===== キーマップ =====
  * 割り当ては web/keys.js。ここは動作の実体だけを持つ。
@@ -494,19 +594,34 @@ const ACTIONS = {
 
 loadKeymap().then((keymap) => bindKeys(keymap, ACTIONS));
 
+function applyPayload(payload) {
+  const y = window.scrollY;
+  state = {
+    doc: payload.doc,
+    comments: payload.comments,
+    round: payload.round,
+    carried: payload.carried ?? [],
+    history: !!payload.history,
+  };
+  render();
+  renderBanner(state.history ? null : payload.changed);
+  window.scrollTo(0, y);
+}
+
 const sse = new EventSource('/events');
 sse.onmessage = (e) => {
   const payload = JSON.parse(e.data);
 
   // 本文が変わっただけならバナーを出すだけ。再描画すると読んでいる位置と選択が飛ぶ。
   if (payload.type === 'changed') {
-    renderBanner(payload);
+    if (!state.history) renderBanner(payload);
     return;
   }
 
-  const y = window.scrollY;
-  state = { doc: payload.doc, comments: payload.comments, round: payload.round };
-  render();
-  renderBanner(payload.changed);
-  window.scrollTo(0, y);
+  // 履歴を見ている間は現ラウンドの更新で画面を奪わない。見ていた当時の本文が消える
+  if (state.history) {
+    state = { ...state, carried: payload.carried ?? state.carried };
+    return;
+  }
+  applyPayload(payload);
 };
