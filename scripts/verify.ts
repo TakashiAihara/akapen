@@ -18,6 +18,7 @@ import {
   makeComment,
   openRound,
   roundContent,
+  pendingComments,
   roundNumbersOnDisk,
   saveComments,
   storeDir,
@@ -210,6 +211,26 @@ ok('解決済みは持ち越しに出ない', !carried.some((c) => c.id === clos
 ok('現ラウンドのコメントは持ち越しに混ざらない', carried.every((c) => c.round !== loadReview(work).currentRound));
 
 ok('存在しない id の更新は null を返す', updateComment(work, 'c_nope', () => {}) === null);
+
+// エージェントへの受け渡し。締めた後も未解決なら出し続けないと指摘が失われる。
+const pending = pendingComments(work);
+ok('未解決なら過去ラウンド分も出す', pending.length === comments.length - 1, `${pending.length} 件`);
+ok('解決済みは出さない', !pending.some((c) => c.id === closing.id));
+ok('--all 相当なら解決済みも出す', pendingComments(work, true).length === comments.length);
+ok('どのラウンドの指摘かが付く', pending.every((c) => Number.isInteger(c.round) && c.round > 0));
+ok('当時の原文が付く', pending.every((c) => typeof c.anchor === 'string' && c.anchor.length > 0));
+ok(
+  '現ラウンドが先、その中は行順',
+  pending.every((c, i) => i === 0 || pending[i - 1]!.round > c.round || (pending[i - 1]!.round === c.round && pending[i - 1]!.startLine <= c.startLine)),
+  pending.map((c) => `R${c.round}:L${c.startLine}`).join(' '),
+);
+
+// 現ラウンドに新しく打った指摘が先に来ること (R003 は空なのでここで 1 件足す)
+const fresh = makeComment(edited, 1, 1, '現ラウンドの指摘', 'verify');
+saveComments(work, 3, [fresh]);
+const withFresh = pendingComments(work);
+ok('現ラウンドの指摘が先頭に来る', withFresh[0]?.id === fresh.id && withFresh[0]?.round === 3);
+ok('過去ラウンドの指摘も後ろに残る', withFresh.length === comments.length, `${withFresh.length} 件`);
 
 console.log(`\n${failures === 0 ? 'すべて PASS' : `${failures} 件 FAIL`}`);
 process.exit(failures === 0 ? 0 : 1);

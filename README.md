@@ -78,17 +78,23 @@ bun run src/cli.ts comments <file.md> --all    # 解決済みも含める
   {
     "id": "c_b683c8",
     "path": "/path/to/note.md",
-    "round": 1,
+    "round": 2,
+    "current_round": true,
     "start_line": 5,
     "end_line": 5,
     "body": "status 行への指摘",
     "anchor": "status: active",
-    "author": "root"
+    "author": "root",
+    "resolved": false
   }
 ]
 ```
 
 `start_line` / `end_line` はそのラウンドのスナップショット内での行番号で、live のファイルとは一致しない。エージェントは `anchor` (当時の原文) で現在のファイルを照合する。
+
+**未解決なら過去ラウンドのものも出す。** 持ち越しを廃止したので、ラウンド N の指摘は N+1 の画面には出ない。画面から消えるだけなら履歴で足りるが、エージェントに渡らないと指摘そのものが失われる。ラウンドを締める操作が「エージェントに渡す」の意味を持つ。
+
+現ラウンドのものが先で、その中は行順。`current_round: false` のものは当時の本文に対する指摘なので、いまのファイルでは行がズレている前提で扱う。`--all` で解決済みも含める。
 
 拡張 CSS の例は `examples/dense.css`。
 
