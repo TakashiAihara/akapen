@@ -1,6 +1,6 @@
 {
   "name": "akapen",
-  "version": "0.0.1",
+  "version": "0.1.0-rc.1",
   "private": true,
   "description": "markdown inline review — comments stay out of the file",
   "type": "module",
