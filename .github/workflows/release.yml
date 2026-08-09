@@ -1,0 +1,46 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'リリースするタグ (例 v0.1.0)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+
+      # bun はクロスコンパイルできるので 1 台で 4 つ作る。
+      # runner を OS ごとに分けると、同じ入力から作った保証が薄くなる。
+      - name: build
+        run: |
+          set -eux
+          mkdir -p dist
+          for t in linux-x64 linux-arm64 darwin-x64 darwin-arm64; do
+            bun build --compile --target="bun-$t" src/cli.ts --outfile "dist/akapen-$t"
+          done
+          cd dist && sha256sum akapen-* > SHA256SUMS && cat SHA256SUMS
+
+      - name: 作ったバイナリが動くか (自分の環境で動く 1 つだけ)
+        run: ./dist/akapen-linux-x64 --help
+
+      - name: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          set -eux
+          gh release create "$TAG" --title "$TAG" --generate-notes dist/akapen-* dist/SHA256SUMS \
+            || gh release upload "$TAG" dist/akapen-* dist/SHA256SUMS --clobber

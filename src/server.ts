@@ -1,5 +1,6 @@
 import { readFileSync, watch, existsSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { resolve } from 'node:path';
+import { ASSETS, mimeFor } from './assets.ts';
 import { buildDoc } from './blocks.ts';
 import {
   carriedOver,
@@ -15,8 +16,6 @@ import {
   type Review,
 } from './store.ts';
 
-const WEB = join(import.meta.dir, '..', 'web');
-
 export type ServeOptions = {
   file: string;
   host: string;
@@ -24,12 +23,6 @@ export type ServeOptions = {
   author: string;
   cssPath?: string;
   keymapPath?: string;
-};
-
-const MIME: Record<string, string> = {
-  '.html': 'text/html; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
 };
 
 export function startServer(opts: ServeOptions) {
@@ -209,16 +202,12 @@ export function startServer(opts: ServeOptions) {
         return new Response(body, { headers: { 'content-type': 'application/json' } });
       }
 
-      if (path === '/vendor/mermaid.min.js') {
-        const p = join(import.meta.dir, '..', 'node_modules', 'mermaid', 'dist', 'mermaid.min.js');
-        return new Response(Bun.file(p), { headers: { 'content-type': MIME['.js']! } });
-      }
-
+      // 配信するのは ASSETS に名指しした分だけ。ディレクトリを辿らないので
+      // パストラバーサルの経路が最初から無く、単一バイナリでもそのまま動く。
       const name = path === '/' ? 'index.html' : path.slice(1);
-      const asset = join(WEB, name);
-      if (asset.startsWith(WEB) && existsSync(asset)) {
-        const ext = name.slice(name.lastIndexOf('.'));
-        return new Response(Bun.file(asset), { headers: { 'content-type': MIME[ext] ?? 'application/octet-stream' } });
+      const asset = ASSETS[name];
+      if (asset) {
+        return new Response(Bun.file(asset), { headers: { 'content-type': mimeFor(name) } });
       }
 
       return new Response('not found', { status: 404 });

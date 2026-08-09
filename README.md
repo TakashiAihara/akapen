@@ -22,12 +22,33 @@ akapen はこの 3 点を設計で回避する。
 
 加えて、拡張 CSS の口を最初から開けてある。crit には無く、ブラウザ拡張 (Stylus 等) を入れる以外に手が無かった部分。
 
-## 使う
+## 入れる
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/TakashiAihara/akapen/main/install.sh | sh
+```
+
+`$HOME/.local/bin/akapen` に単一バイナリが入る。bun も clone も要らない。
+
+| 環境変数 | 意味 |
+|---|---|
+| `AKAPEN_VERSION` | 入れるタグ (既定 `latest`) |
+| `AKAPEN_INSTALL_DIR` | 置き場所 (既定 `$HOME/.local/bin`) |
+
+`SHA256SUMS` が取得できた場合はチェックサムを検証する。一致しなければ止める。
+
+対応は linux / darwin の x64 と arm64。バイナリは GitHub Actions が tag push で作り、Release に上げている (`.github/workflows/release.yml`)。
+
+### repo から動かす
 
 ```bash
 bun install
 bun run src/cli.ts <file.md> [options]
 ```
+
+以降の例は `bun run src/cli.ts` で書くが、入れてあれば `akapen` に読み替えてよい。
+
+## 使う
 
 | option | 意味 |
 |---|---|
@@ -67,6 +88,12 @@ bun run src/cli.ts comments <file.md> --all    # 解決済みも含める
 
 ```bash
 bun run src/cli.ts note.md --css examples/dense.css
+```
+
+試すだけなら `examples/sample.md` が入っている。
+
+```bash
+bun run src/cli.ts examples/sample.md
 ```
 
 ## 設計
@@ -164,8 +191,9 @@ md 実ファイルには触れない。
 ## 検証
 
 ```bash
-bun run scripts/verify.ts <file.md>   # frontmatter / 行マッピング / ラウンドの凍結
-bun run scripts/sweep.ts <dir>        # ディレクトリ内の全 md で不変条件を確認
+bun run scripts/verify.ts examples/sample.md   # frontmatter / 行マッピング / ラウンドの凍結 / 横断読み
+bun run scripts/sweep.ts <dir>                 # ディレクトリ内の全 md で不変条件を確認
+bun run scripts/smoke-binary.ts                # 単一バイナリを作ってアセットの埋め込みを確認
 ```
 
 vault の全 152 ノートで、行の取りこぼし・重複ともゼロ (24164 ブロック)。
@@ -178,4 +206,3 @@ vault の全 152 ノートで、行の取りこぼし・重複ともゼロ (2416
 - 過去ラウンドを画面から辿る動線。ストアには残っているが UI が無い (#4)
 - エージェント連携の自動化。今は `comments` を叩いてもらう前提で、crit の `agent_cmd` 相当は無い
 - 返信・スレッド。今は 1 コメント 1 スレッド
-- 単一バイナリ化 (`bun build --compile`)
