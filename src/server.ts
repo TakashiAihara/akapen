@@ -21,6 +21,7 @@ export type ServeOptions = {
   port: number;
   author: string;
   cssPath?: string;
+  keymapPath?: string;
 };
 
 const MIME: Record<string, string> = {
@@ -164,6 +165,22 @@ export function startServer(opts: ServeOptions) {
       if (path === '/custom.css') {
         const css = opts.cssPath && existsSync(opts.cssPath) ? readFileSync(opts.cssPath, 'utf8') : '';
         return new Response(css, { headers: { 'content-type': 'text/css; charset=utf-8' } });
+      }
+
+      // キーマップの上書き。CSS と同じく、設定で変えられる口を最初から開けておく。
+      // 壊れた JSON で操作不能にならないよう、読めなければ既定のまま動かす。
+      if (path === '/keymap.json') {
+        let body = '{}';
+        if (opts.keymapPath && existsSync(opts.keymapPath)) {
+          const raw = readFileSync(opts.keymapPath, 'utf8');
+          try {
+            JSON.parse(raw);
+            body = raw;
+          } catch {
+            console.error(`akapen: keymap の JSON が壊れています。既定のキーマップで続行します: ${opts.keymapPath}`);
+          }
+        }
+        return new Response(body, { headers: { 'content-type': 'application/json' } });
       }
 
       if (path === '/vendor/mermaid.min.js') {
