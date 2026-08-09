@@ -157,3 +157,18 @@ test('ラウンドを切るまで本文は凍結され、締めても指摘は�
   await expect(page.locator('#railCarried .bubble')).toHaveCount(1); // 消えてはいない
   await expect(page.locator('#count')).toContainText('過去 1');
 });
+
+test('md に書いた生 HTML は実行されず、文字として出る', async ({ page }) => {
+  // 描画も mermaid の非同期実行も終わってから見る
+  await page.waitForTimeout(500);
+  expect(await page.evaluate(() => (window as unknown as { xssMarker?: string }).xssMarker)).toBeUndefined();
+
+  // DOM に要素として入っていないこと
+  expect(await page.locator('#doc script').count()).toBe(0);
+  expect(await page.locator('#doc img').count()).toBe(0);
+  expect(await page.locator('#doc b').count()).toBe(0);
+
+  // 文字としては読めること (レビュー対象なので消してはいけない)
+  await expect(page.locator('#doc')).toContainText("<script>window.xssMarker = 'executed';</script>");
+  await expect(page.locator('#doc')).toContainText('<b>太字にはならない</b>');
+});

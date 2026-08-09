@@ -25,3 +25,11 @@ tags:
 ## 最後の節
 
 長い段落を 1 つ置いておく。折り返しても 1 行目にアンカーが揃うことと、レールの吹き出しが本文の高さを変えないことを確認するために使う。
+
+## 生 HTML
+
+<script>window.xssMarker = 'executed';</script>
+
+<img src=x onerror="window.xssMarker = 'executed'">
+
+<b>太字にはならない</b>

@@ -11,8 +11,7 @@ export type BlockKind =
   | 'table-row'
   | 'code'
   | 'mermaid'
-  | 'hr'
-  | 'html';
+  | 'hr';
 
 export type Block = {
   startLine: number; // 1-based, inclusive
@@ -25,7 +24,18 @@ export type Block = {
   flags: string[];
 };
 
-const md = new MarkdownIt({ html: true, linkify: true, typographer: false });
+/**
+ * html: false。md に直接書いた HTML はエスケープして文字として出す。
+ *
+ * akapen が描くのは「レビュー対象の markdown」で、その出所は必ずしも自分ではない。
+ * html: true にすると本文がそのまま innerHTML に入るので、md を開いた時点で
+ * 任意の JS が akapen の origin (認証なしの /api/comments と、絶対パスを返す
+ * /api/doc がある) で動く。
+ *
+ * markdown を読むための道具に markdown 以外が紛れ込む口を開けておく利点より、
+ * 塞ぐ方が大きいという判断。
+ */
+const md = new MarkdownIt({ html: false, linkify: true, typographer: false });
 
 /**
  * crit は typographer を有効にしているため frontmatter の "..." が “...” に化ける。
@@ -382,11 +392,6 @@ function walk(tokens: Token[], ctx: Ctx): void {
       case 'hr': {
         const [s, e] = t.map ?? [0, 0];
         push(ctx, { startLine: s + 1, endLine: e, kind: 'hr', html: '<hr>', flags: [] });
-        break;
-      }
-      case 'html_block': {
-        const [s, e] = t.map ?? [0, 0];
-        push(ctx, { startLine: s + 1, endLine: e, kind: 'html', html: t.content, flags: [] });
         break;
       }
       default:
