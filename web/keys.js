@@ -31,18 +31,31 @@ export const DEFAULT_KEYMAP = {
  */
 const WHILE_TYPING = new Set(['comment.submit', 'comment.cancel']);
 
+/**
+ * キー名を正規化する。設定ファイル側と KeyboardEvent 側の両方をここに通し、
+ * 「書いたのに効かない」を作らない。
+ *
+ * KeyboardEvent.key は矢印を `ArrowDown` で返すが、設定に `arrowdown` と書かせるのは
+ * 冗長なので `down` に寄せる。両方の綴りを受け付ける。
+ */
+export function normalizeKey(name) {
+  const parts = String(name).toLowerCase().split('+');
+  let base = parts.pop() ?? '';
+  // 空白キーは trim で消えるので、先に拾う
+  base = base === ' ' ? 'space' : base.trim();
+  if (base.startsWith('arrow')) base = base.slice(5);
+  return [...parts.map((p) => p.trim()), base].join('+');
+}
+
 /** KeyboardEvent → `ctrl+shift+k` 形式。修飾子の順序を固定して表記のブレを潰す。 */
 export function keyOf(e) {
   const parts = [];
   if (e.ctrlKey) parts.push('ctrl');
   if (e.metaKey) parts.push('meta');
   if (e.altKey) parts.push('alt');
-  let key = e.key;
-  if (key === ' ') key = 'space';
   // 英字は shift で大文字になるので、修飾子として正規化して 'shift+j' に寄せる
-  if (e.shiftKey && key.length === 1) parts.push('shift');
-  else if (e.shiftKey) parts.push('shift');
-  parts.push(key.toLowerCase());
+  if (e.shiftKey) parts.push('shift');
+  parts.push(normalizeKey(e.key));
   return parts.join('+');
 }
 
@@ -61,9 +74,9 @@ export function mergeKeymap(base, override) {
     if (keys === null) {
       merged[action] = [];
     } else if (Array.isArray(keys)) {
-      merged[action] = keys.filter((k) => typeof k === 'string').map((k) => k.toLowerCase());
+      merged[action] = keys.filter((k) => typeof k === 'string').map(normalizeKey);
     } else if (typeof keys === 'string') {
-      merged[action] = [keys.toLowerCase()];
+      merged[action] = [normalizeKey(keys)];
     }
     // 上記以外 (数値・オブジェクト等) は無視する。壊れた設定でキーが全部死ぬより既定に留まる方がまし
   }
@@ -74,7 +87,10 @@ export function mergeKeymap(base, override) {
 function invert(keymap) {
   const index = new Map();
   for (const [action, keys] of Object.entries(keymap)) {
-    for (const key of keys ?? []) if (!index.has(key)) index.set(key, action);
+    for (const key of keys ?? []) {
+      const k = normalizeKey(key);
+      if (!index.has(k)) index.set(k, action);
+    }
   }
   return index;
 }
