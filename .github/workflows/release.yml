@@ -11,12 +11,21 @@ on:
 
 permissions:
   contents: write
+  # 同じ Release から取る checksum は真正性を保証しない。どのワークフローが
+  # どのコミットから作ったかを検証できるよう provenance を付ける。
+  id-token: write
+  attestations: write
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
+      # 手動実行では inputs.tag と既定ブランチの HEAD が食い違う。ref を明示しないと
+      # 「タグと中身が違うバイナリ」が Release に上がり、後から見分けが付かない。
+      # 指定タグが無ければここで落ちる (存在しないタグに勝手に Release を作らない)。
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
@@ -35,6 +44,10 @@ jobs:
 
       - name: 作ったバイナリが動くか (自分の環境で動く 1 つだけ)
         run: ./dist/akapen-linux-x64 --help
+
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: 'dist/akapen-*'
 
       - name: release
         env:
