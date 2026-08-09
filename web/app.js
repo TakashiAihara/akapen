@@ -1,4 +1,6 @@
 const docEl = document.getElementById('doc');
+const railEl = document.getElementById('rail');
+const railCloseEl = document.getElementById('railClose');
 const filePathEl = document.getElementById('filePath');
 const countEl = document.getElementById('count');
 const roundEl = document.getElementById('round');
@@ -8,13 +10,18 @@ const nextRoundBtn = document.getElementById('nextRound');
 const showLines = document.getElementById('showLines');
 
 let state = { doc: null, comments: [], round: null };
-let drag = null; // { start, end }
+let drag = null; // { start, end } ガター上のドラッグ選択
+let draft = null; // { startLine, endLine, text } 入力中のコメント。再描画をまたいで保持する
+let active = null; // 選択中の吹き出し (comment id か 'draft')
 let mermaidLib = null;
 
 nextRoundBtn.addEventListener('click', async () => {
   nextRoundBtn.disabled = true;
   try {
-    await fetch('/api/rounds', { method: 'POST' });
+    const res = await fetch('/api/rounds', { method: 'POST' });
+    if (!res.ok) bannerTextEl.textContent = `ラウンドを切れませんでした (HTTP ${res.status})`;
+  } catch (err) {
+    bannerTextEl.textContent = `ラウンドを切れませんでした (${err.message})`;
   } finally {
     nextRoundBtn.disabled = false;
   }
@@ -49,18 +56,25 @@ function el(tag, cls, html) {
   return n;
 }
 
-function commentsFor(block) {
-  return state.comments.filter((c) => c.startLine === block.startLine && c.endLine === block.endLine);
+function escapeHtml(s) {
+  return s.replace(/[&<>"]/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[m]);
 }
 
-function render() {
-  const { doc, comments, round } = state;
-  if (!doc) return;
-  filePathEl.textContent = doc.path;
-  roundEl.textContent = round ? `R${String(round.n).padStart(3, '0')}` : '';
-  const open = comments.filter((c) => !c.resolved).length;
-  countEl.textContent = `${open} open / ${comments.length}`;
+// 失敗を console だけに落とすと、押した本人には何も起きていないように見える
+function fail(box, message) {
+  box.querySelector('.bubble-error')?.remove();
+  box.append(el('div', 'bubble-error', escapeHtml(message)));
+  layoutRail();
+}
 
+function overlaps(block, startLine, endLine) {
+  return block.startLine <= endLine && block.endLine >= startLine;
+}
+
+/* ===== 本文 ===== */
+
+function renderDoc() {
+  const { doc, comments } = state;
   const fmLines = doc.blocks.filter((b) => b.kind === 'frontmatter');
   const fmFirst = fmLines[0]?.startLine;
   const fmLast = fmLines[fmLines.length - 1]?.startLine;
@@ -71,7 +85,8 @@ function render() {
     if (block.quoted) cls.push('quoted');
     if (block.startLine === fmFirst) cls.push('fm-first');
     if (block.startLine === fmLast) cls.push('fm-last');
-    const mine = commentsFor(block);
+    // 範囲コメントは複数行にまたがるので、重なる行をすべてアンカーとして印を付ける
+    const mine = comments.filter((c) => overlaps(block, c.startLine, c.endLine));
     if (mine.length) cls.push('has-comment');
 
     const row = el('div', cls.join(' '));
@@ -80,12 +95,24 @@ function render() {
 
     const gutter = el('div', 'gutter');
     gutter.append(el('span', 'lineno', String(block.startLine)));
+    // レールを畳んでいる間はこのマーカーだけが手がかりになる
+    if (mine.length) {
+      const marker = el('button', 'marker', String(mine.length));
+      marker.title = `${mine.length} 件のコメント`;
+      marker.addEventListener('click', (e) => {
+        e.stopPropagation();
+        openRail();
+        setActive(mine[0].id, 'rail');
+      });
+      gutter.append(marker);
+    }
     const add = el('button', 'add', '+');
     add.title = `${block.startLine}-${block.endLine} 行にコメント`;
     gutter.append(add);
     row.append(gutter, el('div', 'body', block.html));
 
     gutter.addEventListener('mousedown', (e) => {
+      if (e.target.classList.contains('marker')) return;
       e.preventDefault();
       drag = { start: block.startLine, end: block.endLine };
       paintRange();
@@ -95,35 +122,238 @@ function render() {
       drag.end = block.endLine;
       paintRange();
     });
+    // 本文側からも吹き出しに飛べるようにする (連動は双方向)
+    if (mine.length) {
+      row.addEventListener('click', (e) => {
+        if (e.target.closest('a, button')) return;
+        setActive(mine[0].id, 'rail');
+      });
+      // 行から吹き出しへの移動。連続移動の keymap 全体は #2 で 1 箇所にまとめる
+      row.tabIndex = 0;
+      row.addEventListener('keydown', (e) => {
+        if (e.target !== row || (e.key !== 'Enter' && e.key !== ' ')) return;
+        e.preventDefault();
+        openRail();
+        setActive(mine[0].id, 'rail');
+        railEl.querySelector(`.bubble[data-id="${mine[0].id}"]`)?.focus();
+      });
+    }
 
     docEl.append(row);
-
-    for (const c of mine) docEl.append(threadEl(c));
   }
-
-  renderMermaid();
 }
 
-function escapeHtml(s) {
-  return s.replace(/[&<>"]/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[m]);
+function rowFor(line) {
+  const rows = [...docEl.querySelectorAll('.row')];
+  return (
+    rows.find((r) => Number(r.dataset.start) <= line && line <= Number(r.dataset.end)) ??
+    rows.find((r) => Number(r.dataset.start) >= line) ??
+    rows.at(-1) ??
+    null
+  );
 }
 
-function threadEl(c) {
-  const box = el('div', `thread${c.resolved ? ' resolved' : ''}`);
-  const head = el('div', 'thread-head');
-  head.append(el('span', null, `@${escapeHtml(c.author)}`));
-  head.append(el('span', null, `L${c.startLine}${c.endLine !== c.startLine ? `-${c.endLine}` : ''}`));
+/* ===== 右レール ===== */
+
+function rangeLabel(startLine, endLine) {
+  return `L${startLine}${endLine !== startLine ? `-${endLine}` : ''}`;
+}
+
+function bubbleFor(c) {
+  const box = el('div', `bubble${c.resolved ? ' resolved' : ''}`);
+  box.dataset.id = c.id;
+  box.dataset.line = c.startLine;
+
+  const head = el('div', 'bubble-head');
+  head.append(el('span', 'who', `@${escapeHtml(c.author)}`));
+  head.append(el('span', 'at', rangeLabel(c.startLine, c.endLine)));
   const spacer = el('span', null, '');
   spacer.style.flex = '1';
   head.append(spacer);
   const btn = el('button', null, c.resolved ? 'Reopen' : 'Resolve');
-  btn.addEventListener('click', async () => {
-    await fetch(`/api/comments/${c.id}/resolve`, { method: 'POST' });
+  btn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    btn.disabled = true;
+    try {
+      const res = await fetch(`/api/comments/${c.id}/resolve`, { method: 'POST' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    } catch (err) {
+      btn.disabled = false;
+      fail(box, `更新に失敗しました (${err.message})`);
+    }
   });
   head.append(btn);
-  box.append(head, el('div', 'thread-body', escapeHtml(c.body)));
+
+  box.append(head, el('div', 'bubble-body', escapeHtml(c.body)));
+  // 折りたたんだ本文を開く手段がマウスだけだと、キーボードでは 12em 以降が読めない
+  box.tabIndex = 0;
+  box.addEventListener('click', () => setActive(c.id, 'doc'));
+  box.addEventListener('focus', () => setActive(c.id));
   return box;
 }
+
+function draftBubble() {
+  const { startLine, endLine, text } = draft;
+  const box = el('div', 'bubble draft');
+  box.dataset.id = 'draft';
+  box.dataset.line = startLine;
+
+  const head = el('div', 'bubble-head');
+  head.append(el('span', 'at', rangeLabel(startLine, endLine)));
+  const spacer = el('span', null, '');
+  spacer.style.flex = '1';
+  head.append(spacer);
+  box.append(head);
+
+  const ta = el('textarea');
+  ta.setAttribute('aria-label', `${rangeLabel(startLine, endLine)} 行へのコメント`);
+  ta.placeholder = 'ここを指摘する…  (Ctrl+Enter で送信)';
+  ta.value = text;
+  ta.addEventListener('input', () => {
+    draft.text = ta.value;
+    layoutRail(); // 入力で高さが変わるので下の吹き出しを押し下げ直す
+  });
+
+  const actions = el('div', 'bubble-actions');
+  const cancel = el('button', null, 'Cancel');
+  const submit = el('button', 'primary', 'Comment');
+  actions.append(cancel, submit);
+  box.append(ta, actions);
+
+  const close = () => {
+    draft = null;
+    active = null;
+    render();
+  };
+  const send = async () => {
+    const body = ta.value.trim();
+    if (!body) return close();
+    if (submit.disabled) return; // Ctrl+Enter 連打で二重投稿しない
+    submit.disabled = true;
+    try {
+      const res = await fetch('/api/comments', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ startLine, endLine, body }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    } catch (err) {
+      // 下書きは残す。捨てると打った内容を取り戻す手段が無くなる
+      submit.disabled = false;
+      fail(box, `送信に失敗しました (${err.message})`);
+      return;
+    }
+    // SSE の doc payload を待たずに畳む。待つと下書きが残って二重投稿の窓ができる
+    draft = null;
+    active = null;
+    render();
+  };
+  cancel.addEventListener('click', close);
+  submit.addEventListener('click', send);
+  ta.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) send();
+    if (e.key === 'Escape') close();
+  });
+  return box;
+}
+
+function renderRail() {
+  // 閉じるボタンは残す。消すのは吹き出しだけ
+  for (const b of [...railEl.querySelectorAll('.bubble')]) b.remove();
+  const items = state.comments.map((c) => ({ line: c.startLine, node: () => bubbleFor(c) }));
+  if (draft) items.push({ line: draft.startLine, node: draftBubble });
+  // アンカー行の順に積まないと「重なったら下にずらす」が意味を成さない
+  items.sort((a, b) => a.line - b.line);
+  for (const it of items) railEl.append(it.node());
+}
+
+/**
+ * 吹き出しをアンカー行と垂直に揃える。重なったら下にずらすだけで、本文側は動かさない。
+ * 本文に行を挿入しないのがこの機能の要点なので、位置合わせは全部こちら側で吸収する。
+ *
+ * 読み (rect / offsetHeight) と書き (style.top) を分けている。混ぜるとバブルごとに
+ * 強制同期レイアウトが走り、textarea の 1 文字ごとに呼ばれるこの関数が長い文書で目に見えて遅くなる。
+ */
+function layoutRail() {
+  const bubbles = [...railEl.querySelectorAll('.bubble')];
+  if (!bubbles.length || document.body.classList.contains('rail-overlay')) {
+    for (const b of bubbles) b.style.top = '';
+    railEl.style.height = '';
+    return;
+  }
+
+  // --- 読み ---
+  const rows = [...docEl.querySelectorAll('.row')].map((r) => ({
+    start: Number(r.dataset.start),
+    end: Number(r.dataset.end),
+    top: r.getBoundingClientRect().top,
+  }));
+  const railTop = railEl.getBoundingClientRect().top;
+  const heights = bubbles.map((b) => b.offsetHeight);
+  const gap = Number.parseInt(getComputedStyle(document.documentElement).getPropertyValue('--ak-bubble-gap'), 10) || 8;
+
+  // --- 計算 --- 吹き出しも行も行番号順なので、行側は 1 本のポインタで舐めれば足りる
+  const tops = [];
+  let cursor = 0;
+  let ri = 0;
+  for (const [i, b] of bubbles.entries()) {
+    const line = Number(b.dataset.line);
+    while (ri < rows.length - 1 && rows[ri].end < line) ri++;
+    const want = rows[ri] ? rows[ri].top - railTop : cursor;
+    const top = Math.max(want, cursor);
+    tops.push(top);
+    cursor = top + heights[i] + gap;
+  }
+
+  // --- 書き ---
+  for (const [i, b] of bubbles.entries()) b.style.top = `${tops[i]}px`;
+  railEl.style.height = `${cursor}px`;
+}
+
+function setActive(id, scroll) {
+  active = id;
+  for (const b of railEl.querySelectorAll('.bubble')) b.classList.toggle('active', b.dataset.id === id);
+  const target = state.comments.find((c) => c.id === id) ?? (id === 'draft' ? draft : null);
+  for (const row of docEl.querySelectorAll('.row')) {
+    const s = Number(row.dataset.start);
+    const e = Number(row.dataset.end);
+    row.classList.toggle('linked', !!target && s <= target.endLine && e >= target.startLine);
+  }
+  // active は .bubble-body の折りたたみを外すので高さが変わる。位置合わせを貼り直す
+  layoutRail();
+  if (!target) return;
+  if (scroll === 'doc') rowFor(target.startLine)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  if (scroll === 'rail') {
+    railEl.querySelector(`.bubble[data-id="${id}"]`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
+}
+
+/* ===== 畳んだ状態 (幅が足りない時) ===== */
+
+// 畳んだレールは画面外に出るだけで DOM に残る。inert を外し忘れると
+// Tab が画面外のボタンに入り、フォーカスの居場所が分からなくなる
+function openRail() {
+  if (!document.body.classList.contains('rail-overlay')) return;
+  document.body.classList.add('rail-open');
+  railEl.inert = false;
+}
+railCloseEl.addEventListener('click', () => {
+  document.body.classList.remove('rail-open');
+  railEl.inert = true;
+});
+
+// style.css の @media (max-width: 1199px) と同じ条件。別々に書くと 1199.5px のような
+// 小数幅で CSS と JS の判定が食い違い、全吹き出しが同じ位置に重なる
+const railOverlayQuery = window.matchMedia('(max-width: 1199px)');
+
+function syncRailMode() {
+  const overlay = railOverlayQuery.matches;
+  document.body.classList.toggle('rail-overlay', overlay);
+  if (!overlay) document.body.classList.remove('rail-open');
+  railEl.inert = overlay && !document.body.classList.contains('rail-open');
+}
+
+/* ===== 選択とフォーム ===== */
 
 function paintRange() {
   if (!drag) return;
@@ -140,44 +370,29 @@ document.addEventListener('mouseup', () => {
   const lo = Math.min(drag.start, drag.end);
   const hi = Math.max(drag.start, drag.end);
   drag = null;
-  openForm(lo, hi);
+  for (const row of docEl.querySelectorAll('.row')) row.classList.remove('in-range');
+  draft = { startLine: lo, endLine: hi, text: draft?.text ?? '' };
+  render();
+  openRail();
+  setActive('draft');
+  railEl.querySelector('.bubble.draft textarea')?.focus();
 });
 
-function openForm(startLine, endLine) {
-  docEl.querySelector('.form')?.remove();
-  const anchorRow = [...docEl.querySelectorAll('.row')].reverse().find((r) => Number(r.dataset.start) <= endLine);
-  const form = el('div', 'form');
-  const ta = el('textarea');
-  ta.placeholder = 'ここを指摘する…  (Ctrl+Enter で送信)';
-  const actions = el('div', 'form-actions');
-  actions.append(el('span', 'form-range', `L${startLine}${endLine !== startLine ? `-${endLine}` : ''}`));
-  const cancel = el('button', null, 'Cancel');
-  const submit = el('button', 'primary', 'Comment');
-  actions.append(cancel, submit);
-  form.append(ta, actions);
-  anchorRow?.after(form);
-  ta.focus();
+/* ===== 描画 ===== */
 
-  const close = () => {
-    form.remove();
-    for (const row of docEl.querySelectorAll('.row')) row.classList.remove('in-range');
-  };
-  cancel.addEventListener('click', close);
-  const send = async () => {
-    const body = ta.value.trim();
-    if (!body) return close();
-    await fetch('/api/comments', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ startLine, endLine, body }),
-    });
-    close();
-  };
-  submit.addEventListener('click', send);
-  ta.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) send();
-    if (e.key === 'Escape') close();
-  });
+function render() {
+  const { doc, comments, round } = state;
+  if (!doc) return;
+  filePathEl.textContent = doc.path;
+  roundEl.textContent = round ? `R${String(round.n).padStart(3, '0')}` : '';
+  const open = comments.filter((c) => !c.resolved).length;
+  countEl.textContent = `${open} open / ${comments.length}`;
+
+  renderDoc();
+  renderRail();
+  if (active) setActive(active);
+  else layoutRail();
+  renderMermaid();
 }
 
 async function renderMermaid() {
@@ -192,7 +407,18 @@ async function renderMermaid() {
     });
   }
   await mermaidLib.run({ nodes });
+  layoutRail(); // 図の描画で本文の高さが変わるため必ず貼り直す
 }
+
+// 本文の高さが変わったら位置合わせをやり直す (画像・フォント・折り返し幅)
+new ResizeObserver(() => layoutRail()).observe(docEl);
+railOverlayQuery.addEventListener('change', () => {
+  syncRailMode();
+  layoutRail();
+});
+window.addEventListener('resize', () => layoutRail());
+
+syncRailMode();
 
 const sse = new EventSource('/events');
 sse.onmessage = (e) => {

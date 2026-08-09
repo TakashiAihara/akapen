@@ -22,7 +22,13 @@
   <span class="banner-text" id="bannerText"></span>
   <button class="primary" id="nextRound">このラウンドを終える</button>
 </div>
-<main id="doc" class="doc"></main>
+<main class="stage">
+  <div id="doc" class="doc"></div>
+  <!-- コメントは本文の行間に差し込まず、ここに逃がす。本文の読みを分断しないため -->
+  <aside id="rail" class="rail">
+    <button type="button" class="rail-close" id="railClose" aria-label="レールを閉じる" title="閉じる">×</button>
+  </aside>
+</main>
 <script type="module" src="/app.js"></script>
 </body>
 </html>
