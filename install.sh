@@ -44,26 +44,33 @@ trap 'rm -rf "$tmp"' EXIT
 echo "akapen: ${asset} (${VERSION}) を取得します"
 curl -fsSL "${base}/${asset}" -o "${tmp}/akapen" || die "取得に失敗しました: ${base}/${asset}"
 
-# チェックサムは取れた時だけ検証する。SHA256SUMS が無いリリースでも入れられるようにするが、
-# 取れたのに一致しない場合は必ず止める (壊れたものを黙って入れない)。
-if curl -fsSL "${base}/SHA256SUMS" -o "${tmp}/SHA256SUMS" 2>/dev/null; then
-  expected="$(grep " ${asset}\$" "${tmp}/SHA256SUMS" | awk '{print $1}')"
-  if [ -n "$expected" ]; then
-    if command -v sha256sum >/dev/null 2>&1; then
-      actual="$(sha256sum "${tmp}/akapen" | awk '{print $1}')"
-    elif command -v shasum >/dev/null 2>&1; then
-      actual="$(shasum -a 256 "${tmp}/akapen" | awk '{print $1}')"
-    else
-      actual=""
-      echo "akapen: sha256 を計算する道具が無いので検証を飛ばします" >&2
-    fi
-    if [ -n "$actual" ] && [ "$actual" != "$expected" ]; then
-      die "チェックサムが一致しません (期待 ${expected} / 実際 ${actual})"
-    fi
-    [ -n "$actual" ] && echo "akapen: チェックサム OK"
-  fi
+# 検証できない場合は止める。curl | sh で流し込む導線なので、fail-open は素通りと同義になる。
+# 「SHA256SUMS の無いリリースでも入れられるように」は、未検証の実行ファイルを配る理由にならない。
+if command -v sha256sum >/dev/null 2>&1; then
+  sha256() { sha256sum "$1" | awk '{print $1}'; }
+elif command -v shasum >/dev/null 2>&1; then
+  sha256() { shasum -a 256 "$1" | awk '{print $1}'; }
 else
-  echo "akapen: SHA256SUMS が取得できないので検証を飛ばします" >&2
+  die "sha256sum も shasum も見つかりません。検証できないので中止します"
+fi
+
+curl -fsSL "${base}/SHA256SUMS" -o "${tmp}/SHA256SUMS" \
+  || die "SHA256SUMS が取得できません: ${base}/SHA256SUMS"
+
+expected="$(grep " ${asset}$" "${tmp}/SHA256SUMS" | awk '{print $1}')"
+[ -n "$expected" ] || die "SHA256SUMS に ${asset} の行がありません"
+
+actual="$(sha256 "${tmp}/akapen")"
+[ "$actual" = "$expected" ] || die "チェックサムが一致しません (期待 ${expected} / 実際 ${actual})"
+echo "akapen: チェックサム OK"
+
+# 注意: この checksum は Release と同じ場所から取っているので、改竄されれば両方差し替えられる。
+# 真正性まで見るなら gh が要る (任意):
+#   gh attestation verify <binary> --repo TakashiAihara/akapen
+if command -v gh >/dev/null 2>&1 && [ "${AKAPEN_VERIFY_ATTESTATION:-0}" = 1 ]; then
+  gh attestation verify "${tmp}/akapen" --repo "$REPO" >/dev/null 2>&1 \
+    && echo "akapen: attestation OK" \
+    || die "attestation の検証に失敗しました"
 fi
 
 chmod +x "${tmp}/akapen"

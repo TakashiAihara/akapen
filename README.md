@@ -35,7 +35,13 @@ curl -fsSL https://raw.githubusercontent.com/TakashiAihara/akapen/main/install.s
 | `AKAPEN_VERSION` | 入れるタグ (既定 `latest`) |
 | `AKAPEN_INSTALL_DIR` | 置き場所 (既定 `$HOME/.local/bin`) |
 
-`SHA256SUMS` が取得できた場合はチェックサムを検証する。一致しなければ止める。
+**チェックサムの検証は必須**。`SHA256SUMS` が取れない / 対象の行が無い / `sha256sum` も `shasum` も無い、のいずれでも中止する。検証できないものを入れないため。
+
+`AKAPEN_VERIFY_ATTESTATION=1` を付けると、`gh` がある環境で build provenance も検証する。checksum は Release と同じ場所から取っているので、改竄されれば両方差し替えられる。真正性まで見たい場合はこちら。
+
+```bash
+gh attestation verify ~/.local/bin/akapen --repo TakashiAihara/akapen
+```
 
 対応は linux / darwin の x64 と arm64。バイナリは GitHub Actions が tag push で作り、Release に上げている (`.github/workflows/release.yml`)。
 
