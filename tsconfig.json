@@ -11,11 +11,14 @@
     // 明示するのは base が持たないものと、外す理由があるものだけにする。
     "types": ["bun"],
 
-    // @tsconfig/bun は allowJs: true。有効だと web/*.js の実体が解決され、
-    // `with { type: 'file' }` 用の宣言 (types/assets.d.ts) が使われなくなる。
-    // web/ はブラウザで動く別世界で TypeScript の対象ではないので、実体を見ない。
+    // web/ はブラウザ向けにビルドするので、DOM の型が要る。
+    // Bun の型と両方載せる (サーバ側は DOM を使わないが、分けるほどの益は無い)
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+
+    // ビルド成果物 (web/dist) は `with { type: 'file' }` で埋め込むだけ。
+    // 実体を解決させると「default export が無い」で落ちる
     "allowJs": false
   },
 
-  "include": ["src", "scripts", "tests", "types"]
+  "include": ["src", "scripts", "tests", "types", "shared", "web"]
 }

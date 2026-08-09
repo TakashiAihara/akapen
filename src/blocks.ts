@@ -1,28 +1,8 @@
 // markdown-it 15 は型を同梱している。旧 @types/markdown-it のサブパス
 // ('markdown-it/lib/token.mjs') は解決できないので、本体から取る。
 import MarkdownIt, { type Token } from 'markdown-it';
+import type { Block, BlockKind, Doc } from '../shared/types.ts';
 import hljs from 'highlight.js';
-
-export type BlockKind =
-  | 'frontmatter'
-  | 'heading'
-  | 'paragraph'
-  | 'list-item'
-  | 'table-row'
-  | 'code'
-  | 'mermaid'
-  | 'hr';
-
-export type Block = {
-  startLine: number; // 1-based, inclusive
-  endLine: number; // 1-based, inclusive
-  kind: BlockKind;
-  html: string;
-  text: string; // raw source of the range — the re-anchoring key
-  depth: number; // list / blockquote nesting
-  quoted: boolean;
-  flags: string[];
-};
 
 /**
  * html: false。md に直接書いた HTML はエスケープして文字として出す。
@@ -42,11 +22,7 @@ const md = new MarkdownIt({ html: false, linkify: true, typographer: false });
  * こちらは素の文字を保つ。レビュー対象は原文であって組版ではない。
  */
 
-export type Doc = {
-  path: string;
-  blocks: Block[];
-  lineCount: number;
-};
+export type { Block, BlockKind, Doc };
 
 const FM_FENCE = /^---\s*$/;
 

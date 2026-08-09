@@ -8,7 +8,10 @@
  */
 
 /** 動作名 → 既定のキー。1 つの動作に複数のキーを割り当ててよい。 */
-export const DEFAULT_KEYMAP = {
+/** 動作名 → キーの配列 */
+export type Keymap = Record<string, string[]>;
+
+export const DEFAULT_KEYMAP: Keymap = {
   'row.next': ['j'],
   'row.prev': ['k'],
   // マウスのドラッグと同じ範囲選択をキーボードでも取れるようにする。
@@ -38,7 +41,7 @@ const WHILE_TYPING = new Set(['comment.submit', 'comment.cancel']);
  * KeyboardEvent.key は矢印を `ArrowDown` で返すが、設定に `arrowdown` と書かせるのは
  * 冗長なので `down` に寄せる。両方の綴りを受け付ける。
  */
-export function normalizeKey(name) {
+export function normalizeKey(name: string): string {
   const parts = String(name).toLowerCase().split('+');
   let base = parts.pop() ?? '';
   // 空白キーは trim で消えるので、先に拾う
@@ -48,7 +51,7 @@ export function normalizeKey(name) {
 }
 
 /** KeyboardEvent → `ctrl+shift+k` 形式。修飾子の順序を固定して表記のブレを潰す。 */
-export function keyOf(e) {
+export function keyOf(e: KeyboardEvent): string {
   const parts = [];
   if (e.ctrlKey) parts.push('ctrl');
   if (e.metaKey) parts.push('meta');
@@ -59,7 +62,7 @@ export function keyOf(e) {
   return parts.join('+');
 }
 
-function isTyping(target) {
+function isTyping(target: EventTarget | null): boolean {
   return (
     target instanceof HTMLElement &&
     (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT' || target.isContentEditable)
@@ -70,8 +73,8 @@ function isTyping(target) {
  * 上書き用 JSON をマージする。形は既定値と同じ `{ 動作名: [キー] }`。
  * 値に `null` / `[]` を書くと既定の割り当てを外せる (無効化する手段が無いと詰む)。
  */
-export function mergeKeymap(base, override) {
-  const merged = { ...base };
+export function mergeKeymap(base: Keymap, override: unknown): Keymap {
+  const merged: Keymap = { ...base };
   if (!override || typeof override !== 'object') return merged;
   for (const [action, keys] of Object.entries(override)) {
     if (keys === null) {
@@ -87,8 +90,8 @@ export function mergeKeymap(base, override) {
 }
 
 /** キー → 動作名 の逆引き。後勝ちにせず、先に定義された動作を優先する。 */
-function invert(keymap) {
-  const index = new Map();
+function invert(keymap: Keymap): Map<string, string> {
+  const index = new Map<string, string>();
   for (const [action, keys] of Object.entries(keymap)) {
     for (const key of keys ?? []) {
       const k = normalizeKey(key);
@@ -102,7 +105,10 @@ function invert(keymap) {
  * @param keymap  mergeKeymap の結果
  * @param actions 動作名 → 関数。戻り値が false なら既定動作を止めない
  */
-export function bindKeys(keymap, actions) {
+export function bindKeys(
+  keymap: Keymap,
+  actions: Record<string, (e: KeyboardEvent) => unknown>,
+): Map<string, string> {
   const index = invert(keymap);
   document.addEventListener('keydown', (e) => {
     // IME 変換中のキーは変換の操作であって akapen への指示ではない。
@@ -120,7 +126,7 @@ export function bindKeys(keymap, actions) {
   return index;
 }
 
-export async function loadKeymap() {
+export async function loadKeymap(): Promise<Keymap> {
   try {
     const res = await fetch('/keymap.json');
     if (!res.ok) return { ...DEFAULT_KEYMAP };

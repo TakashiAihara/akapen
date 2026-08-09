@@ -14,12 +14,13 @@ declare module '*.min.js' {
   export default path;
 }
 
-declare module '*/web/app.js' {
+// web/dist はブラウザ向けのビルド成果物。埋め込むのはパスだけで中身は見ない
+declare module '*/web/dist/app.js' {
   const path: string;
   export default path;
 }
 
-declare module '*/web/keys.js' {
+declare module '*/web/dist/mermaid.js' {
   const path: string;
   export default path;
 }

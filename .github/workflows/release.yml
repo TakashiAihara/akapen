@@ -36,6 +36,7 @@ jobs:
       - name: build
         run: |
           set -eux
+          bun run build:web
           mkdir -p dist
           for t in linux-x64 linux-arm64 darwin-x64 darwin-arm64; do
             bun build --compile --target="bun-$t" src/cli.ts --outfile "dist/akapen-$t"

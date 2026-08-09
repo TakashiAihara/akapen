@@ -31,6 +31,7 @@ jobs:
           bun-version: latest
       - run: bun install --frozen-lockfile
 
+      - run: bun run build:web
       - run: bun run lint
       - run: bun run fmt:check
       - run: bun run typecheck
@@ -53,6 +54,7 @@ jobs:
         with:
           bun-version: latest
       - run: bun install --frozen-lockfile
+      - run: bun run build:web
       - run: bunx playwright install --with-deps chromium
 
       # 実ブラウザでしか捕まらない回帰 (フォーカス / IME / 範囲 / 再描画)。

@@ -170,6 +170,21 @@ bun run src/cli.ts note.md --keymap examples/keymap.json
 
 一方で **ステータス (resolved) は過去ラウンドのコメントにも効く**。「読み取り専用」はスナップショットと行アンカーの話で、ここまで凍らせると未解決コメントを閉じる手段が無くなり、`akapen comments` が同じ指摘を出し続けることになる。
 
+### ブラウザ側も TypeScript
+
+`web/` は `bun build` でバンドルしてから配信する。サーバと同じ `tsconfig` (`@tsconfig/strictest` + `ts-reset`) が効く。
+
+型の定義は `shared/` に置いて両側から使う。同じコメントと同じ payload を扱うのに片側にしか型が無いと、形を変えた時にもう片方が黙ってズレる。
+
+出力は 2 つ。`bun build --compile` で埋め込むので、名前が既知である必要がある。
+
+| 成果物 | 中身 |
+|---|---|
+| `web/dist/app.js` | 15KB |
+| `web/dist/mermaid.js` | 3.4MB。**mermaid ブロックがある時だけ読む** |
+
+mermaid を `app.js` に取り込むと 3.3MB になり、図が 1 つも無い文書でも毎回読んで解析することになる。`--splitting` はハッシュ名のチャンクを 100 個以上作るので埋め込みと噛み合わない。entry を 2 つに分けるのが両立する形。
+
 ### 右レール
 
 コメントは本文の行間に差し込まず、右のレールに吹き出しとして出す。

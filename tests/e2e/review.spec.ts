@@ -12,6 +12,8 @@ const A = { rail: '#railAnchored .bubble', draft: '#rail .bubble.draft', ta: '#r
 test.beforeEach(async ({ page, akapen }) => {
   await page.goto(akapen.url);
   await expect(page.locator('.row').first()).toBeVisible();
+  // mermaid は非同期に描画されて本文の高さを変える。落ち着いてから測る
+  await expect(page.locator('#doc svg')).toBeVisible({ timeout: 15_000 });
 });
 
 /** ガターの + を押して下書きを開く */
@@ -171,4 +173,14 @@ test('md に書いた生 HTML は実行されず、文字として出る', async
   // 文字としては読めること (レビュー対象なので消してはいけない)
   await expect(page.locator('#doc')).toContainText("<script>window.xssMarker = 'executed';</script>");
   await expect(page.locator('#doc')).toContainText('<b>太字にはならない</b>');
+});
+
+test('mermaid は図がある時だけ読み込まれ、描画される', async ({ page, akapen }) => {
+  // beforeEach で 1 度開いているので、読み込みを見るには開き直す
+  const fetched: string[] = [];
+  page.on('response', (r) => fetched.push(new URL(r.url()).pathname));
+  await page.goto(akapen.url);
+  await expect(page.locator('#doc svg')).toBeVisible({ timeout: 15_000 });
+  expect(fetched).toContain('/mermaid.js');
+  expect(fetched).toContain('/app.js');
 });
