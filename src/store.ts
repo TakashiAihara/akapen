@@ -50,7 +50,7 @@ export type Review = {
 export function storeDir(filePath: string): string {
   const abs = resolve(filePath);
   const hash = createHash('sha1').update(abs).digest('hex').slice(0, 12);
-  const root = process.env.AKAPEN_HOME ?? join(homedir(), '.akapen');
+  const root = process.env['AKAPEN_HOME'] ?? join(homedir(), '.akapen');
   return join(root, 'reviews', `${basename(abs).replace(/\.md$/, '')}-${hash}`);
 }
 

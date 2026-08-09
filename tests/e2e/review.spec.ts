@@ -44,7 +44,7 @@ test('吹き出しはアンカー行に揃い、重ならない', async ({ page 
   }
   const boxes = await page.locator(A.rail).evaluateAll((els) =>
     els.map((el) => {
-      const line = Number((el as HTMLElement).dataset.line);
+      const line = Number((el as HTMLElement).dataset['line']);
       const row = document.querySelector(`.row[data-start="${line}"]`);
       return {
         top: el.getBoundingClientRect().top,
@@ -62,7 +62,7 @@ test('吹き出しはアンカー行に揃い、重ならない', async ({ page 
 
 test('サーバ由来のイベントで本文の DOM と選択が壊れない', async ({ page, request, akapen }) => {
   await page.evaluate(() => {
-    document.querySelectorAll('.row').forEach((r, i) => ((r as HTMLElement).dataset.mark = `g${i}`));
+    document.querySelectorAll('.row').forEach((r, i) => ((r as HTMLElement).dataset['mark'] = `g${i}`));
     const body = document.querySelectorAll('.row .body')[3]!;
     const range = document.createRange();
     range.selectNodeContents(body);
@@ -97,7 +97,7 @@ test('入力中に doc payload が来ても textarea を作り直さない (IME 
   await page.locator(A.ta).fill('へんかんちゅう');
   await page.evaluate((sel) => {
     const ta = document.querySelector(sel) as HTMLTextAreaElement;
-    ta.dataset.mark = 'original';
+    ta.dataset['mark'] = 'original';
     ta.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
   }, A.ta);
 

@@ -1,17 +1,21 @@
 {
+  "$schema": "https://json.schemastore.org/tsconfig",
+
+  // bun を先に、strictest を後に置く。配列は後勝ちなので、
+  // @tsconfig/bun が緩めている 3 つ (noUnusedLocals / noUnusedParameters /
+  // noPropertyAccessFromIndexSignature) を strictest が締め直す。
+  "extends": ["@tsconfig/bun/tsconfig.json", "@tsconfig/strictest/tsconfig.json"],
+
   "compilerOptions": {
-    "target": "ESNext",
-    "module": "Preserve",
-    "moduleResolution": "bundler",
-    "allowImportingTsExtensions": true,
-    "verbatimModuleSyntax": true,
-    "noEmit": true,
-    "strict": true,
-    "noUncheckedIndexedAccess": true,
-    "noUnusedLocals": true,
-    "noUnusedParameters": true,
-    "skipLibCheck": true,
-    "types": ["bun"]
+    // bun 側の設定。strictest は module 系を持たないので、ここで戻す必要は無い。
+    // 明示するのは base が持たないものと、外す理由があるものだけにする。
+    "types": ["bun"],
+
+    // @tsconfig/bun は allowJs: true。有効だと web/*.js の実体が解決され、
+    // `with { type: 'file' }` 用の宣言 (types/assets.d.ts) が使われなくなる。
+    // web/ はブラウザで動く別世界で TypeScript の対象ではないので、実体を見ない。
+    "allowJs": false
   },
+
   "include": ["src", "scripts", "tests", "types"]
 }

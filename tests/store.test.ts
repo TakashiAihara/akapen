@@ -45,14 +45,14 @@ let work: string;
 
 beforeEach(() => {
   sandbox = mkdtempSync(join(tmpdir(), 'akapen-test-'));
-  process.env.AKAPEN_HOME = join(sandbox, 'home');
+  process.env['AKAPEN_HOME'] = join(sandbox, 'home');
   work = join(sandbox, 'note.md');
   writeFileSync(work, SOURCE);
 });
 
 afterEach(() => {
   rmSync(sandbox, { recursive: true, force: true });
-  delete process.env.AKAPEN_HOME;
+  delete process.env['AKAPEN_HOME'];
 });
 
 /** R001 に n 件、そのうち先頭を resolve 済みにして返す */
