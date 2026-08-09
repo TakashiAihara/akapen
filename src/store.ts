@@ -225,6 +225,20 @@ export function carriedOver(filePath: string): RoundComment[] {
 }
 
 /**
+ * エージェントに渡すコメント。現ラウンドを先に、その中は行順で返す。
+ *
+ * 持ち越しを廃止したので、ラウンド N の未解決コメントは N+1 の画面には出ない。
+ * 画面から消えるだけなら履歴 (#4) で足りるが、エージェントに渡らないと指摘が失われる。
+ * ラウンドを締める操作が「エージェントに渡す」の意味を持つので、締めた後も
+ * 未解決のものは出し続ける。
+ */
+export function pendingComments(filePath: string, includeResolved = false): RoundComment[] {
+  return loadAllComments(filePath)
+    .filter((c) => includeResolved || !c.resolved)
+    .sort((a, b) => b.round - a.round || a.startLine - b.startLine);
+}
+
+/**
  * ラウンドを指定せずにコメントの状態だけを更新する。
  *
  * 過去ラウンドの「読み取り専用」はスナップショットと行アンカーの話であって、

@@ -2,7 +2,7 @@
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { startServer } from './server.ts';
-import { loadComments, loadReview } from './store.ts';
+import { loadReview, pendingComments } from './store.ts';
 
 const USAGE = `akapen — markdown inline review (PoC)
 
@@ -49,23 +49,26 @@ if (positional[0] === 'comments') {
     console.error(`akapen: no such file: ${file ?? '(missing)'}`);
     process.exit(1);
   }
-  // 行番号はラウンドのスナップショット内でのもの。live のファイルとは一致しないので、
+  // 未解決なら過去ラウンド分も出す。締めた時点で画面からは消えるが、指摘は消えていない。
+  // 行番号はそのラウンドのスナップショット内でのもので live のファイルとは一致しないので、
   // エージェントは anchor (当時の原文) で現在のファイルを照合する。
   const review = loadReview(file);
-  const comments = (review.currentRound > 0 ? loadComments(file, review.currentRound) : []).filter(
-    (c) => args.all || !c.resolved,
-  );
+  const comments = pendingComments(file, Boolean(args.all));
   console.log(
     JSON.stringify(
       comments.map((c) => ({
         id: c.id,
         path: resolve(file),
-        round: review.currentRound,
+        round: c.round,
+        // 現ラウンドのものかどうか。過去のものは「当時の本文に対する指摘」で、
+        // いまのファイルでは行がズレている前提で扱う必要がある
+        current_round: c.round === review.currentRound,
         start_line: c.startLine,
         end_line: c.endLine,
         body: c.body,
         anchor: c.anchor,
         author: c.author,
+        resolved: c.resolved,
       })),
       null,
       2,
