@@ -32,13 +32,28 @@ nextRoundBtn.addEventListener('click', async () => {
   nextRoundBtn.disabled = true;
   try {
     const res = await fetch('/api/rounds', { method: 'POST' });
-    if (!res.ok) bannerTextEl.textContent = `ラウンドを切れませんでした (HTTP ${res.status})`;
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    // ラウンドが変われば本文も変わる。ここは本文ごと差し替えてよい (人が押した結果なので)
+    draft = null;
+    sel = null;
+    focusLine = null;
+    active = null;
+    applyPayload(await res.json());
   } catch (err) {
     bannerTextEl.textContent = `ラウンドを切れませんでした (${err.message})`;
   } finally {
     nextRoundBtn.disabled = false;
   }
 });
+
+/** コメントだけが変わった時の更新。本文には触らない。 */
+function applyComments(payload) {
+  state = { ...state, comments: payload.comments ?? state.comments, carried: payload.carried ?? state.carried };
+  markCommentedRows();
+  renderRail();
+  layoutRail();
+  updateCount();
+}
 
 // live の変更で本文は差し替えない。何回変わったかを出して、進むかどうかは人が決める。
 function renderBanner(changed) {
@@ -105,16 +120,7 @@ function renderDoc() {
     const gutter = el('div', 'gutter');
     gutter.append(el('span', 'lineno', String(block.startLine)));
     // レールを畳んでいる間はこのマーカーだけが手がかりになる
-    if (mine.length) {
-      const marker = el('button', 'marker', String(mine.length));
-      marker.title = `${mine.length} 件のコメント`;
-      marker.addEventListener('click', (e) => {
-        e.stopPropagation();
-        openRail();
-        setActive(mine[0].id, 'rail');
-      });
-      gutter.append(marker);
-    }
+    if (mine.length) gutter.append(makeMarker(mine));
     const add = el('button', 'add', '+');
     add.title = `${block.startLine}-${block.endLine} 行にコメント`;
     add.addEventListener('click', (e) => {
@@ -142,16 +148,57 @@ function renderDoc() {
       paintSelection();
     });
     // 本文側からも吹き出しに飛べるようにする (連動は双方向)
-    if (mine.length) {
-      row.addEventListener('click', (e) => {
-        if (e.target.closest('a, button')) return;
-        setActive(mine[0].id, 'rail');
-      });
-      row.tabIndex = 0;
-    }
+    row.addEventListener('click', (e) => {
+      if (e.target.closest('a, button')) return;
+      const now = state.comments.find((c) => block.startLine <= c.endLine && block.endLine >= c.startLine);
+      if (now) setActive(now.id, 'rail');
+    });
+    if (mine.length) row.tabIndex = 0;
 
     docEl.append(row);
   }
+}
+
+/** コメントの有無で行の印だけ塗り直す。本文の DOM は作り直さない。 */
+function markCommentedRows() {
+  for (const row of docEl.querySelectorAll('.row')) {
+    const s = Number(row.dataset.start);
+    const e = Number(row.dataset.end);
+    const mine = state.comments.filter((c) => s <= c.endLine && e >= c.startLine);
+    row.classList.toggle('has-comment', mine.length > 0);
+    const gutter = row.querySelector('.gutter');
+    const marker = gutter.querySelector('.marker');
+    if (!mine.length) {
+      marker?.remove();
+    } else if (marker) {
+      marker.textContent = String(mine.length);
+      marker.title = `${mine.length} 件のコメント`;
+    } else {
+      gutter.insertBefore(makeMarker(mine), gutter.querySelector('.add'));
+    }
+  }
+}
+
+function updateCount() {
+  const open = state.comments.filter((c) => !c.resolved).length;
+  const carried = state.carried.length;
+  countEl.textContent = `${open} open / ${state.comments.length}${carried ? ` (+ 過去 ${carried})` : ''}`;
+}
+
+function makeMarker(mine) {
+  const marker = el('button', 'marker', String(mine.length));
+  marker.title = `${mine.length} 件のコメント`;
+  marker.addEventListener('click', (e) => {
+    e.stopPropagation();
+    openRail();
+    // クリック時点のコメントを引き直す。行は作り直さないので古い配列を掴んだままになる
+    const row = marker.closest('.row');
+    const s = Number(row.dataset.start);
+    const e2 = Number(row.dataset.end);
+    const now = state.comments.find((c) => s <= c.endLine && e2 >= c.startLine);
+    if (now) setActive(now.id, 'rail');
+  });
+  return marker;
 }
 
 function rowFor(line) {
@@ -198,6 +245,8 @@ function bubbleFor(c, opts = {}) {
     try {
       const res = await fetch(`/api/comments/${c.id}/resolve`, { method: 'POST' });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!state.history) applyComments(await res.json());
+      else showRound(state.round.viewing);
     } catch (err) {
       btn.disabled = false;
       fail(box, `更新に失敗しました (${err.message})`);
@@ -244,8 +293,10 @@ function draftBubble() {
   const close = () => {
     draft = null;
     active = null;
-    render();
+    renderRail();
+    layoutRail();
   };
+  let posted = null;
   const send = async () => {
     const body = ta.value.trim();
     if (!body) return close();
@@ -258,18 +309,19 @@ function draftBubble() {
         body: JSON.stringify({ startLine, endLine, body }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      posted = await res.json();
     } catch (err) {
       // 下書きは残す。捨てると打った内容を取り戻す手段が無くなる
       submit.disabled = false;
       fail(box, `送信に失敗しました (${err.message})`);
       return;
     }
-    // SSE の doc payload を待たずに畳む。待つと下書きが残って二重投稿の窓ができる
     draft = null;
     active = null;
     // 選択は畳むが行フォーカスは残す。連続して打つ時に位置が飛ぶと使えない
     sel = null;
-    render();
+    paintSelection();
+    applyComments(posted);
   };
   cancel.addEventListener('click', close);
   submit.addEventListener('click', send);
@@ -435,7 +487,9 @@ function startDraft() {
   const lo = Math.min(sel.start, sel.end);
   const hi = Math.max(sel.start, sel.end);
   draft = { startLine: lo, endLine: hi, text: draft?.text ?? '' };
-  render();
+  // 本文には触らない。下書きを開くのはレールの中の出来事
+  renderRail();
+  layoutRail();
   openRail();
   setActive('draft');
   railEl.querySelector('.bubble.draft textarea')?.focus();
@@ -499,9 +553,7 @@ function render() {
   const focus = captureFocus();
   filePathEl.textContent = doc.path;
   renderRoundControls();
-  const open = comments.filter((c) => !c.resolved).length;
-  const carried = state.carried.length;
-  countEl.textContent = `${open} open / ${comments.length}${carried ? ` (+ 過去 ${carried})` : ''}`;
+  updateCount();
 
   renderDoc();
   paintSelection();
@@ -649,20 +701,23 @@ function applyPayload(payload) {
   window.scrollTo(0, y);
 }
 
+// 初回表示はここで 1 回だけ本文を取る。以降、本文の DOM を作り直すのは
+// ラウンドを切った時と履歴に切り替えた時だけ (どちらも人の操作)。
+async function boot() {
+  const res = await fetch('/api/doc');
+  if (!res.ok) return;
+  applyPayload(await res.json());
+}
+
+/**
+ * SSE で受けるのは通知だけ。ここで画面を作り直すと、読んでいる位置・入力中のフォーカス・
+ * IME の変換・本文の選択が、人の操作と無関係に壊れる。
+ */
 const sse = new EventSource('/events');
 sse.onmessage = (e) => {
   const payload = JSON.parse(e.data);
-
-  // 本文が変わっただけならバナーを出すだけ。再描画すると読んでいる位置と選択が飛ぶ。
-  if (payload.type === 'changed') {
-    if (!state.history) renderBanner(payload);
-    return;
-  }
-
-  // 履歴を見ている間は現ラウンドの更新で画面を奪わない。見ていた当時の本文が消える
-  if (state.history) {
-    state = { ...state, carried: payload.carried ?? state.carried };
-    return;
-  }
-  applyPayload(payload);
+  if (payload.type !== 'changed') return;
+  if (!state.history) renderBanner(payload);
 };
+
+boot();

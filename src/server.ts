@@ -36,7 +36,14 @@ export function startServer(opts: ServeOptions) {
   let changes = 0;
 
   const clients = new Set<(data: string) => void>();
-  const broadcast = (payload: string) => {
+  /**
+   * SSE は通知の経路であって描画の経路ではない。流すのは「本文が変わりました」だけ。
+   * doc payload を送り付けると、受け取った側は画面を作り直すことになり、
+   * 読んでいる位置・入力中のフォーカス・IME の変換・本文の選択が人の操作と無関係に壊れる。
+   * 画面を変えるかどうかは人が決める、というラウンド制の原則を画面全体に通す。
+   */
+  const notifyChanged = () => {
+    const payload = JSON.stringify({ type: 'changed', ...changedState() });
     for (const send of clients) send(payload);
   };
 
@@ -94,7 +101,7 @@ export function startServer(opts: ServeOptions) {
       if (live === null) return;
       // 内容が現ラウンドと同じに戻ったら数え直す (保存しただけ / 変更を戻した場合)
       changes = live === snapshot ? 0 : changes + 1;
-      broadcast(JSON.stringify({ type: 'changed', ...changedState() }));
+      notifyChanged();
     }, 80);
   });
 
@@ -123,8 +130,8 @@ export function startServer(opts: ServeOptions) {
         const c = makeComment(snapshot, b.startLine, b.endLine, b.body, opts.author);
         comments.push(c);
         saveComments(file, review.currentRound, comments);
-        broadcast(docPayload());
-        return Response.json(c);
+        // 応答だけ返す。打った本人の画面は手元で更新する
+        return Response.json({ comment: c, comments, carried: carriedOver(file) });
       }
 
       // resolve は過去ラウンドのコメントにも効かせる。ステータスまで凍らせると
@@ -136,8 +143,7 @@ export function startServer(opts: ServeOptions) {
         });
         if (!updated) return new Response('not found', { status: 404 });
         if (updated.round === review.currentRound) comments = loadComments(file, review.currentRound);
-        broadcast(docPayload());
-        return Response.json(updated);
+        return Response.json({ comment: updated, comments, carried: carriedOver(file) });
       }
 
       // ラウンドを切るのは人。エージェントの途中保存では刻まない。
@@ -148,8 +154,8 @@ export function startServer(opts: ServeOptions) {
         snapshot = live;
         comments = [];
         changes = 0;
-        broadcast(docPayload());
-        return Response.json(roundState());
+        // ラウンドが変わると本文も変わる。新しい本文ごと返し、押した本人の画面だけ差し替える
+        return new Response(docPayload(), { headers: { 'content-type': 'application/json' } });
       }
 
       if (path === '/api/rounds' && req.method === 'GET') {
@@ -169,7 +175,9 @@ export function startServer(opts: ServeOptions) {
               }
             };
             clients.add(send);
-            send(docPayload());
+            // 初回表示は読み込み時の /api/doc が担う。ここで doc を送ると
+            // 再接続のたびに画面が作り直される
+            send(JSON.stringify({ type: 'changed', ...changedState() }));
           },
           cancel() {
             clients.delete(send);
