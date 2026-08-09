@@ -211,10 +211,19 @@ md 実ファイルには触れない。
 ## 検証
 
 ```bash
-bun run scripts/verify.ts examples/sample.md   # frontmatter / 行マッピング / ラウンドの凍結 / 横断読み
-bun run scripts/sweep.ts <dir>                 # ディレクトリ内の全 md で不変条件を確認
-bun run scripts/smoke-binary.ts                # 単一バイナリを作ってアセットの埋め込みを確認
+bun run typecheck                  # 型
+bun run test                       # 行マッピングとラウンドの不変条件 (vitest)
+bun run test:e2e                   # 実ブラウザでの回帰 (playwright)
+bun run sweep <dir>                # ディレクトリ内の全 md でブロック分割を確認
+bun run scripts/smoke-binary.ts    # 単一バイナリを作ってアセットの埋め込みを確認
 ```
+
+`tests/` は 2 層に分かれている。
+
+- `tests/*.test.ts` — 行マッピングとラウンドの保存層。ここが崩れると、指したい行が画面に無かったり、凍結したはずの本文が消える
+- `tests/e2e/` — 実ブラウザ。フォーカス・IME の変換・選択範囲・再描画は DOM の実挙動でしか捕まらない (実際、これらの不具合は保存層のテストでは 1 件も検出できなかった)
+
+E2E はテストごとに専用のサーバ・md・ストアを立てる (`tests/e2e/fixtures.ts`)。1 台を共有するとコメントが混ざる。
 
 vault の全 152 ノートで、行の取りこぼし・重複ともゼロ (24164 ブロック)。
 

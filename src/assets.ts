@@ -16,7 +16,9 @@ import mermaidJs from '../node_modules/mermaid/dist/mermaid.min.js' with { type:
 
 /** URL パス → 実行時に読めるパス */
 export const ASSETS: Record<string, string> = {
-  'index.html': indexHtml,
+  // bun の型は import attributes を見ておらず .html を HTMLBundle として扱う。
+  // 実行時は埋め込み先のパス (string) なので、ここだけ合わせる。
+  'index.html': indexHtml as unknown as string,
   'style.css': styleCss,
   'app.js': appJs,
   'keys.js': keysJs,
