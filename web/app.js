@@ -1,3 +1,5 @@
+import { bindKeys, loadKeymap } from './keys.js';
+
 const docEl = document.getElementById('doc');
 const railEl = document.getElementById('rail');
 const railCloseEl = document.getElementById('railClose');
@@ -10,7 +12,11 @@ const nextRoundBtn = document.getElementById('nextRound');
 const showLines = document.getElementById('showLines');
 
 let state = { doc: null, comments: [], round: null };
-let drag = null; // { start, end } ガター上のドラッグ選択
+let drag = null; // { start, end } ガター上のドラッグ中だけ立つ
+// 選択範囲。マウスもキーボードも最終的にここを動かし、startDraft に入る。
+// 経路を 1 本にしないと「マウスでは範囲が取れるがキーボードでは取れない」がすぐ生える。
+let sel = null; // { start, end }
+let focusLine = null; // キーボードで動かしている行 (先頭行の行番号)
 let draft = null; // { startLine, endLine, text } 入力中のコメント。再描画をまたいで保持する
 let active = null; // 選択中の吹き出し (comment id か 'draft')
 let mermaidLib = null;
@@ -40,13 +46,6 @@ function renderBanner(changed) {
 
 showLines.addEventListener('change', () => {
   document.body.classList.toggle('show-lines', showLines.checked);
-});
-
-document.addEventListener('keydown', (e) => {
-  if (e.key === 'l' && !e.metaKey && !e.ctrlKey && e.target.tagName !== 'TEXTAREA') {
-    showLines.checked = !showLines.checked;
-    showLines.dispatchEvent(new Event('change'));
-  }
 });
 
 function el(tag, cls, html) {
@@ -92,6 +91,9 @@ function renderDoc() {
     const row = el('div', cls.join(' '));
     row.dataset.start = block.startLine;
     row.dataset.end = block.endLine;
+    // j/k で移動した行に DOM フォーカスも移す。Tab 順を 159 行ぶん汚さないよう -1。
+    // コメントの付いた行だけは下で 0 にして Tab でも辿れるようにしている
+    row.tabIndex = -1;
 
     const gutter = el('div', 'gutter');
     gutter.append(el('span', 'lineno', String(block.startLine)));
@@ -108,6 +110,13 @@ function renderDoc() {
     }
     const add = el('button', 'add', '+');
     add.title = `${block.startLine}-${block.endLine} 行にコメント`;
+    add.addEventListener('click', (e) => {
+      e.stopPropagation();
+      drag = null;
+      focusLine = block.startLine;
+      sel = { start: block.startLine, end: block.endLine };
+      startDraft();
+    });
     gutter.append(add);
     row.append(gutter, el('div', 'body', block.html));
 
@@ -115,12 +124,15 @@ function renderDoc() {
       if (e.target.classList.contains('marker')) return;
       e.preventDefault();
       drag = { start: block.startLine, end: block.endLine };
-      paintRange();
+      sel = { ...drag };
+      focusLine = block.startLine;
+      paintSelection();
     });
     row.addEventListener('mouseenter', () => {
       if (!drag) return;
       drag.end = block.endLine;
-      paintRange();
+      sel = { start: drag.start, end: drag.end };
+      paintSelection();
     });
     // 本文側からも吹き出しに飛べるようにする (連動は双方向)
     if (mine.length) {
@@ -128,15 +140,7 @@ function renderDoc() {
         if (e.target.closest('a, button')) return;
         setActive(mine[0].id, 'rail');
       });
-      // 行から吹き出しへの移動。連続移動の keymap 全体は #2 で 1 箇所にまとめる
       row.tabIndex = 0;
-      row.addEventListener('keydown', (e) => {
-        if (e.target !== row || (e.key !== 'Enter' && e.key !== ' ')) return;
-        e.preventDefault();
-        openRail();
-        setActive(mine[0].id, 'rail');
-        railEl.querySelector(`.bubble[data-id="${mine[0].id}"]`)?.focus();
-      });
     }
 
     docEl.append(row);
@@ -246,14 +250,14 @@ function draftBubble() {
     // SSE の doc payload を待たずに畳む。待つと下書きが残って二重投稿の窓ができる
     draft = null;
     active = null;
+    // 選択は畳むが行フォーカスは残す。連続して打つ時に位置が飛ぶと使えない
+    sel = null;
     render();
   };
   cancel.addEventListener('click', close);
   submit.addEventListener('click', send);
-  ta.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) send();
-    if (e.key === 'Escape') close();
-  });
+  // Ctrl+Enter / Escape はここに書かない。keys.js の comment.submit / comment.cancel が
+  // 下のボタンを押す。二重に持つと片方だけ IME ガードが抜ける (実際に抜けていた)
   return box;
 }
 
@@ -354,29 +358,64 @@ function syncRailMode() {
 }
 
 /* ===== 選択とフォーム ===== */
+/* マウスもキーボードも sel を動かして startDraft を呼ぶ。入口は 1 つに保つ */
 
-function paintRange() {
-  if (!drag) return;
-  const lo = Math.min(drag.start, drag.end);
-  const hi = Math.max(drag.start, drag.end);
+function paintSelection() {
+  const lo = sel ? Math.min(sel.start, sel.end) : null;
+  const hi = sel ? Math.max(sel.start, sel.end) : null;
   for (const row of docEl.querySelectorAll('.row')) {
     const s = Number(row.dataset.start);
-    row.classList.toggle('in-range', s >= lo && s <= hi);
+    row.classList.toggle('in-range', sel !== null && s >= lo && s <= hi);
+    row.classList.toggle('focused', s === focusLine);
   }
 }
 
-document.addEventListener('mouseup', () => {
-  if (!drag) return;
-  const lo = Math.min(drag.start, drag.end);
-  const hi = Math.max(drag.start, drag.end);
-  drag = null;
-  for (const row of docEl.querySelectorAll('.row')) row.classList.remove('in-range');
+function clearSelection() {
+  sel = null;
+  paintSelection();
+}
+
+function startDraft() {
+  if (!sel) return;
+  const lo = Math.min(sel.start, sel.end);
+  const hi = Math.max(sel.start, sel.end);
   draft = { startLine: lo, endLine: hi, text: draft?.text ?? '' };
   render();
   openRail();
   setActive('draft');
   railEl.querySelector('.bubble.draft textarea')?.focus();
+}
+
+document.addEventListener('mouseup', () => {
+  if (!drag) return;
+  drag = null;
+  startDraft();
 });
+
+/* ===== 行フォーカス (キーボード動線) ===== */
+
+function lineNumbers() {
+  return [...docEl.querySelectorAll('.row')].map((r) => Number(r.dataset.start));
+}
+
+/** step ぶん行を移動する。extend が真なら選択範囲を伸ばし、偽なら 1 行に畳む */
+function moveFocus(step, extend) {
+  const lines = lineNumbers();
+  if (!lines.length) return;
+  if (focusLine === null) {
+    focusLine = lines[0];
+  } else {
+    const i = lines.indexOf(focusLine);
+    const next = i < 0 ? 0 : Math.min(Math.max(i + step, 0), lines.length - 1);
+    focusLine = lines[next];
+  }
+  const anchor = extend && sel ? sel.start : focusLine;
+  sel = { start: anchor, end: focusLine };
+  paintSelection();
+  const row = docEl.querySelector(`.row[data-start="${focusLine}"]`);
+  row?.scrollIntoView({ block: 'nearest' });
+  row?.focus({ preventScroll: true });
+}
 
 /* ===== 描画 ===== */
 
@@ -389,6 +428,7 @@ function render() {
   countEl.textContent = `${open} open / ${comments.length}`;
 
   renderDoc();
+  paintSelection();
   renderRail();
   if (active) setActive(active);
   else layoutRail();
@@ -419,6 +459,40 @@ railOverlayQuery.addEventListener('change', () => {
 window.addEventListener('resize', () => layoutRail());
 
 syncRailMode();
+
+/* ===== キーマップ =====
+ * 割り当ては web/keys.js。ここは動作の実体だけを持つ。
+ * マウス動線と同じ関数 (startDraft / setActive) を呼び、経路を分岐させない。
+ */
+const ACTIONS = {
+  'row.next': () => moveFocus(1, false),
+  'row.prev': () => moveFocus(-1, false),
+  'row.extendNext': () => moveFocus(1, true),
+  'row.extendPrev': () => moveFocus(-1, true),
+  'comment.start': () => {
+    if (focusLine === null) moveFocus(0, false);
+    if (!sel) return false;
+    startDraft();
+  },
+  'comment.submit': () => {
+    const btn = railEl.querySelector('.bubble.draft button.primary');
+    if (!btn) return false; // 入力中でなければ既定動作を邪魔しない
+    btn.click();
+  },
+  'comment.cancel': () => {
+    const btn = railEl.querySelector('.bubble.draft button:not(.primary)');
+    if (btn) btn.click();
+    else if (document.body.classList.contains('rail-open')) railCloseEl.click();
+    else if (sel) clearSelection();
+    else return false;
+  },
+  'lines.toggle': () => {
+    showLines.checked = !showLines.checked;
+    showLines.dispatchEvent(new Event('change'));
+  },
+};
+
+loadKeymap().then((keymap) => bindKeys(keymap, ACTIONS));
 
 const sse = new EventSource('/events');
 sse.onmessage = (e) => {

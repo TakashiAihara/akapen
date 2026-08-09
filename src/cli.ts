@@ -13,6 +13,7 @@ options:
   --host <addr>    リッスンアドレス (default 127.0.0.1)
   -p, --port <n>   ポート (default 4300)
   --css <file>     追加で読み込む CSS
+  --keymap <file>  キーマップを上書きする JSON ({ "動作名": ["キー"] })
   --author <name>  コメントの著者名 (default $USER)
   --all            comments: 解決済みも含める
 `;
@@ -87,6 +88,7 @@ const { server, storeDir, round } = startServer({
   port,
   author: (args.author as string) ?? process.env.USER ?? 'user',
   cssPath: args.css ? resolve(args.css as string) : undefined,
+  keymapPath: args.keymap ? resolve(args.keymap as string) : undefined,
 });
 
 console.log(`akapen  ${resolve(file)}`);

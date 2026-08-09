@@ -1,0 +1,10 @@
+{
+  "_comment": "--keymap で渡すと既定の割り当てを上書きできる。既定は web/keys.js を参照",
+
+  "row.next": ["j", "down"],
+  "row.prev": ["k", "up"],
+
+  "comment.start": ["c", "i"],
+
+  "lines.toggle": null
+}

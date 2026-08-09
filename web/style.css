@@ -119,6 +119,16 @@ body {
 /* アンカーの印は高さも位置も変えない。本文が動くと読みの連続性が切れる */
 .row.has-comment { box-shadow: inset 2px 0 0 var(--ak-accent); }
 .row.linked { background: var(--ak-accent-subtle); box-shadow: inset 3px 0 0 var(--ak-accent); }
+/* j/k で動かしている行。選択 (in-range) と区別が付くよう先頭に印を出す */
+.row.focused { background: var(--ak-accent-subtle); }
+.row.focused .gutter::before {
+  content: "\25B8";
+  position: absolute;
+  left: -14px;
+  color: var(--ak-accent);
+  font-size: 11px;
+}
+.row:focus { outline: none; }
 
 .gutter {
   flex: 0 0 auto;
