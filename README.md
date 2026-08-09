@@ -114,6 +114,14 @@ bun run src/cli.ts examples/sample.md
 
 ## 設計
 
+### markdown に直接書いた HTML
+
+エスケープして文字として出す (`markdown-it` を `html: false` で使う)。
+
+akapen が描くのは「レビュー対象の markdown」で、その出所は必ずしも自分ではない。`html: true` にすると本文がそのまま `innerHTML` に入るので、md を開いた時点で任意の JS が akapen の origin で動く。その origin には認証の無い `/api/comments` と、ファイルの絶対パスを返す `/api/doc` がある。
+
+markdown を読むための道具に markdown 以外が紛れ込む口を開けておく利点より、塞ぐ方が大きいという判断。
+
 ### 行マッピング
 
 markdown-it のトークンを走査して「ソース 1 行 = 1 ブロック」に割る (`src/blocks.ts`)。段落・リスト項目・表の行・コードの行・frontmatter の行が、それぞれ独立して指せる単位になる。
