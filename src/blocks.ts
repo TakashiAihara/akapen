@@ -1,6 +1,7 @@
-import MarkdownIt from 'markdown-it';
+// markdown-it 15 は型を同梱している。旧 @types/markdown-it のサブパス
+// ('markdown-it/lib/token.mjs') は解決できないので、本体から取る。
+import MarkdownIt, { type Token } from 'markdown-it';
 import hljs from 'highlight.js';
-import type Token from 'markdown-it/lib/token.mjs';
 
 export type BlockKind =
   | 'frontmatter'
@@ -221,7 +222,8 @@ function walkTable(tokens: Token[], openIdx: number, ctx: Ctx): number {
       for (let j = i + 1; j < trClose; j++) {
         const c = tokens[j]!;
         if (c.type === 'th_open' || c.type === 'td_open') {
-          const style = c.attrGet('style') ?? '';
+          // markdown-it 15 の attrs は number も取りうる (align は文字列だが型上は string | number)
+          const style = String(c.attrGet('style') ?? '');
           cells.push({ tag: c.type === 'th_open' ? 'th' : 'td', html: renderInline(tokens[j + 1]), align: style });
         }
       }

@@ -150,6 +150,11 @@ function renderDoc() {
     // 本文側からも吹き出しに飛べるようにする (連動は双方向)
     row.addEventListener('click', (e) => {
       if (e.target.closest('a, button')) return;
+      // クリックも j/k と同じ経路に入れる。ここを繋がないと、行を選んでから c を押しても
+      // 先頭行にコメントが付く (マウスとキーボードで動線が割れる)
+      focusLine = block.startLine;
+      sel = { start: block.startLine, end: block.endLine };
+      paintSelection();
       const now = state.comments.find((c) => block.startLine <= c.endLine && block.endLine >= c.startLine);
       if (now) setActive(now.id, 'rail');
     });

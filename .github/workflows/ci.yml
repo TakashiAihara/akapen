@@ -6,7 +6,7 @@ on:
   pull_request:
 
 jobs:
-  check:
+  unit:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -15,14 +15,35 @@ jobs:
           bun-version: latest
       - run: bun install --frozen-lockfile
 
-      - name: 不変条件 (行マッピング / ラウンドの凍結 / 横断読み)
-        run: bun run scripts/verify.ts examples/sample.md
-
+      - run: bun run typecheck
+      - name: 行マッピングとラウンドの不変条件
+        run: bun run test
       - name: docs 配下の全 md でブロック分割を確認
-        run: bun run scripts/sweep.ts docs
+        run: bun run sweep docs
 
       # リリース時に初めて壊れているのが分かるのを避ける。
       # 埋め込みは静的解析でしか効かないので、web/ にファイルを足して
-      # src/assets.ts への追記を忘れると、ここで 404 になって落ちる。
+      # src/assets.ts への追記を忘れると、ここで落ちる。
       - name: 単一バイナリのビルドと動作確認
         run: bun run scripts/smoke-binary.ts
+
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      - run: bunx playwright install --with-deps chromium
+
+      # 実ブラウザでしか捕まらない回帰 (フォーカス / IME / 範囲 / 再描画)。
+      # store 層のテストでは 1 件も検出できなかった箇所を見る。
+      - run: bun run test:e2e
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-trace
+          path: test-results/
+          retention-days: 7

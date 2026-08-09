@@ -4,10 +4,15 @@
   "private": true,
   "description": "markdown inline review — comments stay out of the file",
   "type": "module",
-  "bin": { "akapen": "./src/cli.ts" },
+  "bin": {
+    "akapen": "./src/cli.ts"
+  },
   "scripts": {
     "start": "bun run src/cli.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:e2e": "playwright test",
+    "sweep": "bun run scripts/sweep.ts"
   },
   "dependencies": {
     "highlight.js": "^11.11.1",
@@ -15,7 +20,9 @@
     "mermaid": "^11.16.1"
   },
   "devDependencies": {
-    "@types/markdown-it": "^14.1.2",
-    "typescript": "^5.9.3"
+    "@playwright/test": "^1.62.1",
+    "@types/bun": "^1.3.14",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.10"
   }
 }
