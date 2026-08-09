@@ -25,7 +25,19 @@ import {
   type Comment,
 } from '../src/store.ts';
 
-const SOURCE = ['---', 'title: t', 'status: active', '---', '', '# 見出し', '', '段落。', '', '- 項目', ''].join('\n');
+const SOURCE = [
+  '---',
+  'title: t',
+  'status: active',
+  '---',
+  '',
+  '# 見出し',
+  '',
+  '段落。',
+  '',
+  '- 項目',
+  '',
+].join('\n');
 const EDITED = `${SOURCE}\n## 追記\n\nエージェントが直した。\n`;
 
 let sandbox: string;
@@ -102,7 +114,10 @@ describe('review.json を失っても実体を守る', () => {
   const broken: [string, (dir: string) => void][] = [
     ['壊れている', (dir) => writeFileSync(join(dir, 'review.json'), '{ broken')],
     ['消えている', (dir) => rmSync(join(dir, 'review.json'))],
-    ['rounds が配列でない', (dir) => writeFileSync(join(dir, 'review.json'), '{"currentRound":2,"rounds":{}}')],
+    [
+      'rounds が配列でない',
+      (dir) => writeFileSync(join(dir, 'review.json'), '{"currentRound":2,"rounds":{}}'),
+    ],
   ];
 
   for (const [label, corrupt] of broken) {
@@ -121,7 +136,10 @@ describe('review.json を失っても実体を守る', () => {
   it('古い番号を指す review.json でも既存ラウンドを踏まない', () => {
     seed();
     openRound(work, EDITED);
-    writeFileSync(join(storeDir(work), 'review.json'), JSON.stringify({ version: 2, currentRound: 1, rounds: [] }));
+    writeFileSync(
+      join(storeDir(work), 'review.json'),
+      JSON.stringify({ version: 2, currentRound: 1, rounds: [] }),
+    );
 
     const r3 = openRound(work, EDITED);
     expect(r3.currentRound).toBe(3);
@@ -133,10 +151,13 @@ describe('review.json を失っても実体を守る', () => {
   it('review.json に載っていないラウンドも横断読みに入る', () => {
     seed();
     openRound(work, EDITED);
-    writeFileSync(join(storeDir(work), 'review.json'), JSON.stringify({ version: 2, currentRound: 1, rounds: [] }));
+    writeFileSync(
+      join(storeDir(work), 'review.json'),
+      JSON.stringify({ version: 2, currentRound: 1, rounds: [] }),
+    );
 
-    const known = loadReview(work).rounds.map((r) => r.n);
-    expect(roundNumbersOnDisk(work).every((n) => known.includes(n))).toBe(true);
+    const known = new Set(loadReview(work).rounds.map((r) => r.n));
+    expect(roundNumbersOnDisk(work).every((n) => known.has(n))).toBe(true);
     expect(loadAllComments(work).length).toBe(3);
   });
 

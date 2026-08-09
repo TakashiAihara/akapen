@@ -23,6 +23,9 @@ export type Akapen = {
 };
 
 export const test = base.extend<{ akapen: Akapen }>({
+  // playwright は第 1 引数に分割代入パターンを要求する (名前付き引数にすると
+  // "First argument must use the object destructuring pattern" で落ちる)。
+  // oxlint-disable-next-line no-empty-pattern
   akapen: async ({}, use) => {
     const port = nextPort++;
     const sandbox = mkdtempSync(join(tmpdir(), 'akapen-e2e-'));

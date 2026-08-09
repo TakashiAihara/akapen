@@ -1,0 +1,23 @@
+# git hook。CI と同じものを、CI より先に手元で落とすためのもの。
+# ここを通しても CI は同じ内容をもう一度回す (hook は --no-verify で飛ばせるため)。
+
+pre-commit:
+  parallel: true
+  jobs:
+    - name: format
+      # 直してから stage し直す。ここで落として人に直させる必要は無い
+      glob: '*.{js,ts,json}'
+      run: bunx oxfmt {staged_files}
+      stage_fixed: true
+
+    - name: lint
+      glob: '*.{js,ts}'
+      run: bunx oxlint {staged_files}
+
+pre-push:
+  jobs:
+    - name: typecheck
+      run: bun run typecheck
+
+    - name: test
+      run: bun run test

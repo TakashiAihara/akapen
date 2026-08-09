@@ -48,7 +48,11 @@ nextRoundBtn.addEventListener('click', async () => {
 
 /** コメントだけが変わった時の更新。本文には触らない。 */
 function applyComments(payload) {
-  state = { ...state, comments: payload.comments ?? state.comments, carried: payload.carried ?? state.carried };
+  state = {
+    ...state,
+    comments: payload.comments ?? state.comments,
+    carried: payload.carried ?? state.carried,
+  };
   markCommentedRows();
   renderRail();
   layoutRail();
@@ -362,7 +366,7 @@ function renderRail() {
 
   // 行順に積む。位置合わせは data-line でやるので描画には効かないが、
   // Tab の順序は DOM 順なので、揃えないとキーボードで飛び回ることになる
-  for (const c of [...state.comments].sort((a, b) => a.startLine - b.startLine)) {
+  for (const c of state.comments.toSorted((a, b) => a.startLine - b.startLine)) {
     anchoredEl.append(bubbleFor(c));
   }
   renderCarried();
@@ -395,7 +399,7 @@ function renderCarried() {
 function layoutRail() {
   // 下書きを動かさないため DOM の順序は当てにできない。アンカー行で並べ替えてから積む。
   // 順序が崩れると「重なったら下にずらす」が意味を成さない。
-  const bubbles = [...anchoredEl.querySelectorAll('.bubble')].sort(
+  const bubbles = [...anchoredEl.querySelectorAll('.bubble')].toSorted(
     (a, b) => Number(a.dataset.line) - Number(b.dataset.line),
   );
   if (!bubbles.length || document.body.classList.contains('rail-overlay')) {
@@ -412,7 +416,8 @@ function layoutRail() {
   }));
   const railTop = anchoredEl.getBoundingClientRect().top;
   const heights = bubbles.map((b) => b.offsetHeight);
-  const gap = Number.parseInt(getComputedStyle(document.documentElement).getPropertyValue('--ak-bubble-gap'), 10) || 8;
+  const gap =
+    Number.parseInt(getComputedStyle(document.documentElement).getPropertyValue('--ak-bubble-gap'), 10) || 8;
 
   // --- 計算 --- 吹き出しも行も行番号順なので、行側は 1 本のポインタで舐めれば足りる
   const tops = [];
@@ -446,7 +451,9 @@ function setActive(id, scroll) {
   if (!target) return;
   if (scroll === 'doc') rowFor(target.startLine)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   if (scroll === 'rail') {
-    railEl.querySelector(`.bubble[data-id="${id}"]`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    railEl
+      .querySelector(`.bubble[data-id="${id}"]`)
+      ?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   }
 }
 
@@ -560,7 +567,7 @@ function restoreFocus(saved) {
 }
 
 function render() {
-  const { doc, comments } = state;
+  const { doc } = state;
   if (!doc) return;
   const focus = captureFocus();
   filePathEl.textContent = doc.path;
@@ -726,10 +733,10 @@ async function boot() {
  * IME の変換・本文の選択が、人の操作と無関係に壊れる。
  */
 const sse = new EventSource('/events');
-sse.onmessage = (e) => {
+sse.addEventListener('message', (e) => {
   const payload = JSON.parse(e.data);
   if (payload.type !== 'changed') return;
   if (!state.history) renderBanner(payload);
-};
+});
 
 boot();

@@ -74,7 +74,9 @@ test('サーバ由来のイベントで本文の DOM と選択が壊れない', 
   expect(selected.length).toBeGreaterThan(0);
 
   // 別クライアントが投稿しても、こちらの画面は変わらない
-  await request.post(`${akapen.url}/api/comments`, { data: { startLine: 9, endLine: 9, body: '別クライアント' } });
+  await request.post(`${akapen.url}/api/comments`, {
+    data: { startLine: 9, endLine: 9, body: '別クライアント' },
+  });
   await page.waitForTimeout(700);
 
   const state = await page.evaluate(() => ({
@@ -86,7 +88,11 @@ test('サーバ由来のイベントで本文の DOM と選択が壊れない', 
   expect(state.selection).toBe(selected);
 });
 
-test('入力中に doc payload が来ても textarea を作り直さない (IME が切れる)', async ({ page, request, akapen }) => {
+test('入力中に doc payload が来ても textarea を作り直さない (IME が切れる)', async ({
+  page,
+  request,
+  akapen,
+}) => {
   await openDraft(page);
   await page.locator(A.ta).fill('へんかんちゅう');
   await page.evaluate((sel) => {
@@ -95,7 +101,9 @@ test('入力中に doc payload が来ても textarea を作り直さない (IME 
     ta.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
   }, A.ta);
 
-  await request.post(`${akapen.url}/api/comments`, { data: { startLine: 9, endLine: 9, body: '別クライアント' } });
+  await request.post(`${akapen.url}/api/comments`, {
+    data: { startLine: 9, endLine: 9, body: '別クライアント' },
+  });
   await page.waitForTimeout(700);
 
   const ta = page.locator(A.ta);

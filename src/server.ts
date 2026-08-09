@@ -184,7 +184,11 @@ export function startServer(opts: ServeOptions) {
           },
         });
         return new Response(stream, {
-          headers: { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' },
+          headers: {
+            'content-type': 'text/event-stream',
+            'cache-control': 'no-cache',
+            connection: 'keep-alive',
+          },
         });
       }
 
@@ -204,7 +208,9 @@ export function startServer(opts: ServeOptions) {
             JSON.parse(raw);
             body = raw;
           } catch {
-            console.error(`akapen: keymap の JSON が壊れています。既定のキーマップで続行します: ${opts.keymapPath}`);
+            console.error(
+              `akapen: keymap の JSON が壊れています。既定のキーマップで続行します: ${opts.keymapPath}`,
+            );
           }
         }
         return new Response(body, { headers: { 'content-type': 'application/json' } });

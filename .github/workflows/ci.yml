@@ -15,6 +15,8 @@ jobs:
           bun-version: latest
       - run: bun install --frozen-lockfile
 
+      - run: bun run lint
+      - run: bun run fmt:check
       - run: bun run typecheck
       - name: 行マッピングとラウンドの不変条件
         run: bun run test

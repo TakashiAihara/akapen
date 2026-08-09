@@ -224,7 +224,11 @@ function walkTable(tokens: Token[], openIdx: number, ctx: Ctx): number {
         if (c.type === 'th_open' || c.type === 'td_open') {
           // markdown-it 15 の attrs は number も取りうる (align は文字列だが型上は string | number)
           const style = String(c.attrGet('style') ?? '');
-          cells.push({ tag: c.type === 'th_open' ? 'th' : 'td', html: renderInline(tokens[j + 1]), align: style });
+          cells.push({
+            tag: c.type === 'th_open' ? 'th' : 'td',
+            html: renderInline(tokens[j + 1]),
+            align: style,
+          });
         }
       }
       colCount = Math.max(colCount, cells.length);

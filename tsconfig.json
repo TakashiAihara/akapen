@@ -11,14 +11,7 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "skipLibCheck": true,
-    "types": [
-      "bun"
-    ]
+    "types": ["bun"]
   },
-  "include": [
-    "src",
-    "scripts",
-    "tests",
-    "types"
-  ]
+  "include": ["src", "scripts", "tests", "types"]
 }

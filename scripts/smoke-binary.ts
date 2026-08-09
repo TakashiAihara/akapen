@@ -29,17 +29,28 @@ const webNames = readdirSync(WEB, { recursive: true })
   .map(String)
   .filter((n) => !n.endsWith('/') && n.includes('.'));
 const unregistered = webNames.filter((n) => !(n in ASSETS));
-ok('web/ のファイルがすべて src/assets.ts に登録されている', unregistered.length === 0, unregistered.join(', '));
+ok(
+  'web/ のファイルがすべて src/assets.ts に登録されている',
+  unregistered.length === 0,
+  unregistered.join(', '),
+);
 
 const build = Bun.spawnSync(['bun', 'build', '--compile', 'src/cli.ts', '--outfile', bin]);
-ok('バイナリがビルドできる', build.exitCode === 0, build.exitCode === 0 ? '' : new TextDecoder().decode(build.stderr).slice(0, 400));
+ok(
+  'バイナリがビルドできる',
+  build.exitCode === 0,
+  build.exitCode === 0 ? '' : new TextDecoder().decode(build.stderr).slice(0, 400),
+);
 if (build.exitCode !== 0) {
   rmSync(sandbox, { recursive: true, force: true });
   process.exit(1);
 }
 
 const help = Bun.spawnSync([bin, '--help'], { cwd: sandbox });
-ok('repo の外で --help が動く', help.exitCode === 0 && new TextDecoder().decode(help.stdout).includes('akapen'));
+ok(
+  'repo の外で --help が動く',
+  help.exitCode === 0 && new TextDecoder().decode(help.stdout).includes('akapen'),
+);
 
 const port = 4771;
 const server = Bun.spawn([bin, note, '-p', String(port)], {
@@ -68,7 +79,11 @@ if (up) {
   for (const name of Object.keys(ASSETS)) {
     const res = await fetch(`${base}/${name === 'index.html' ? '' : name}`);
     const body = await res.arrayBuffer();
-    ok(`埋め込みアセットが配信される: ${name}`, res.ok && body.byteLength > 0, `${res.status} ${body.byteLength}B`);
+    ok(
+      `埋め込みアセットが配信される: ${name}`,
+      res.ok && body.byteLength > 0,
+      `${res.status} ${body.byteLength}B`,
+    );
   }
   const missing = await fetch(`${base}/nope.txt`);
   ok('知らないパスは 404', missing.status === 404);
