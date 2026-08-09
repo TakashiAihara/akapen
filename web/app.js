@@ -454,9 +454,29 @@ function moveFocus(step, extend) {
 
 /* ===== 描画 ===== */
 
+/**
+ * 再描画はレールを丸ごと作り直すので、下書きの textarea は別の要素に置き換わる。
+ * 本文だけ引き継いでもフォーカスとキャレットが飛ぶと、打っている最中に手が止まる。
+ * doc payload は他クライアントの投稿や resolve でも飛ぶため、自分の操作と無関係に起きる。
+ */
+function captureFocus() {
+  const ta = railEl.querySelector('.bubble.draft textarea');
+  if (!ta || document.activeElement !== ta) return null;
+  return { start: ta.selectionStart, end: ta.selectionEnd };
+}
+
+function restoreFocus(saved) {
+  if (!saved) return;
+  const ta = railEl.querySelector('.bubble.draft textarea');
+  if (!ta) return;
+  ta.focus({ preventScroll: true });
+  ta.setSelectionRange(saved.start, saved.end);
+}
+
 function render() {
   const { doc, comments } = state;
   if (!doc) return;
+  const focus = captureFocus();
   filePathEl.textContent = doc.path;
   renderRoundControls();
   const open = comments.filter((c) => !c.resolved).length;
@@ -468,6 +488,7 @@ function render() {
   renderRail();
   if (active) setActive(active);
   else layoutRail();
+  restoreFocus(focus);
   renderMermaid();
 }
 
