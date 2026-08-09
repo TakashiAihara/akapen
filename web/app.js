@@ -256,10 +256,8 @@ function draftBubble() {
   };
   cancel.addEventListener('click', close);
   submit.addEventListener('click', send);
-  ta.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) send();
-    if (e.key === 'Escape') close();
-  });
+  // Ctrl+Enter / Escape はここに書かない。keys.js の comment.submit / comment.cancel が
+  // 下のボタンを押す。二重に持つと片方だけ IME ガードが抜ける (実際に抜けていた)
   return box;
 }
 

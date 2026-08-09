@@ -102,6 +102,10 @@ function invert(keymap) {
 export function bindKeys(keymap, actions) {
   const index = invert(keymap);
   document.addEventListener('keydown', (e) => {
+    // IME 変換中のキーは変換の操作であって akapen への指示ではない。
+    // ここを通すと、変換を Escape で取り消したつもりが下書きごと消える。
+    // keyCode 229 は isComposing を出さない環境向けの保険。
+    if (e.isComposing || e.keyCode === 229) return;
     const action = index.get(keyOf(e));
     if (!action) return;
     if (isTyping(e.target) && !WHILE_TYPING.has(action)) return;
