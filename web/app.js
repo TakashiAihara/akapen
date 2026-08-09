@@ -267,6 +267,9 @@ function draftBubble() {
   const box = el('div', 'bubble draft');
   box.dataset.id = 'draft';
   box.dataset.line = startLine;
+  // send() は作成時の範囲を閉じ込めるので、再利用の判定には終了行も要る。
+  // 開始行だけで見ると、範囲を伸ばした時に古い範囲で投稿される
+  box.dataset.end = endLine;
 
   const head = el('div', 'bubble-head');
   head.append(el('span', 'at', rangeLabel(startLine, endLine)));
@@ -342,7 +345,11 @@ function renderRail() {
   const existing = anchoredEl.querySelector('.bubble.draft');
   if (!draft) {
     existing?.remove();
-  } else if (!existing || existing.dataset.line !== String(draft.startLine)) {
+  } else if (
+    !existing ||
+    existing.dataset.line !== String(draft.startLine) ||
+    existing.dataset.end !== String(draft.endLine)
+  ) {
     // 対象範囲が変わった時だけ作り直す。この時は変換中でないので外して問題ない
     existing?.remove();
     anchoredEl.append(draftBubble());
