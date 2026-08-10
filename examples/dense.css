@@ -1,5 +1,5 @@
-/* 拡張 CSS の例。akapen は /custom.css を必ず最後に読むので、既定値はすべて上書きできる。
-   crit で Stylus を入れないと不可能だったことが、--css 一発でできる。 */
+/* An example stylesheet. akapen always loads /custom.css last, so every default can be
+   overridden. With crit this took a browser extension; here it is one --css flag. */
 :root {
   --ak-content-width: 1080px;
   --ak-line-height: 1.5;

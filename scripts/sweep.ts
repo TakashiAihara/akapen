@@ -1,8 +1,8 @@
 /**
- * 行マッピングの不変条件を vault の全ノートに対して確認する。
- * ノート 1 本で通っても意味が薄い (1 サンプルからの一般化)。
- *   - 空行以外のすべての行がちょうど 1 つのブロックに属する
- *   - ブロックの text が原文の該当行と一致する
+ * Check the line-mapping invariants across every note in a directory.
+ * Passing on a single note proves little — that is generalising from one sample.
+ *   - every non-blank line belongs to exactly one block
+ *   - each block's text equals its source lines
  */
 import { readdirSync } from 'node:fs';
 import { join } from 'node:path';

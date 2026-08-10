@@ -6,18 +6,18 @@ on:
   pull_request:
 
 jobs:
-  # ワークフローと installer の誤りは、CI では拾われず「タグを打った時」や
-  # 「利用者が curl | sh した時」に初めて分かる。そこを手前に持ってくる。
+  # Mistakes in the workflows and the installer are not caught by CI; they surface when
+  # a tag is pushed, or when someone runs curl | sh. Pull that forward.
   static:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      # curl | sh で流し込むファイルなので、この repo で最も事故が高くつく
+      # This file gets piped into sh, so it is the most expensive place to be wrong
       - name: shellcheck (install.sh)
         run: shellcheck install.sh
 
-      # #30 で踏んだような workflow の誤りを、タグを打つ前に落とす
+      # Catch workflow mistakes before a tag is pushed
       - uses: docker://rhysd/actionlint:latest
         with:
           args: -color
@@ -35,15 +35,14 @@ jobs:
       - run: bun run lint
       - run: bun run fmt:check
       - run: bun run typecheck
-      - name: 行マッピングとラウンドの不変条件
+      - name: line mapping and round invariants
         run: bun run test
-      - name: docs 配下の全 md でブロック分割を確認
+      - name: block splitting across every markdown file under docs
         run: bun run sweep docs
 
-      # リリース時に初めて壊れているのが分かるのを避ける。
-      # 埋め込みは静的解析でしか効かないので、web/ にファイルを足して
-      # src/assets.ts への追記を忘れると、ここで落ちる。
-      - name: 単一バイナリのビルドと動作確認
+      # Avoid finding out at release time. Embedding only works through static analysis,
+      # so adding a file to the build output and forgetting src/assets.ts fails here.
+      - name: build the single binary and check it runs
         run: bun run scripts/smoke-binary.ts
 
   e2e:
@@ -57,8 +56,8 @@ jobs:
       - run: bun run build:web
       - run: bunx playwright install --with-deps chromium
 
-      # 実ブラウザでしか捕まらない回帰 (フォーカス / IME / 範囲 / 再描画)。
-      # store 層のテストでは 1 件も検出できなかった箇所を見る。
+      # Regressions only a real browser catches: focus, IME, ranges, re-rendering.
+      # The storage-layer tests detected none of them.
       - run: bun run test:e2e
 
       - uses: actions/upload-artifact@v4

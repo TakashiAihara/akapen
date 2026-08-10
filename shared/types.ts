@@ -1,12 +1,12 @@
 /**
- * サーバとブラウザの両方が使う型。
+ * Types used by both the server and the browser.
  *
- * 同じコメントと同じ payload を両側で扱うのに、片側にしか型が無い状態だと
- * 形を変えた時にもう片方が黙ってズレる。ここを唯一の定義にして、
- * 食い違ったら型で落ちるようにする。
+ * Both sides handle the same comments and the same payloads. When only one side
+ * is typed, changing the shape lets the other drift silently. This file is the
+ * single definition, so a mismatch fails to compile.
  */
 
-/* ===== 本文 ===== */
+/* ===== Document ===== */
 
 export type BlockKind =
   | 'frontmatter'
@@ -25,9 +25,9 @@ export type Block = {
   endLine: number;
   kind: BlockKind;
   html: string;
-  /** 範囲の原文。コメントのアンカーの鍵 */
+  /** Raw source of the range. The key an anchor is matched by. */
   text: string;
-  /** リストと引用のネスト */
+  /** List and blockquote nesting. */
   depth: number;
   quoted: boolean;
   flags: string[];
@@ -39,11 +39,11 @@ export type Doc = {
   lineCount: number;
 };
 
-/* ===== コメント ===== */
+/* ===== Comments ===== */
 
 export type Comment = {
   id: string;
-  /** 紐づくラウンドのスナップショット内での行番号。live のファイルに対しては意味を持たない。 */
+  /** Line number inside the round's snapshot. It means nothing against the live file. */
   startLine: number;
   endLine: number;
   body: string;
@@ -51,25 +51,26 @@ export type Comment = {
   createdAt: string;
   resolved: boolean;
   /**
-   * スナップショットから切り出した原文。ラウンドをまたいで位置を伝えるのはこちらの役目。
-   * エージェントは行番号ではなく原文で現在のファイルを照合するので、他の修正で行がズレても当たる。
+   * The raw source taken from the snapshot. This, not the line number, is what
+   * carries the location across rounds: an agent matches the current file by
+   * text, so it still lands when other edits have shifted the lines.
    */
   anchor: string;
 };
 
-/** どのラウンドのコメントかを付けたもの。ラウンドをまたいで扱う経路は必ずこれを通す。 */
+/** A comment tagged with the round it belongs to. Every cross-round path uses this. */
 export type RoundComment = Comment & { round: number };
 
-/* ===== ラウンド ===== */
+/* ===== Rounds ===== */
 
 export type RoundMeta = {
   n: number;
   createdAt: string;
-  /** 次のラウンドを開いた時刻。現ラウンドは null。 */
+  /** When the next round was opened. null for the current round. */
   closedAt: string | null;
 };
 
-/** 画面に出すラウンドの状態。viewing は履歴を見ている時だけ入る。 */
+/** Round state for the UI. `viewing` is set only while browsing history. */
 export type RoundState = {
   n: number;
   total: number;
@@ -78,28 +79,28 @@ export type RoundState = {
   viewing?: number;
 };
 
-/** live のファイルが現ラウンドのスナップショットとどれだけ離れているか。 */
+/** How far the live file has drifted from the current round's snapshot. */
 export type ChangedState = {
   changes: number;
   dirty: boolean;
 };
 
-/* ===== やりとりする形 ===== */
+/* ===== Wire formats ===== */
 
-/** 本文込み。初回表示・ラウンド切り替え・履歴の表示で使う。 */
+/** Includes the document. Used for the first render, round changes and history. */
 export type DocPayload = {
   type: 'doc';
-  /** 過去ラウンドを表示している時だけ true。読み取り専用 */
+  /** True only while showing a past round. Read-only. */
   history?: boolean;
   doc: Doc;
   comments: Comment[];
   round: RoundState;
-  /** 現ラウンドより前の未解決。持ち越さない代わりに「消えていない」ことを示す */
+  /** Unresolved comments from earlier rounds. Nothing carries over, so this is how they stay visible. */
   carried: RoundComment[];
   changed: ChangedState;
 };
 
-/** コメントだけが変わった時の応答。本文は含めない。 */
+/** Response when only comments changed. The document is not included. */
 export type CommentsPayload = {
   comment: Comment | RoundComment;
   comments: Comment[];
@@ -107,8 +108,10 @@ export type CommentsPayload = {
 };
 
 /**
- * SSE で流す唯一の形。
- * ここに本文を混ぜると、受け取った側が画面を作り直すことになり、
- * 読んでいる位置・入力中のフォーカス・IME の変換・本文の選択が人の操作と無関係に壊れる。
+ * The only shape sent over SSE.
+ *
+ * Putting the document in here would make the receiver rebuild the screen, which
+ * destroys the reading position, the focused input, an in-flight IME composition
+ * and the text selection — none of it caused by anything the person did.
  */
 export type ChangedEvent = { type: 'changed' } & ChangedState;

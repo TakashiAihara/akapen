@@ -1,8 +1,8 @@
 /**
- * `with { type: 'file' }` の import は、実行時には「そのファイルを読めるパス」になる
- * (単一バイナリなら `/$bunfs/...`)。TypeScript は import attributes を見ないので、
- * 拡張子ごとの既定の解釈 (css は未知、js は any、html は HTMLBundle) になってしまう。
- * ここで string に固定する。
+ * An import with `with { type: 'file' }` evaluates to a path the file can be read
+ * from (`/$bunfs/...` inside the single binary). TypeScript does not look at import
+ * attributes, so it falls back to per-extension defaults (css unknown, js any,
+ * html HTMLBundle). Pin them to string here.
  */
 declare module '*.css' {
   const path: string;
@@ -14,7 +14,7 @@ declare module '*.min.js' {
   export default path;
 }
 
-// web/dist はブラウザ向けのビルド成果物。埋め込むのはパスだけで中身は見ない
+// web/dist is browser build output. We embed the path only and never look inside.
 declare module '*/web/dist/app.js' {
   const path: string;
   export default path;

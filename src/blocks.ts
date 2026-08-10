@@ -1,32 +1,32 @@
-// markdown-it 15 は型を同梱している。旧 @types/markdown-it のサブパス
-// ('markdown-it/lib/token.mjs') は解決できないので、本体から取る。
+// markdown-it 15 ships its own types. The old @types/markdown-it subpath
+// ('markdown-it/lib/token.mjs') does not resolve, so take Token from the package.
 import MarkdownIt, { type Token } from 'markdown-it';
 import type { Block, BlockKind, Doc } from '../shared/types.ts';
 import hljs from 'highlight.js';
 
 /**
- * html: false。md に直接書いた HTML はエスケープして文字として出す。
+ * html: false. HTML written directly in the markdown is escaped and shown as text.
  *
- * akapen が描くのは「レビュー対象の markdown」で、その出所は必ずしも自分ではない。
- * html: true にすると本文がそのまま innerHTML に入るので、md を開いた時点で
- * 任意の JS が akapen の origin (認証なしの /api/comments と、絶対パスを返す
- * /api/doc がある) で動く。
+ * What akapen renders is markdown under review, and it does not always come from
+ * you. With html: true the document goes straight into innerHTML, so opening a
+ * file runs arbitrary JS on akapen's origin — which serves an unauthenticated
+ * /api/comments and an /api/doc that returns the absolute path.
  *
- * markdown を読むための道具に markdown 以外が紛れ込む口を開けておく利点より、
- * 塞ぐ方が大きいという判断。
+ * Leaving a hole for non-markdown to slip into a markdown reader buys less than
+ * closing it.
  */
 const md = new MarkdownIt({ html: false, linkify: true, typographer: false });
 
 /**
- * crit は typographer を有効にしているため frontmatter の "..." が “...” に化ける。
- * こちらは素の文字を保つ。レビュー対象は原文であって組版ではない。
+ * crit enables typographer, so "..." in frontmatter turns into “...”. We keep the
+ * characters as written: what is under review is the source, not its typesetting.
  */
 
 export type { Block, BlockKind, Doc };
 
 const FM_FENCE = /^---\s*$/;
 
-/** frontmatter の範囲を返す。無ければ null。 */
+/** The frontmatter range, or null when there is none. */
 function frontmatterRange(lines: string[]): { start: number; end: number } | null {
   if (lines.length === 0 || !FM_FENCE.test(lines[0]!)) return null;
   for (let i = 1; i < lines.length; i++) {
@@ -40,9 +40,10 @@ function esc(s: string): string {
 }
 
 /**
- * frontmatter を 1 ソース行 = 1 ブロックで描く。
- * crit は素通しして本文扱いするため key: value が段落に融合し、行単位で指せなくなる。
- * ここでは行を融合させないことを最優先にする (値の途中で折り返した行も独立して指せる)。
+ * Render frontmatter as one source line = one block.
+ * crit passes it through as body text, so `key: value` merges into a paragraph and
+ * you can no longer point at a single line. Not merging lines is the priority here
+ * (even a line wrapped mid-value stays independently addressable).
  */
 function frontmatterBlocks(lines: string[], range: { start: number; end: number }): Block[] {
   const out: Block[] = [];
@@ -82,7 +83,7 @@ function frontmatterBlocks(lines: string[], range: { start: number; end: number 
   return out;
 }
 
-/** ハイライト済み HTML を行単位に割る。行をまたぐ span を各行で開き直す。 */
+/** Split highlighted HTML per line, reopening spans that straddle a line break. */
 function splitHighlighted(html: string): string[] {
   const lines = html.split('\n');
   const out: string[] = [];
@@ -147,11 +148,11 @@ function renderInline(token: Token | undefined): string {
   return md.renderer.renderInline(token.children ?? [], md.options, {});
 }
 
-/** fence を 1 行 = 1 ブロックに割る。行番号を保ちつつコード全体の見た目を維持する。 */
+/** Split a fence into one block per line, keeping line numbers while the code still looks like one unit. */
 function walkFence(token: Token, ctx: Ctx): void {
   const [start, end] = token.map ?? [0, 0];
   const startLine = start + 1;
-  const endLine = end; // fence は開始/終了行を含む
+  const endLine = end; // the fence includes its opening and closing lines
   const info = (token.info || '').trim().split(/\s+/)[0] ?? '';
 
   if (info === 'mermaid') {
@@ -166,7 +167,7 @@ function walkFence(token: Token, ctx: Ctx): void {
   }
 
   const codeLines = splitHighlighted(highlight(token.content.replace(/\n$/, ''), info));
-  // 開始フェンス行
+  // opening fence line
   push(ctx, {
     startLine,
     endLine: startLine,
@@ -196,7 +197,7 @@ function walkFence(token: Token, ctx: Ctx): void {
   }
 }
 
-/** 表を 1 行 = 1 ブロックに割る。列幅は table-layout: fixed で行をまたいで揃う。 */
+/** Split a table into one block per row. `table-layout: fixed` keeps columns aligned across rows. */
 function walkTable(tokens: Token[], openIdx: number, ctx: Ctx): number {
   const closeIdx = findClose(tokens, openIdx);
   let colCount = 0;
@@ -208,7 +209,7 @@ function walkTable(tokens: Token[], openIdx: number, ctx: Ctx): number {
       for (let j = i + 1; j < trClose; j++) {
         const c = tokens[j]!;
         if (c.type === 'th_open' || c.type === 'td_open') {
-          // markdown-it 15 の attrs は number も取りうる (align は文字列だが型上は string | number)
+          // markdown-it 15 attrs can hold numbers (align is a string, but the type is string | number).
           const style = String(c.attrGet('style') ?? '');
           cells.push({
             tag: c.type === 'th_open' ? 'th' : 'td',
@@ -230,7 +231,7 @@ function walkTable(tokens: Token[], openIdx: number, ctx: Ctx): number {
         html: `<table class="split-table"><tbody><tr>${cellsHtml}</tr></tbody></table>`,
         flags: isHeader ? ['table-header'] : [],
       });
-      // markdown の区切り行 (|---|---|) はトークンにならないので、ヘッダ行の次を明示的に足す
+      // The separator row (|---|---|) produces no token, so add it explicitly after the header
       if (isHeader) {
         const sepLine = e + 1;
         if (/^\s*\|?[\s:|-]+\|?\s*$/.test(ctx.lines[sepLine - 1] ?? '')) {
@@ -260,7 +261,7 @@ function walkList(tokens: Token[], openIdx: number, ctx: Ctx): number {
     if (t.type !== 'list_item_open') continue;
     const itemClose = findClose(tokens, i);
 
-    // 項目自身の 1 行目 (最初の paragraph の inline) をブロックにする
+    // The item's own first line (the inline of its first paragraph) becomes a block
     let restStart = i + 1;
     for (let j = i + 1; j < itemClose; j++) {
       const c = tokens[j]!;
@@ -277,14 +278,15 @@ function walkList(tokens: Token[], openIdx: number, ctx: Ctx): number {
             `<span class="li-body">${renderInline(c)}</span></div>`,
           flags: [],
         });
-        restStart = j + 2; // paragraph_close の次
+        restStart = j + 2; // just past paragraph_close
         break;
       }
-      if (c.type !== 'paragraph_open') break; // 項目がリスト / 表 / フェンスで始まる場合
+      if (c.type !== 'paragraph_open') break; // the item starts with a list, table or fence
     }
 
-    // 残りの子 (ネストしたリスト・表・フェンス・引用・継続段落) は同じ walk に通す。
-    // 種類を数え上げると必ず取りこぼす — 実際に表がリスト内にあるノートで落ちた。
+    // Send the remaining children (nested lists, tables, fences, quotes, continuation
+    // paragraphs) through the same walk. Enumerating kinds always misses something —
+    // it broke on a real note that had a table inside a list.
     ctx.depth++;
     walk(tokens.slice(restStart, itemClose), ctx);
     ctx.depth--;
@@ -295,7 +297,7 @@ function walkList(tokens: Token[], openIdx: number, ctx: Ctx): number {
   return closeIdx;
 }
 
-/** 段落は 1 ソース行 = 1 ブロックに割る。行が融合するとその粒度でしか指せなくなるため。 */
+/** Split paragraphs into one block per source line. Merged lines can only be addressed at that coarser grain. */
 function walkParagraph(inline: Token, ctx: Ctx): void {
   const [s, e] = inline.map ?? [0, 0];
   for (let ln = s + 1; ln <= e; ln++) {
@@ -384,7 +386,7 @@ export function buildDoc(path: string, source: string): Doc {
   let body = source;
   if (fm) {
     out.push(...frontmatterBlocks(lines, fm));
-    // 行番号を保つため frontmatter は空行に置き換えてから解析する
+    // Blank out the frontmatter before parsing so line numbers stay intact
     const blanked = lines.slice();
     for (let ln = fm.start; ln <= fm.end; ln++) blanked[ln - 1] = '';
     body = blanked.join('\n');
@@ -393,9 +395,10 @@ export function buildDoc(path: string, source: string): Doc {
   const ctx: Ctx = { lines, out, depth: 0, quoted: false };
   walk(md.parse(body, {}), ctx);
 
-  // トークンにならない行 (引用内の "> " だけの行など) を拾う。
-  // 「空行以外のすべての行はどれかのブロックに属する」を不変条件として守る。
-  // ここが崩れると、指したい行が画面に存在しないという最悪の壊れ方をする。
+  // Pick up lines that produce no token (a bare "> " inside a quote, for example).
+  // The invariant is that every non-blank line belongs to exactly one block.
+  // Break it and you get the worst failure there is: the line you want to point at
+  // is not on the screen.
   const covered = new Set<number>();
   for (const b of out) for (let ln = b.startLine; ln <= b.endLine; ln++) covered.add(ln);
   for (let ln = 1; ln <= lines.length; ln++) {

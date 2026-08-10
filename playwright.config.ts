@@ -1,12 +1,13 @@
 import { defineConfig } from '@playwright/test';
 
 /**
- * E2E は本物のサーバを立てて実ブラウザで叩く。
- * このセッションで壊した箇所 (フォーカス / IME / 範囲 / 再描画) はどれも DOM の
- * 実挙動でしか捕まらず、store 層のテストでは 1 件も検出できなかった。
+ * E2E runs a real server and drives a real browser.
  *
- * サーバはテストごとに fixtures.ts が立てる (webServer は使わない)。
- * 1 台を共有するとコメントが混ざる。
+ * Everything that broke here — focus, IME, ranges, re-rendering — is only visible in
+ * real DOM behaviour; the storage-layer tests caught none of it.
+ *
+ * fixtures.ts starts a server per test (no webServer): sharing one mixes comments
+ * between tests.
  */
 export default defineConfig({
   testDir: 'tests/e2e',

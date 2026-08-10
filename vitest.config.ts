@@ -1,8 +1,8 @@
 import { defineConfig } from 'vitest/config';
 
 /**
- * E2E は playwright が持つので vitest からは外す。
- * 既定の include は *.spec.ts も拾うため、tests/e2e/ を巻き込んで落ちる。
+ * E2E belongs to Playwright, so keep it out of vitest.
+ * The default include also matches *.spec.ts, which drags tests/e2e/ in and fails.
  */
 export default defineConfig({
   test: {

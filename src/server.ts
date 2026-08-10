@@ -29,18 +29,21 @@ export function startServer(opts: ServeOptions) {
   const file = resolve(opts.file);
 
   let review: Review = ensureRound(file, readFileSync(file, 'utf8'));
-  // 画面に出すのは live のファイルではなく現ラウンドのスナップショット。
-  // コメントが紐づく相手を凍結することで、書いている最中に位置が競合する経路を構造から消す。
+  // What we render is the current round's snapshot, not the live file. Freezing what
+  // comments attach to removes, structurally, the path where positions conflict while
+  // someone is still writing.
   let snapshot = roundContent(file, review.currentRound);
   let comments: Comment[] = loadComments(file, review.currentRound);
   let changes = 0;
 
   const clients = new Set<(data: string) => void>();
   /**
-   * SSE は通知の経路であって描画の経路ではない。流すのは「本文が変わりました」だけ。
-   * doc payload を送り付けると、受け取った側は画面を作り直すことになり、
-   * 読んでいる位置・入力中のフォーカス・IME の変換・本文の選択が人の操作と無関係に壊れる。
-   * 画面を変えるかどうかは人が決める、というラウンド制の原則を画面全体に通す。
+   * SSE is a notification channel, not a rendering channel. All it carries is
+   * "the document changed". Pushing a doc payload makes the receiver rebuild the
+   * screen, which destroys the reading position, the focused input, an in-flight
+   * IME composition and the text selection — none of it caused by the person.
+   * Rounds already say the person decides when the document changes; this applies
+   * that rule to the whole screen.
    */
   const notifyChanged = () => {
     const payload = JSON.stringify({ type: 'changed', ...changedState() });
@@ -73,13 +76,13 @@ export function startServer(opts: ServeOptions) {
       doc: buildDoc(file, snapshot),
       comments,
       round: roundState(),
-      // 現ラウンドより前の未解決コメント。持ち越さない代わりに「消えていない」ことを示す
+      // Unresolved comments from earlier rounds: nothing carries over, so this is how they stay visible
       carried: carriedOver(file),
       changed: changedState(),
     });
 
-  // 過去ラウンドの表示。当時の本文と当時のコメントをそのまま返す。
-  // 本文と行アンカーは凍結済みなので読み取り専用。
+  // Showing a past round: the document and comments exactly as they were.
+  // The document and its line anchors are frozen, so this is read-only.
   const historyPayload = (n: number) =>
     JSON.stringify({
       type: 'doc',
@@ -91,15 +94,15 @@ export function startServer(opts: ServeOptions) {
       changed: changedState(),
     });
 
-  // live の変更で本文を差し替えない。「変わりました」を伝えるだけにして、
-  // 次のラウンドへ進むかどうかの判断は人に残す。
+  // A live change never swaps the document. We only say that it changed and leave
+  // the decision to move to the next round with the person.
   let timer: ReturnType<typeof setTimeout> | null = null;
   watch(file, () => {
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => {
       const live = readLive();
       if (live === null) return;
-      // 内容が現ラウンドと同じに戻ったら数え直す (保存しただけ / 変更を戻した場合)
+      // Reset the count when the contents match the round again (a bare save, or an undo)
       changes = live === snapshot ? 0 : changes + 1;
       notifyChanged();
     }, 80);
@@ -130,12 +133,12 @@ export function startServer(opts: ServeOptions) {
         const c = makeComment(snapshot, b.startLine, b.endLine, b.body, opts.author);
         comments.push(c);
         saveComments(file, review.currentRound, comments);
-        // 応答だけ返す。打った本人の画面は手元で更新する
+        // Just answer. The author's own screen updates locally.
         return Response.json({ comment: c, comments, carried: carriedOver(file) });
       }
 
-      // resolve は過去ラウンドのコメントにも効かせる。ステータスまで凍らせると
-      // 未解決コメントを閉じる手段が無くなり、エージェントへの受け渡しが詰まる。
+      // resolve works on past rounds too. Freezing the status as well would leave no
+      // way to close an unresolved comment, and the agent handoff would jam.
       const resolveMatch = /^\/api\/comments\/([^/]+)\/resolve$/.exec(path);
       if (resolveMatch && req.method === 'POST') {
         const updated = updateComment(file, resolveMatch[1]!, (c) => {
@@ -146,7 +149,7 @@ export function startServer(opts: ServeOptions) {
         return Response.json({ comment: updated, comments, carried: carriedOver(file) });
       }
 
-      // ラウンドを切るのは人。エージェントの途中保存では刻まない。
+      // Only a person cuts a round. An agent's intermediate save never does.
       if (path === '/api/rounds' && req.method === 'POST') {
         const live = readLive();
         if (live === null) return new Response('cannot read file', { status: 500 });
@@ -154,7 +157,7 @@ export function startServer(opts: ServeOptions) {
         snapshot = live;
         comments = [];
         changes = 0;
-        // ラウンドが変わると本文も変わる。新しい本文ごと返し、押した本人の画面だけ差し替える
+        // A new round means a new document. Return it, and only the clicker's screen swaps.
         return new Response(docPayload(), { headers: { 'content-type': 'application/json' } });
       }
 
@@ -175,8 +178,8 @@ export function startServer(opts: ServeOptions) {
               }
             };
             clients.add(send);
-            // 初回表示は読み込み時の /api/doc が担う。ここで doc を送ると
-            // 再接続のたびに画面が作り直される
+            // The first render comes from /api/doc on load. Sending a doc here would
+            // rebuild the screen on every reconnect.
             send(JSON.stringify({ type: 'changed', ...changedState() }));
           },
           cancel() {
@@ -192,14 +195,14 @@ export function startServer(opts: ServeOptions) {
         });
       }
 
-      // 拡張 CSS。crit に無かった口を最初から開けておく。
+      // Extra CSS. crit had no such hook; open one from the start.
       if (path === '/custom.css') {
         const css = opts.cssPath && existsSync(opts.cssPath) ? readFileSync(opts.cssPath, 'utf8') : '';
         return new Response(css, { headers: { 'content-type': 'text/css; charset=utf-8' } });
       }
 
-      // キーマップの上書き。CSS と同じく、設定で変えられる口を最初から開けておく。
-      // 壊れた JSON で操作不能にならないよう、読めなければ既定のまま動かす。
+      // Keymap override. Like the CSS hook, a way to configure it from the start.
+      // A broken JSON must not make the tool unusable, so fall back to the defaults.
       if (path === '/keymap.json') {
         let body = '{}';
         if (opts.keymapPath && existsSync(opts.keymapPath)) {
@@ -208,16 +211,14 @@ export function startServer(opts: ServeOptions) {
             JSON.parse(raw);
             body = raw;
           } catch {
-            console.error(
-              `akapen: keymap の JSON が壊れています。既定のキーマップで続行します: ${opts.keymapPath}`,
-            );
+            console.error(`akapen: keymap JSON is invalid; continuing with the defaults: ${opts.keymapPath}`);
           }
         }
         return new Response(body, { headers: { 'content-type': 'application/json' } });
       }
 
-      // 配信するのは ASSETS に名指しした分だけ。ディレクトリを辿らないので
-      // パストラバーサルの経路が最初から無く、単一バイナリでもそのまま動く。
+      // Only what ASSETS names is served. No directory walking means there is no path
+      // traversal to begin with, and it works unchanged inside the single binary.
       const name = path === '/' ? 'index.html' : path.slice(1);
       const asset = ASSETS[name];
       if (asset) {

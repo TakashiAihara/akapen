@@ -1,22 +1,22 @@
 {
   "$schema": "https://json.schemastore.org/tsconfig",
 
-  // bun を先に、strictest を後に置く。配列は後勝ちなので、
-  // @tsconfig/bun が緩めている 3 つ (noUnusedLocals / noUnusedParameters /
-  // noPropertyAccessFromIndexSignature) を strictest が締め直す。
+  // bun first, strictest last. The array is last-wins, so strictest tightens the three
+  // @tsconfig/bun relaxes: noUnusedLocals, noUnusedParameters and
+  // noPropertyAccessFromIndexSignature.
   "extends": ["@tsconfig/bun/tsconfig.json", "@tsconfig/strictest/tsconfig.json"],
 
   "compilerOptions": {
-    // bun 側の設定。strictest は module 系を持たないので、ここで戻す必要は無い。
-    // 明示するのは base が持たないものと、外す理由があるものだけにする。
+    // strictest carries no module settings, so nothing needs restoring here.
+    // Only spell out what the bases lack, or what there is a reason to turn off.
     "types": ["bun"],
 
-    // web/ はブラウザ向けにビルドするので、DOM の型が要る。
-    // Bun の型と両方載せる (サーバ側は DOM を使わないが、分けるほどの益は無い)
+    // web/ is built for the browser and needs the DOM types. Both sets are loaded;
+    // the server never touches the DOM, but splitting the config buys too little.
     "lib": ["ESNext", "DOM", "DOM.Iterable"],
 
-    // ビルド成果物 (web/dist) は `with { type: 'file' }` で埋め込むだけ。
-    // 実体を解決させると「default export が無い」で落ちる
+    // Build output (web/dist) is only embedded via `with { type: 'file' }`.
+    // Resolving the real files instead fails with "no default export".
     "allowJs": false
   },
 

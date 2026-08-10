@@ -1,240 +1,240 @@
 # wishlist
 
-やりたいことの置き場。粒度を揃えてから Issue 化する。Issue 化した後は Issue が正で、この文書は決定の経緯として残す。
+Where wants are collected. They get filed as issues once the grain is even. After that the issue is authoritative and this document stays as the record of how each decision was reached.
 
-2026-08-07 に第 1 回の収集を締めて Issue 化した。以降は Issue が正で、この文書は決定の経緯として残す。
+The first round of collection closed on 2026-08-07 and was filed. From then on the issues are authoritative; this is history.
 
-| ID | Issue | milestone |
+| ID | Issue | Milestone |
 |---|---|---|
-| W-1 コメントを右レールに逃がす | #1 | v0.1 |
-| W-2 投下動線をマウス + キーボード | #2 | v0.1 |
-| W-3 ラウンド制 | #3 | v0.1 |
-| W-4 過去ラウンドの履歴 | #4 | v0.1 |
-| W-5 comments に過去ラウンド分 | #5 | v0.1 |
-| W-6 passive モード | #8 | v0.2 |
-| W-7 モード切り替えと更新検知バナー | #9 | v0.2 |
-| W-8 コメント都度の反応 | #12 | v0.3 |
-| W-9 ホストを意識しない入口 | #13 | v0.3 |
-| B-1 単一バイナリ化 | #11 | v0.3 |
-| B-2 Claude Code 連携 | #12 に統合 | — |
-| B-3 複数ファイル | #9 に統合 | — |
-| B-4 テスト | #7 | v0.1 |
-| B-5 認証 | #10 | v0.2 |
-| B-6 返信スレッド | #6 | v0.1 |
+| W-1 Move comments to a right rail | #1 | v0.1 |
+| W-2 Mouse and keyboard both | #2 | v0.1 |
+| W-3 Rounds | #3 | v0.1 |
+| W-4 History of past rounds | #4 | v0.1 |
+| W-5 `comments` includes earlier rounds | #5 | v0.1 |
+| W-6 passive mode | #8 | v0.2 |
+| W-7 Mode switching and a change banner | #9 | v0.2 |
+| W-8 React to each comment | #12 | v0.3 |
+| W-9 An entry point that hides which host | #13 | v0.3 |
+| B-1 Single binary | #11 | v0.3 |
+| B-2 Claude Code integration | folded into #12 | — |
+| B-3 Multiple files | folded into #9 | — |
+| B-4 Tests | #7 | v0.1 |
+| B-5 Authentication | #10 | v0.2 |
+| B-6 Reply threads | #6 | v0.1 |
 
-## レビュー体験
+## The review experience
 
-### W-1 コメントを右レールに逃がす (インライン廃止)
+### W-1 Move comments to a right rail (drop inline threads)
 
-いま本文の行間にコメントとフォームを差し込んでいる。これをやめて、右側のレールに吹き出しとして出す。
+Today comments and the form are wedged between the lines of the document. Stop that and put them in a rail on the right as bubbles.
 
-目的は見た目ではなく読みの連続性。インラインで割り込まれると、そこで読みの文脈が切れる。やりたいのは「流し読みしながら違和感を投げ続ける」ことで、本文が分断されるとそれができない。
+The aim is continuity of reading, not looks. An interruption inline breaks the thread of what you were reading. What I want is to skim and keep throwing feedback as I go, and a document cut into pieces makes that impossible.
 
-決まっていること:
+Decided:
 
-- 吹き出しはアンカー行と垂直に揃える。重なったら下にずらす
-- 本文側は行を挿入しない。アンカー行を薄くハイライトするだけで、高さも位置も変えない
-- コメント入力欄もレールに出す。本文にフォームを差し込むと結局そこで分断が起きる
-- 吹き出しをクリックすると本文側のハイライトと連動する
-- 幅が足りない時はレールを畳む。畳んだ側にはマーカーだけ残す
+- Bubbles line up with the anchor row. Overlaps push down.
+- The document inserts no rows. The anchor row is lightly highlighted, nothing more; neither height nor position changes.
+- The input box goes in the rail too. A form wedged into the document interrupts it just the same.
+- Clicking a bubble drives the highlight on the document side.
+- When width runs out, collapse the rail. Only markers remain on the collapsed side.
 
-未決:
+Open:
 
-- レールの幅、吹き出しの折りたたみ規則 (長文コメントの扱い)
-- マーカーの見せ方
+- Rail width, and how long comments fold.
+- How the markers should look.
 
-### W-2 コメント投下の動線をマウスとキーボードの両方にする
+### W-2 Mouse and keyboard both
 
-流し読み中はスクロールしているのでホバー起点が要る。一方で連続して打つ時はキーボードから手を離したくない。両方用意する。
+While skimming I am scrolling, so a hover-based path is needed. While writing several in a row I do not want to leave the keyboard. Provide both.
 
-決まっていること:
+Decided:
 
-- キーマップは 1 箇所に集約し、設定で上書きできるようにする。割り当ては後でまとめて見直す前提
-- マウス動線 (ホバー → ボタン → レールで入力) とキーボード動線は同じ経路に繋ぐ
+- The keymap lives in one place and can be overridden by config. The assignment will be revisited as a whole later.
+- The mouse path (hover → button → type in the rail) and the keyboard path connect to the same route.
 
-暫定の既定値 (仮):
+Provisional defaults:
 
-| キー | 動作 |
+| Key | Action |
 |---|---|
-| `j` / `k` | 行フォーカスを移動 |
-| `c` | フォーカス行にコメント |
-| `Ctrl+Enter` | 確定 |
-| `Esc` | 取り消し |
-| `l` | 行番号の表示切り替え (実装済み) |
+| `j` / `k` | move the line focus |
+| `c` | comment on the focused line |
+| `Ctrl+Enter` | confirm |
+| `Esc` | cancel |
+| `l` | toggle line numbers (already implemented) |
 
-未決:
+Open:
 
-- 実際の割り当て
+- The actual assignment.
 
-## ラウンドと履歴
+## Rounds and history
 
-### W-3 ラウンド制にする (live 追従と再アンカーを廃止)
+### W-3 Rounds (drop live following and re-anchoring)
 
-コメントの位置合わせを「常に追従させる」のをやめ、ラウンドごとに本文を凍結する。追従の精度を上げ続けるいたちごっこから抜けるため。
+Stop chasing positions forever and freeze the document per round. It gets out of the arms race of ever-better position tracking.
 
-決まっていること:
+Decided:
 
-- ラウンド = ファイル内容の凍結スナップショット。コメントはそのスナップショット内の行に紐づく
-- 画面に出すのは live のファイルではなく現ラウンドのスナップショット
-- ラウンドを切るのは人。「このラウンドを終える」を押した時だけ次に進む。エージェントの途中保存では刻まない
-- SSE はファイル変更で本文を差し替えるのをやめ、「本文が変わりました」の通知だけにする
-- 再アンカーは廃止する。ラウンドをまたいだ持ち越しをしない
+- A round is a frozen snapshot of the file contents. Comments attach to lines inside that snapshot.
+- What is shown is the current round's snapshot, not the live file.
+- A person cuts a round. Only pressing "end this round" moves on; an agent's intermediate save never does.
+- SSE stops swapping the document on a file change and only reports "the document changed".
+- Re-anchoring goes away. Nothing carries across rounds.
 
-これで、書いている最中にファイルが変わってコメントが競合する経路が構造から無くなる。コメントが紐づく相手が live のファイルではなく凍結スナップショットになるため。
+This removes, structurally, the path where a file changes mid-writing and comments conflict — because what comments attach to is a frozen snapshot rather than the live file.
 
-保存レイアウト (案):
+Storage layout (draft):
 
 ```text
 ~/.akapen/reviews/<basename>-<hash>/
-  review.json          # ラウンドのメタ情報、現在のラウンド番号
+  review.json          # round metadata and the current round number
   rounds/
-    001/content.md     # 凍結された本文
-    001/comments.json  # 001 の行番号に紐づくコメント
+    001/content.md     # the frozen document
+    001/comments.json  # comments anchored to lines in 001
     002/content.md
     002/comments.json
 ```
 
-md 実ファイルには触れない (現行方針の維持)。
+The markdown file is not touched (the existing policy holds).
 
-トレードオフ: エージェントが直した内容は次のラウンドに入るまで画面に出ない。書きながら追いたい時は mdserve を併用する。crit と同じ割り切り。
+Trade-off: what the agent fixed does not appear until the next round begins. Use mdserve alongside when you want to watch it change. crit makes the same call.
 
-### W-4 過去ラウンドのコメントを履歴として辿れる
+### W-4 Follow comments from past rounds as history
 
-右レールに現ラウンドのコメントに加えて過去ラウンドのコメントも出す。クリックするとそのラウンドのスナップショットに表示が切り替わり、当時の本文と当時のコメントがそのまま見える。履歴は読み取り専用。
+Show past rounds' comments in the right rail alongside the current one. Clicking one switches the view to that round's snapshot, showing the document and the comments exactly as they were. History is read-only.
 
-「どのバージョンのどの部分にどうコメントしたか」がラウンド番号 + `content.md` + 行番号で完全に再現できる状態にする。
+The goal is that "which version, which part, what was said" is fully reproducible from round number + `content.md` + line number.
 
-未決:
+Open:
 
-- ラウンド間の差分表示 (自分の指摘に対してエージェントが何を変えたか) を出すか
+- Whether to show a diff between rounds (what the agent changed in response to a piece of feedback).
 
-## エージェント連携
+## Agent integration
 
-### W-5 `comments` は未解決なら過去ラウンド分も出す
+### W-5 `comments` includes unresolved comments from earlier rounds
 
-持ち越しを廃止すると、ラウンド N の未解決コメントは N+1 の本文には出ない。画面から消えるだけなら履歴で足りるが、エージェントに渡らないと指摘が失われる。
+Dropping carry-over means round N's unresolved comments do not appear in N+1's document. Disappearing from the screen is fine — history covers that — but not reaching the agent loses the feedback.
 
-決まっていること:
+Decided:
 
-- `akapen comments` は未解決コメントを、過去ラウンドのものも含めて出す
-- 各コメントに「どのラウンドの、どの原文に対してか」を付ける。エージェントは原文で照合できるので行番号のズレに影響されない
-- ラウンドを締める操作が「エージェントに渡す」の意味を持つ
+- `akapen comments` emits unresolved comments including those from earlier rounds.
+- Each carries which round and which source text it is about. Agents match on the text, so shifted line numbers do not matter.
+- Closing a round *means* handing work to the agent.
 
-## モード構成
+## Modes
 
-### W-6 passive モード (常駐。mdserve 置き換えを狙う)
+### W-6 passive mode (resident; aiming to replace mdserve)
 
-`--root` 配下のファイルを読むためのモード。live 追従 (HMR) し、コメントは打てない。
+A mode for reading files under `--root`. It follows the live file (HMR) and takes no comments.
 
-live とコメントを同居させると、捨てたはずのズレ問題が戻る。「コメントは凍結スナップショットに対してのみ存在する」という規則を例外なく通すため、passive ではコメントを持たない。
+Putting live following and comments together brings back the drift problem we just discarded. To keep "comments exist only against a frozen snapshot" true without exception, passive holds no comments.
 
-| | passive (常駐) | review (1to1) |
+| | passive (resident) | review (1:1) |
 |---|---|---|
-| 対象 | `--root` 配下 | 明示した 1 ファイル |
-| 本文 | live 追従 (HMR) | ラウンドで凍結 |
-| コメント | 打てない | 打てる |
-| エージェント連携 | なし | あり |
-| 用途 | 読む・書きながら追う | 指摘して渡す |
+| Target | under `--root` | one named file |
+| Document | live (HMR) | frozen per round |
+| Comments | none | yes |
+| Agent integration | none | yes |
+| Use | read, or follow while writing | give feedback and hand it over |
 
-mdserve を置き換えるなら、テーマ切り替えと起動の手軽さも要る。skill / CLAUDE.md にある mdserve 前提の記述の書き換えも発生する。
+Replacing mdserve also needs theme switching and the same ease of starting. It will mean rewriting the mdserve-based passages in the skills and CLAUDE.md.
 
-### W-7 モード切り替えと更新検知バナー
+### W-7 Mode switching and a change banner
 
-1 プロセス・1 ポートで常駐し、URL でモードを分ける。ポートが毎回変わる方が認知負荷が高いため。
+One process, one port, with the mode in the URL. A port that changes every time costs more attention than it saves.
 
 ```text
 akapen serve --root ~/vault --host 0.0.0.0 -p 4300
 
-http://host:4300/                passive。ファイル一覧と本文 (live)
-http://host:4300/browse/<path>   passive。個別ファイル
-http://host:4300/review/<id>     review。凍結スナップショット + 右レール
+http://host:4300/                passive. file list and document (live)
+http://host:4300/browse/<path>   passive. a single file
+http://host:4300/review/<id>     review. frozen snapshot and the right rail
 ```
 
-切り替えは 2 方向。
+Switching goes both ways.
 
-- passive で違和感を見つけたら「レビュー開始」。その瞬間の内容を凍結して `/review/<id>` へ
-- Claude Code 側から `akapen open <file>` を叩くと常駐プロセスにレビューが登録され、URL が返る
+- Spot something in passive and "start a review": the contents at that moment are frozen and you land on `/review/<id>`.
+- Claude Code runs `akapen open <file>`, which registers a review with the resident process and returns a URL.
 
-review 画面の上部に更新検知を出す。ラウンドを早く回すための動線。
+The review screen shows change detection at the top, to keep the loop turning.
 
 ```text
-⟳ 本文が 3 回更新されています   [次のラウンドへ]
+⟳ the document changed 3 times   [next round]
 ```
 
-締める操作が「未解決コメントをエージェントに渡す」の意味を持つ (W-5) ので、ループはこうなる。
+Closing a round means handing unresolved comments to the agent (W-5), so the loop is:
 
-読む → 投げる → 締める → Claude が直す → バナーが出る → 次のラウンドへ
+read → throw feedback → close → Claude fixes → the banner appears → next round
 
-### W-8 コメントの都度、既存 Claude セッションに反応させる (将来)
+### W-8 React to each comment in an existing Claude session (later)
 
-ラウンドを締めてからまとめて渡すのではなく、コメントを打つたびにエージェントが直していく形。
+Rather than closing a round and handing everything over, the agent fixes as each comment lands.
 
-前提として、エージェントを新規起動しない。コンテキストの無い状態で直させるとツギハギになって壊れるため、既存の Claude セッションに watch させる。
+The premise is not to start a new agent. Fixing without context produces patchwork, so an existing Claude session watches instead.
 
-機構は blocking long-poll を推す。Claude Code は background プロセスの終了でセッションが起きるので、繋ぎっぱなしの SSE ではセッション側が気づけない。「新規コメントが出たら JSON を吐いて exit」なら終了がそのまま通知になる。`gh-pr-wait-comment` と同じ形。
+The mechanism should be a blocking long poll. Claude Code wakes on a background process exiting, so a session cannot notice a permanently open SSE. "Print JSON and exit when a new comment appears" makes the exit itself the notification — the same shape as `gh-pr-wait-comment`.
 
 ```bash
 akapen comments --wait --timeout 1800
 ```
 
-設計の要点:
+Design points:
 
-- コメントは「ラウンド N のスナップショットの原文」を持つ。エージェントは原文で現在のファイルを照合して直す。行番号ではなく原文なので、既に他の修正で行がズレていても当たる。照合は LLM 側の得意分野なので akapen に類似度マッチを実装しない
-- 原文が既に消えている場合は推測で直さず「この箇所は既に変わっています」と返信する
-- 応答はコメントへの返信として右レールに出る。B-6 (返信スレッド) が前提
-- 同時実行しない。コメントはキューに積んで直列に処理する
-- 1 コメント 1 起動ではなくデバウンスしてまとめて渡す (「n 件たまった / 数秒止まった」で 1 バッチ)
+- A comment carries the source text from round N's snapshot. The agent matches the current file by text and fixes it. Because it is text rather than a line number, it still lands when other edits have moved things. Matching is what an LLM is good at, so akapen implements no similarity search.
+- When the text is already gone, do not guess: reply "this part has already changed".
+- Responses appear in the right rail as replies to the comment. B-6 (reply threads) is a prerequisite.
+- No concurrency. Comments queue and are handled serially.
+- Debounce rather than one launch per comment ("n queued, or a few seconds quiet" makes one batch).
 
-凍結の副作用として「既にエージェントが直した箇所に、それを知らずにコメントする」が起きる。スナップショットと現在のファイルを比較すれば検出できるので、該当行に「この行は既に変更されています」のマーカーを出す。凍結したまま裏の進行だけが分かる状態にする。
+A side effect of freezing is commenting on something the agent already fixed without knowing. Comparing the snapshot against the current file detects it, so mark such rows "this line has already changed" — frozen, while what is happening behind it is still visible.
 
-順序は W-1 と W-3 の後。形が決まらないと詰められない。
+Order: after W-1 and W-3. It cannot be pinned down before those shapes settle.
 
-## 複数ホストの扱い
+## Handling multiple hosts
 
-### 決定: 各ホストで常駐する。ファイルは集約しない
+### Decision: run on each host. Do not centralise the files
 
-複数ホストで並列に開発しているため、当初は pi に markserv / mdserve を立てて全ドキュメントを集約する構想だった。akapen ではこれを採らない。
+Development runs in parallel across several hosts, so the original idea was to put markserv or mdserve on pi and centralise every document. akapen does not do this.
 
-review は「人 → ファイル → エージェント」のループで、3 つが同じホストに居ないと成立しない。
+A review is a loop of person → file → agent, and it only works when all three are on the same host.
 
-1. ファイルの同一性。集約先がコピーを配信すると、コメントはコピーに付き、実際に直すのは元ホストのエージェントになる。指した対象と直す対象が別物になる
-2. ラウンド検知。「本文が変わりました」は原本の変更を見て出す。同期を挟むと検知が遅れる / 途中状態を拾う
-3. コメントの受け渡し。`akapen comments` はエージェントが叩く。ストアが集約先にあると元ホストのエージェントはローカルで読めない
+1. File identity. If the central copy is what is served, comments attach to the copy while the agent that fixes things is on the original host. What was pointed at and what gets fixed are different objects.
+2. Change detection. "The document changed" watches the original. Syncing in between delays detection, or catches half-written states.
+3. Handing comments over. `akapen comments` is what the agent runs. With the store centralised, the agent on the original host cannot read it locally.
 
-加えて、vault は git repo で各ホストに clone があるため、読む目的の集約は git が既に達成している。むしろ各ホストで見た方が、そのホストの作業ツリー (ブランチ・未コミットの変更) が見えて正確になる。
+On top of that, the vault is a git repository with a clone on each host, so centralising for reading is something git already does. Reading it on each host is in fact more accurate, because that host's working tree — its branch, its uncommitted changes — is what you see.
 
-採る形:
+The shape taken:
 
-- akapen は各ホストで常駐。ポートは全ホスト 4300 固定
-- Technitium で名前を振る (`akapen.d1.local` 等)。ポートを覚えず、ホスト名だけ変えればよくする
-- pi には入口のリンク集だけ置く。akapen に hub 機能は持たせない (責務が増える)
+- akapen runs on each host. Port 4300 everywhere.
+- Names come from Technitium (`akapen.d1.local` and so on), so only the hostname changes and no port needs remembering.
+- pi holds only a page of links. akapen gains no hub feature; that would be scope it should not carry.
 
-### W-9 ホストを意識せずに済む入口 (将来。未着手)
+### W-9 An entry point that hides which host (later, not started)
 
-「どのホストか」を考えたくない、という要望は残っている。ファイルを動かさずにこれを緩和する案として、メタデータだけを集約する hub がありうる。
+The wish not to think about which host remains. One way to soften it without moving files is a hub that centralises metadata only.
 
-- 各ホストの akapen が、進行中のレビュー (ファイル名・ラウンド・未解決件数) を pi の hub に登録する
-- hub は一覧を出すだけで、クリックすると該当ホストの URL に飛ばす
-- ファイルもコメントも動かさないので、上の 3 つの問題は起きない
+- Each host's akapen registers its reviews in progress (file name, round, unresolved count) with a hub on pi.
+- The hub lists them and links through to the host's own URL.
+- Neither files nor comments move, so none of the three problems above appear.
 
-静的なリンク集で足りるなら不要。運用してから判断する。
+Unnecessary if a static list of links is enough. Decide after living with it.
 
-## 基盤 (私発。あなたの要望とは別枠)
+## Foundations (mine, separate from the wants above)
 
-着手順はリストが揃ってから決める。
+Order to be decided once the list is complete.
 
-- B-1 単一バイナリ化 (`bun build --compile`)。今は `bun run src/cli.ts` 前提で他マシンから使いづらい
-- B-2 Claude Code 連携 → W-8 (#12) に統合。`agent_cmd` 相当は「既存セッションに watch させる」形で扱う
-- B-3 複数ファイル → W-7 (#9) に統合。1 プロセスで複数レビューを持つ形で解決する
-- B-4 テスト。`scripts/verify.ts` と `scripts/sweep.ts` は不変条件の確認で、描画の正しさは目視 1 ファイルぶんしか見ていない
-- B-5 認証。`--host 0.0.0.0` が無認証。passive を常駐させると LAN に出っぱなしになり、ホスト台数分だけ口が増えるため、優先度は「いつか」ではなく「passive 常駐を始める前に」
-- B-6 返信スレッド。今は 1 コメント 1 スレッド
+- B-1 Single binary (`bun build --compile`). Today it assumes `bun run src/cli.ts`, which is awkward from another machine.
+- B-2 Claude Code integration → folded into W-8 (#12). The `agent_cmd` equivalent takes the shape of an existing session watching.
+- B-3 Multiple files → folded into W-7 (#9). Solved by one process holding several reviews.
+- B-4 Tests. `scripts/verify.ts` and `scripts/sweep.ts` check invariants; the rendering has only been eyeballed on a single file.
+- B-5 Authentication. `--host 0.0.0.0` has none. Running passive as a resident leaves it on the LAN permanently, and once per host, so the priority is not "someday" but "before passive becomes resident".
+- B-6 Reply threads. One comment is one thread today.
 
-## 見送った案
+## Rejected
 
-同じ議論を繰り返さないための記録。
+Kept so the same argument is not had twice.
 
-- 左に markdown ソースのペインを出す (3 ペイン構成) — 編集する前提でなければ不要という判断で撤回。行番号は引き続き本文側に出さず、`l` で切り替える
-- pi に全ドキュメントを集約して そこでレビューする — review が成立しないため見送り (理由は「複数ホストの扱い」節)。読む目的だけの集約は技術的には可能だが、作業ツリーが見えないので各ホストで見る方が正確
-- コメントのたびにエージェントを新規起動する — コンテキストの無い状態で直させるとツギハギになって壊れる。既存セッションに watch させる形にする (W-8)
-- 再アンカーの精度強化 (類似度マッチ / 見出しからの相対位置) — ラウンド制の採用で不要になった
+- A markdown source pane on the left (three panes) — withdrawn: unnecessary unless editing is the premise. Line numbers stay off the document and toggle with `l`.
+- Centralise every document on pi and review there — rejected because a review cannot work that way (see "Handling multiple hosts"). Centralising purely for reading is technically possible, but the working tree is invisible, so reading on each host is more accurate.
+- Start a new agent for every comment — fixing without context produces patchwork. An existing session watches instead (W-8).
+- Strengthen re-anchoring (similarity matching, position relative to headings) — made unnecessary by adopting rounds.
