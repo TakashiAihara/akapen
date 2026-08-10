@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
+import type { Comment, RoundComment, RoundMeta } from '../shared/types.ts';
 import {
   mkdirSync,
   readFileSync,
@@ -12,28 +13,7 @@ import {
   existsSync,
 } from 'node:fs';
 
-export type Comment = {
-  id: string;
-  /** 紐づくラウンドのスナップショット内での行番号。live のファイルに対しては意味を持たない。 */
-  startLine: number;
-  endLine: number;
-  body: string;
-  author: string;
-  createdAt: string;
-  resolved: boolean;
-  /**
-   * スナップショットから切り出した原文。ラウンドをまたいで位置を伝えるのはこちらの役目。
-   * エージェントは行番号ではなく原文で現在のファイルを照合するので、他の修正で行がズレても当たる。
-   */
-  anchor: string;
-};
-
-export type RoundMeta = {
-  n: number;
-  createdAt: string;
-  /** 次のラウンドを開いた時刻。現ラウンドは null。 */
-  closedAt: string | null;
-};
+export type { Comment, RoundComment, RoundMeta };
 
 export type Review = {
   version: 2;
@@ -193,9 +173,6 @@ export function loadComments(filePath: string, n: number): Comment[] {
     return [];
   }
 }
-
-/** どのラウンドのコメントかを付けて返す。ラウンドをまたいで扱う経路は必ずこれを通す。 */
-export type RoundComment = Comment & { round: number };
 
 /**
  * 全ラウンドのコメントを新しいラウンドから順に返す。

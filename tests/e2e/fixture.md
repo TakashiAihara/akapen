@@ -33,3 +33,11 @@ tags:
 <img src=x onerror="window.xssMarker = 'executed'">
 
 <b>太字にはならない</b>
+
+## 図
+
+```mermaid
+graph TD
+  A[読む] --> B[投げる]
+  B --> C[締める]
+```

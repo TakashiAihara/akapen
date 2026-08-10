@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ASSETS } from '../src/assets.ts';
 
-const WEB = join(import.meta.dir, '..', 'web');
+const WEB = join(import.meta.dir, '..', 'web', 'dist');
 
 const sandbox = mkdtempSync(join(tmpdir(), 'akapen-smoke-'));
 const bin = join(sandbox, 'akapen');
@@ -23,8 +23,16 @@ const ok = (label: string, pass: boolean, detail = '') => {
   console.log(`${pass ? 'PASS' : 'FAIL'}  ${label}${detail ? `  ${detail}` : ''}`);
 };
 
-// 埋め込みは assets.ts の静的な import でしか効かない。web/ に置いただけの
-// ファイルはバイナリに入らず本番で 404 になるので、登録漏れをここで落とす。
+// 先にブラウザ側をビルドする。web/dist が無いとバイナリに何も埋め込まれない
+const web = Bun.spawnSync(['bun', 'run', 'build:web']);
+ok(
+  'ブラウザ側がビルドできる',
+  web.exitCode === 0,
+  web.exitCode === 0 ? '' : new TextDecoder().decode(web.stderr).slice(0, 300),
+);
+
+// 埋め込みは assets.ts の静的な import でしか効かない。web/dist に出来たものを
+// assets.ts に書き忘れるとバイナリに入らず本番で 404 になるので、登録漏れをここで落とす。
 const webNames = readdirSync(WEB, { recursive: true })
   .map(String)
   .filter((n) => !n.endsWith('/') && n.includes('.'));
