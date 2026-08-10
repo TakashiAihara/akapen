@@ -6,24 +6,24 @@ import { loadReview, pendingComments } from './store.ts';
 
 const USAGE = `akapen — markdown inline review (PoC)
 
-  akapen <file.md> [options]     レビュー用のサーバを立てる
-  akapen comments <file.md>      未解決コメントを JSON で出す (エージェント向け)
+  akapen <file.md> [options]     start the review server
+  akapen comments <file.md>      print unresolved comments as JSON (for agents)
 
 options:
-  --host <addr>    リッスンアドレス (default 127.0.0.1)
-  -p, --port <n>   ポート (default 4300)
-  --css <file>     追加で読み込む CSS
-  --keymap <file>  キーマップを上書きする JSON ({ "動作名": ["キー"] })
-  --author <name>  コメントの著者名 (default $USER)
-  --all            comments: 解決済みも含める
+  --host <addr>    listen address (default 127.0.0.1)
+  -p, --port <n>   port (default 4300)
+  --css <file>     extra stylesheet to load
+  --keymap <file>  JSON overriding the keymap ({ "action": ["key"] })
+  --author <name>  comment author (default $USER)
+  --all            comments: include resolved ones
 `;
 
 /**
- * 受け付けるフラグを名前で持つ。
+ * Name the flags we accept.
  *
- * index signature だけにすると `args.port` が noPropertyAccessFromIndexSignature に
- * 引っかかり、全部 bracket 記法になって読めなくなる。既知のフラグを並べておけば
- * dot で書けるうえに、何を受け付けるかが型に出る。
+ * With only an index signature, `args.port` trips noPropertyAccessFromIndexSignature
+ * and everything turns into bracket notation. Listing the known flags keeps dot
+ * access readable and puts the accepted set in the type.
  */
 type Args = {
   _: string[];
@@ -66,9 +66,9 @@ if (positional[0] === 'comments') {
     console.error(`akapen: no such file: ${file ?? '(missing)'}`);
     process.exit(1);
   }
-  // 未解決なら過去ラウンド分も出す。締めた時点で画面からは消えるが、指摘は消えていない。
-  // 行番号はそのラウンドのスナップショット内でのもので live のファイルとは一致しないので、
-  // エージェントは anchor (当時の原文) で現在のファイルを照合する。
+  // Unresolved comments from earlier rounds are included. Closing a round removes them
+  // from the screen, not from the feedback. Line numbers refer to that round's snapshot
+  // and will not match the live file, so an agent matches on `anchor` (the text as it was).
   const review = loadReview(file);
   const comments = pendingComments(file, Boolean(args.all));
   console.log(
@@ -77,8 +77,8 @@ if (positional[0] === 'comments') {
         id: c.id,
         path: resolve(file),
         round: c.round,
-        // 現ラウンドのものかどうか。過去のものは「当時の本文に対する指摘」で、
-        // いまのファイルでは行がズレている前提で扱う必要がある
+        // Whether it belongs to the current round. Older ones are feedback on the document
+        // as it was, so treat their line numbers as already shifted in the live file.
         current_round: c.round === review.currentRound,
         start_line: c.startLine,
         end_line: c.endLine,
@@ -107,8 +107,8 @@ const { server, storeDir, round } = startServer({
   host,
   port,
   author: (args.author as string) ?? process.env['USER'] ?? 'user',
-  // exactOptionalPropertyTypes: `?:` は「省略できる」であって「undefined を渡せる」ではない。
-  // 指定が無いなら鍵ごと落とす
+  // exactOptionalPropertyTypes: `?:` means "may be absent", not "may be undefined".
+  // With no value given, drop the key entirely.
   ...(args.css ? { cssPath: resolve(args.css as string) } : {}),
   ...(args.keymap ? { keymapPath: resolve(args.keymap as string) } : {}),
 });
@@ -117,4 +117,4 @@ console.log(`akapen  ${resolve(file)}`);
 console.log(`  url     http://${host}:${server.port}`);
 console.log(`  round   ${String(round).padStart(3, '0')}`);
 console.log(`  store   ${storeDir}`);
-if (host !== '127.0.0.1') console.log(`  note    認証はありません。到達できる範囲に注意してください。`);
+if (host !== '127.0.0.1') console.log(`  note    no authentication. mind who can reach this address.`);

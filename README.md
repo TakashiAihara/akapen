@@ -1,43 +1,43 @@
 # akapen
 
-レンダリングした markdown にインラインで指摘を入れ、その位置と原文を構造化してエージェントに渡すための道具。
+A tool for leaving inline feedback on rendered markdown, and handing that feedback — its position and the text it points at — to an agent in a structured form.
 
-コメントは md 実ファイルに一切書かない。`~/.akapen/reviews/` のサイドカーに隔離する。md 本体が成果物である vault のような用途で、レビュー用の注記が commit に混入する経路を設計から消すため。
+Comments are never written into the markdown file. They live in a sidecar under `~/.akapen/reviews/`. When the markdown itself is the deliverable, as it is in a vault, this removes by design the path by which review notes end up in a commit.
 
-現状は PoC。動くが、認証・複数ファイル・エージェント自動連携は入っていない。
+Still a proof of concept. It works, but authentication, multiple files and automatic agent integration are not in it.
 
-## なぜ作ったか
+## Why it exists
 
-crit (tomasz-tomczyk/crit) を常用しようとして、3 点が引っかかった。いずれも crit の設計から出ているので設定では消せない。
+Three things got in the way of using crit (tomasz-tomczyk/crit) day to day. All of them follow from its design, so no setting turns them off.
 
-1. 行が間延びする。crit は「ソース 1 行 = DOM 1 row」を守るため、markdown の空行も 1 行ぶんの高さを持つ row になる
-2. 行番号を意識させられる。crit は行番号クリックがコメントの入口なので、読む時も常に見えている
-3. frontmatter を素通しして本文として描く。`key: value` が段落に融合するため、`status: draft` のような 1 行を単独で指せない
+1. Lines sprawl. crit keeps "one source line = one DOM row", so a blank line in markdown becomes a row a full line high.
+2. Line numbers are always present. Clicking one is how you comment in crit, so they stay visible while reading.
+3. Frontmatter passes through as body text. `key: value` merges into a paragraph, so a single line like `status: draft` cannot be addressed.
 
-akapen はこの 3 点を設計で回避する。
+akapen avoids all three by construction.
 
-- 空行に row を作らない
-- 行番号は既定で出さない (アンカーは内部で持つ。`l` キーで表示切り替え)
-- frontmatter を 1 ソース行 = 1 ブロックで描く。値の途中で折り返した行も単独で指せる
+- Blank lines get no row.
+- Line numbers are hidden by default (anchors are held internally; press `l` to show them).
+- Frontmatter renders as one source line = one block. Even a line wrapped mid-value stays addressable.
 
-加えて、拡張 CSS の口を最初から開けてある。crit には無く、ブラウザ拡張 (Stylus 等) を入れる以外に手が無かった部分。
+There is also a hook for extra CSS, open from the start. crit had none, so the only way in was a browser extension such as Stylus.
 
-## 入れる
+## Install
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/TakashiAihara/akapen/main/install.sh | sh
 ```
 
-`$HOME/.local/bin/akapen` に単一バイナリが入る。bun も clone も要らない。
+A single binary lands in `$HOME/.local/bin/akapen`. No bun, no clone.
 
-| 環境変数 | 意味 |
+| Environment variable | Meaning |
 |---|---|
-| `AKAPEN_VERSION` | 入れるタグ (既定 `latest`) |
-| `AKAPEN_INSTALL_DIR` | 置き場所 (既定 `$HOME/.local/bin`) |
+| `AKAPEN_VERSION` | tag to install (default `latest`) |
+| `AKAPEN_INSTALL_DIR` | where to put it (default `$HOME/.local/bin`) |
 
-**チェックサムの検証は必須**。`SHA256SUMS` が取れない / 対象の行が無い / `sha256sum` も `shasum` も無い、のいずれでも中止する。検証できないものを入れないため。
+**Checksum verification is mandatory.** The install aborts when `SHA256SUMS` cannot be fetched, when it has no line for the asset, or when neither `sha256sum` nor `shasum` exists — anything unverified is not installed.
 
-`AKAPEN_VERIFY_ATTESTATION=1` を付けると、`gh` がある環境で build provenance も検証する。checksum は Release と同じ場所から取っているので、改竄されれば両方差し替えられる。真正性まで見たい場合はこちら。
+`AKAPEN_VERIFY_ATTESTATION=1` additionally verifies build provenance where `gh` is available. The checksum comes from the same release, so whoever can tamper with one can replace both; this is what checks authenticity.
 
 ```bash
 gh attestation verify ~/.local/bin/akapen \
@@ -45,36 +45,36 @@ gh attestation verify ~/.local/bin/akapen \
   --signer-workflow TakashiAihara/akapen/.github/workflows/release.yml
 ```
 
-`--repo` だけだと同じ repository の別 workflow が作った attestation でも通るので、署名元の workflow まで固定する。
+With `--repo` alone an attestation from any workflow in the repository passes, so the signing workflow is pinned too.
 
-対応は linux / darwin の x64 と arm64。バイナリは GitHub Actions が tag push で作り、Release に上げている (`.github/workflows/release.yml`)。
+Binaries exist for linux and darwin on x64 and arm64. GitHub Actions builds them on tag push and attaches them to the release (`.github/workflows/release.yml`).
 
-### repo から動かす
+### Running from the repository
 
 ```bash
 bun install
-bun run src/cli.ts <file.md> [options]
+bun run start <file.md> [options]
 ```
 
-以降の例は `bun run src/cli.ts` で書くが、入れてあれば `akapen` に読み替えてよい。
+The examples below use `bun run src/cli.ts`; read that as `akapen` if you installed it.
 
-## 使う
+## Usage
 
-| option | 意味 |
+| Option | Meaning |
 |---|---|
-| `--host <addr>` | リッスンアドレス (default `127.0.0.1`) |
-| `-p, --port <n>` | ポート (default `4300`) |
-| `--css <file>` | 追加で読み込む CSS。既定スタイルの後に読むので全部上書きできる |
-| `--keymap <file>` | キーマップを上書きする JSON。既定に上書きマージする |
-| `--author <name>` | コメントの著者名 (default `$USER`) |
+| `--host <addr>` | listen address (default `127.0.0.1`) |
+| `-p, --port <n>` | port (default `4300`) |
+| `--css <file>` | extra stylesheet, loaded after the defaults so it can override everything |
+| `--keymap <file>` | JSON overriding the keymap, merged over the defaults |
+| `--author <name>` | comment author (default `$USER`) |
 
-リモートマシンで動かしてローカルのブラウザから見る場合は `--host 0.0.0.0`。認証は無いので到達範囲に注意する。
+Use `--host 0.0.0.0` to run it on a remote machine and read it from a local browser. There is no authentication, so mind who can reach the address.
 
-エージェントへの受け渡しは CLI。
+The handoff to an agent is a CLI command.
 
 ```bash
-bun run src/cli.ts comments <file.md>          # 未解決コメントを JSON で出す
-bun run src/cli.ts comments <file.md> --all    # 解決済みも含める
+bun run src/cli.ts comments <file.md>          # unresolved comments as JSON
+bun run src/cli.ts comments <file.md> --all    # include resolved ones
 ```
 
 ```json
@@ -86,7 +86,7 @@ bun run src/cli.ts comments <file.md> --all    # 解決済みも含める
     "current_round": true,
     "start_line": 5,
     "end_line": 5,
-    "body": "status 行への指摘",
+    "body": "feedback on the status line",
     "anchor": "status: active",
     "author": "root",
     "resolved": false
@@ -94,56 +94,56 @@ bun run src/cli.ts comments <file.md> --all    # 解決済みも含める
 ]
 ```
 
-`start_line` / `end_line` はそのラウンドのスナップショット内での行番号で、live のファイルとは一致しない。エージェントは `anchor` (当時の原文) で現在のファイルを照合する。
+`start_line` and `end_line` are line numbers inside that round's snapshot and will not match the live file. An agent matches the current file on `anchor` — the text as it was.
 
-**未解決なら過去ラウンドのものも出す。** 持ち越しを廃止したので、ラウンド N の指摘は N+1 の画面には出ない。画面から消えるだけなら履歴で足りるが、エージェントに渡らないと指摘そのものが失われる。ラウンドを締める操作が「エージェントに渡す」の意味を持つ。
+**Unresolved comments from earlier rounds are included.** Since nothing carries over, round N's feedback does not appear on N+1's screen. Disappearing from the screen is what history is for; not reaching the agent would lose the feedback itself. Closing a round *means* handing work over.
 
-現ラウンドのものが先で、その中は行順。`current_round: false` のものは当時の本文に対する指摘なので、いまのファイルでは行がズレている前提で扱う。`--all` で解決済みも含める。
+Current-round comments come first, ordered by line. Entries with `current_round: false` are feedback on the document as it was, so treat their line numbers as already shifted.
 
-拡張 CSS の例は `examples/dense.css`。
+There is an example stylesheet in `examples/dense.css`.
 
 ```bash
 bun run src/cli.ts note.md --css examples/dense.css
 ```
 
-試すだけなら `examples/sample.md` が入っている。
+`examples/sample.md` is there to try it on.
 
 ```bash
 bun run src/cli.ts examples/sample.md
 ```
 
-## 設計
+## Design
 
-### markdown に直接書いた HTML
+### Line mapping
 
-エスケープして文字として出す (`markdown-it` を `html: false` で使う)。
+Walk markdown-it's tokens and split the document into "one source line = one block" (`src/blocks.ts`). Paragraphs, list items, table rows, code lines and frontmatter lines each become an independently addressable unit.
 
-akapen が描くのは「レビュー対象の markdown」で、その出所は必ずしも自分ではない。`html: true` にすると本文がそのまま `innerHTML` に入るので、md を開いた時点で任意の JS が akapen の origin で動く。その origin には認証の無い `/api/comments` と、ファイルの絶対パスを返す `/api/doc` がある。
+There is one invariant: every non-blank source line belongs to exactly one block. Break it and you get the worst failure there is — the line you want to point at is not on the screen. Lines that produce no token (a bare `>` inside a quote, for instance) are picked up at the end.
 
-markdown を読むための道具に markdown 以外が紛れ込む口を開けておく利点より、塞ぐ方が大きいという判断。
+### HTML written directly in the markdown
 
-### 行マッピング
+It is escaped and shown as text (`markdown-it` runs with `html: false`).
 
-markdown-it のトークンを走査して「ソース 1 行 = 1 ブロック」に割る (`src/blocks.ts`)。段落・リスト項目・表の行・コードの行・frontmatter の行が、それぞれ独立して指せる単位になる。
+What akapen renders is markdown under review, and it does not always come from you. With `html: true` the document goes straight into `innerHTML`, so opening a file runs arbitrary JS on akapen's origin — which serves an unauthenticated `/api/comments` and an `/api/doc` that returns the absolute path.
 
-不変条件は 1 つ。空行以外のすべてのソース行が、ちょうど 1 つのブロックに属すること。これが崩れると「指したい行が画面に存在しない」という最悪の壊れ方をする。トークンにならない行 (引用内の `>` だけの行など) は最後に拾う。
+Leaving a hole for non-markdown to slip into a markdown reader buys less than closing it.
 
-### キー操作
+### Keys
 
-流し読み中はスクロールしているのでホバー起点が要る。連続して打つ時はキーボードから手を離したくない。両方を用意し、**どちらも同じ関数に入る**ようにしてある。マウスでしか範囲が取れない、といった片肺の動線を作らないため。
+While skimming you are scrolling, so a hover-based path is needed. While writing several in a row you do not want to leave the keyboard. Both exist, and **both enter the same function** — no half-working path such as "the mouse can select a range, the keyboard cannot".
 
-| キー | 動作 | 動作名 |
+| Key | Action | Action name |
 |---|---|---|
-| `j` / `k` | 行フォーカスを移動 | `row.next` / `row.prev` |
-| `shift+j` / `shift+k` | 選択範囲を伸ばす (マウスのドラッグと同じ) | `row.extendNext` / `row.extendPrev` |
-| `c` | 選択範囲にコメント | `comment.start` |
-| `Ctrl+Enter` | 送信 | `comment.submit` |
-| `Esc` | 取り消し (下書き → レール → 選択の順に畳む) | `comment.cancel` |
-| `l` | 行番号の表示切り替え | `lines.toggle` |
+| `j` / `k` | move the line focus | `row.next` / `row.prev` |
+| `shift+j` / `shift+k` | grow the selection (same as a mouse drag) | `row.extendNext` / `row.extendPrev` |
+| `c` | comment on the selection | `comment.start` |
+| `Ctrl+Enter` | send | `comment.submit` |
+| `Esc` | cancel (draft, then rail, then selection) | `comment.cancel` |
+| `l` | toggle line numbers | `lines.toggle` |
 
-割り当ては暫定で、この先まとめて見直す前提。定義は `web/keys.js` の 1 箇所に集約してある。
+The assignment is provisional and will be revisited as a whole. It is defined in one place: `web/keys.ts`.
 
-矢印キーと `Enter` は既定に入れていない。矢印を奪うとページのスクロールが効かなくなり、読む方が壊れるため。欲しい場合は `--keymap` で足す。
+Arrow keys and `Enter` are deliberately unbound. Taking the arrows breaks page scrolling, which breaks reading. Add them with `--keymap`.
 
 ```bash
 bun run src/cli.ts note.md --keymap examples/keymap.json
@@ -157,115 +157,109 @@ bun run src/cli.ts note.md --keymap examples/keymap.json
 }
 ```
 
-動作名ごとにキーの配列を書く。書いた動作だけが差し替わり、書かなかったものは既定のまま。`null` を渡すとその動作を無効化できる。JSON が壊れている場合は既定のキーマップで起動し、サーバ側に警告を出す (設定ミスで操作不能にしないため)。
+Each action lists its keys. Actions you do not name keep their defaults; `null` disables one. A broken JSON starts with the default keymap and logs a warning on the server, so a mistake in the config never makes the tool unusable.
 
-### 履歴
+### The browser side is TypeScript too
 
-ラウンドはコメントを持ち越さない。代わりに、過去に何を指摘したかを 2 つの経路で残す。
+`web/` is bundled with `bun build` before being served, so the same `tsconfig` as the server (`@tsconfig/strictest` plus `ts-reset`) applies.
 
-- 右レールの末尾に **過去ラウンドの未解決コメント** を出す。持ち越さない設計では「画面から消えた = 解決した」に見えてしまうため
-- 上部のラウンド選択、または過去コメントの `R001` タグを押すと **そのラウンドのスナップショットに切り替わる**。当時の本文と当時のコメントがそのまま出る
+Types live in `shared/` and are used by both sides. Both handle the same comments and the same payloads; with only one side typed, changing the shape lets the other drift silently.
 
-過去ラウンドを見ている間はコメントを打てない。当時の本文にいま指摘を足せると、ラウンド番号 + `content.md` + 行番号で指摘箇所を再現できる、という性質が壊れる。
+There are two outputs, since `bun build --compile` embeds them by name.
 
-一方で **ステータス (resolved) は過去ラウンドのコメントにも効く**。「読み取り専用」はスナップショットと行アンカーの話で、ここまで凍らせると未解決コメントを閉じる手段が無くなり、`akapen comments` が同じ指摘を出し続けることになる。
-
-### ブラウザ側も TypeScript
-
-`web/` は `bun build` でバンドルしてから配信する。サーバと同じ `tsconfig` (`@tsconfig/strictest` + `ts-reset`) が効く。
-
-型の定義は `shared/` に置いて両側から使う。同じコメントと同じ payload を扱うのに片側にしか型が無いと、形を変えた時にもう片方が黙ってズレる。
-
-出力は 2 つ。`bun build --compile` で埋め込むので、名前が既知である必要がある。
-
-| 成果物 | 中身 |
+| Output | Contents |
 |---|---|
 | `web/dist/app.js` | 15KB |
-| `web/dist/mermaid.js` | 3.4MB。**mermaid ブロックがある時だけ読む** |
+| `web/dist/mermaid.js` | 3.4MB, **fetched only when the document has a diagram** |
 
-mermaid を `app.js` に取り込むと 3.3MB になり、図が 1 つも無い文書でも毎回読んで解析することになる。`--splitting` はハッシュ名のチャンクを 100 個以上作るので埋め込みと噛み合わない。entry を 2 つに分けるのが両立する形。
+Bundling mermaid into `app.js` makes that 3.3MB, parsed on every load even with no diagram. `--splitting` emits a hundred-odd hash-named chunks, which does not fit embedding by name. Two entries satisfy both.
 
-### 右レール
+### The right rail
 
-コメントは本文の行間に差し込まず、右のレールに吹き出しとして出す。
+Comments do not go between the lines; they appear as bubbles in a rail on the right.
 
-見た目ではなく読みの連続性のため。インラインで割り込まれると読みの文脈がそこで切れる。やりたいのは「流し読みしながら違和感を投げ続ける」ことで、本文が分断されるとそれができない。
+This is about continuity of reading, not looks. An interruption inline breaks the thread of what you were reading. The point is to skim and keep throwing feedback as you go, and a document cut into pieces makes that impossible.
 
-- 吹き出しはアンカー行と垂直に揃える。重なったら下にずらす。位置合わせはレール側で全部吸収し、本文には行を挿入しない
-- 本文側の印はアンカー行の左に細い線を引くだけ。高さも位置も変えない
-- コメント入力欄もレールに出す。本文にフォームを差し込むと結局そこで分断が起きる
-- 吹き出しと本文のハイライトは双方向に連動する
-- 幅が 1200px を切るとレールを畳む。畳んだ側には行ごとのマーカーだけが残り、押すとレールが開く
+- Bubbles line up with their anchor row; overlaps push down. All the alignment is absorbed by the rail, and no rows are inserted into the document.
+- The mark on the document side is a thin line at the left of the anchor row. Neither height nor position changes.
+- The input box is in the rail too. A form wedged into the document would interrupt it just the same.
+- Bubble and document highlight track each other, both ways.
+- Below 1200px the rail collapses. Per-row markers remain, and clicking one opens it.
 
-寸法は `--ak-rail-width` / `--ak-rail-gap` / `--ak-bubble-gap` で上書きできる。
+Dimensions can be overridden with `--ak-rail-width`, `--ak-rail-gap` and `--ak-bubble-gap`.
 
-### ラウンド
+### History
 
-ラウンドはファイル内容の凍結スナップショット。画面に出るのは live のファイルではなく現ラウンドのスナップショットで、コメントはそのスナップショット内の行に紐づく。
+Rounds carry no comments over. Instead, what was raised before is kept in two places.
 
-live が書き換わっても本文は差し替えない。「本文が N 回更新されています」を出すだけで、次に進むのは人が「このラウンドを終える」を押した時だけ。エージェントの途中保存でラウンドは刻まれない。
+- **Unresolved comments from earlier rounds** appear at the end of the rail. With nothing carrying over, "gone from the screen" would otherwise read as "dealt with".
+- The round selector at the top, or the `R001` tag on an older comment, **switches to that round's snapshot**. The document and the comments appear exactly as they were.
 
-この原則は画面全体に通してある。**SSE (`/events`) は通知の経路であって描画の経路ではない**。流れるのは「本文が変わりました」だけで、本文の DOM を作り直すのはラウンドを切った時と履歴に切り替えた時 (どちらも人の操作) に限る。コメントの追加・resolve はレールと行の印だけを更新する。
+No comments can be written while viewing a past round. Being able to add feedback to a past document would break the property that round number + `content.md` + line number reproduces where feedback pointed.
 
-サーバから飛んできた payload で画面が入れ替わると、読んでいる位置・入力中のフォーカス・IME の変換・本文の選択が、人の操作と無関係に壊れる。
+**Status, however, does apply to comments from earlier rounds.** "Read-only" is about the snapshot and the line anchors; freezing the status as well would leave no way to close an unresolved comment, and `akapen comments` would emit the same feedback forever.
 
-ラウンドをまたいだコメントの持ち越しはしない。ラウンド N のコメントは N の本文に対する指摘として、その本文ごと残る。
+### Rounds
 
-これで、書いている最中にファイルが変わってコメントが競合する経路が構造から無くなる。追従の精度を上げ続けるいたちごっこに入らないのが狙いで、精度の改善ではない。
+A round is a frozen snapshot of the file contents. What you see is the current round's snapshot, not the live file, and comments attach to lines inside that snapshot.
 
-トレードオフとして、エージェントが直した内容は次のラウンドに入るまで画面に出ない。書きながら追いたい時は mdserve を併用する。crit と同じ割り切り。
+A live change never swaps the document. It only says "the document changed N times", and moving on happens when a person presses "End this round". An agent's intermediate save never cuts a round.
 
-### コメントの保存先
+The same rule applies to the whole screen: **SSE (`/events`) is a notification channel, not a rendering channel.** All it carries is that the document changed. The document DOM is rebuilt only when a round is cut or history is opened — both things a person did. Adding or resolving a comment updates the rail and the per-row marks alone.
 
-md 実ファイルには触れない。
+A screen replaced by a payload arriving from the server destroys the reading position, the focused input, an in-flight IME composition and the text selection, with nothing to do with what the person did.
+
+The trade-off: what the agent fixed does not appear until the next round begins. Use mdserve alongside when you want to watch it change. crit makes the same call.
+
+### Where comments are stored
+
+The markdown file is never touched.
 
 ```text
 ~/.akapen/reviews/<basename>-<hash>/
-  review.json          # ラウンドのメタ情報、現在のラウンド番号
+  review.json          # round metadata and the current round number
   rounds/
-    001/content.md     # 凍結された本文
-    001/comments.json  # 001 の行番号に紐づくコメント
+    001/content.md     # the frozen document
+    001/comments.json  # comments anchored to lines in 001
     002/content.md
     002/comments.json
 ```
 
-`AKAPEN_HOME` で `~/.akapen` を差し替えられる (検証で実ストアを汚さないため)。
+`AKAPEN_HOME` replaces `~/.akapen` (the tests use it to avoid touching the real store).
 
-## 検証
+## Checks
 
 ```bash
-bun run typecheck                  # 型
-bun run test                       # 行マッピングとラウンドの不変条件 (vitest)
-bun run test:e2e                   # 実ブラウザでの回帰 (playwright)
-bun run sweep <dir>                # ディレクトリ内の全 md でブロック分割を確認
-bun run scripts/smoke-binary.ts    # 単一バイナリを作ってアセットの埋め込みを確認
+bun run typecheck                  # types
+bun run test                       # line mapping and round invariants (vitest)
+bun run test:e2e                   # regressions in a real browser (playwright)
+bun run sweep <dir>                # block splitting across every markdown file in a directory
+bun run scripts/smoke-binary.ts    # build the single binary and check the embedded assets
 ```
 
-`install.sh` と GitHub Actions のワークフローは CI で見ている。手元で回すなら docker で。
+`tests/` has two layers.
+
+- `tests/*.test.ts` — line mapping and the storage layer. When these break, the line you want is missing from the screen, or a frozen document disappears.
+- `tests/e2e/` — a real browser. Focus, IME composition, the text selection and re-rendering are only visible in real DOM behaviour. None of those bugs were caught by the storage-layer tests.
+
+E2E starts a server, a markdown file and a store per test (`tests/e2e/fixtures.ts`). Sharing one mixes comments between tests.
+
+`install.sh` and the GitHub Actions workflows are checked in CI. To run them locally, use docker.
 
 ```bash
 docker run --rm -v "$PWD:/mnt" koalaman/shellcheck:stable install.sh
 docker run --rm -v "$PWD:/repo" --workdir /repo rhysd/actionlint:latest -color
 ```
 
-`tests/` は 2 層に分かれている。
+Across all 152 notes in a vault, no line was dropped or duplicated (24164 blocks).
 
-- `tests/*.test.ts` — 行マッピングとラウンドの保存層。ここが崩れると、指したい行が画面に無かったり、凍結したはずの本文が消える
-- `tests/e2e/` — 実ブラウザ。フォーカス・IME の変換・選択範囲・再描画は DOM の実挙動でしか捕まらない (実際、これらの不具合は保存層のテストでは 1 件も検出できなかった)
+## Not done yet
 
-E2E はテストごとに専用のサーバ・md・ストアを立てる (`tests/e2e/fixtures.ts`)。1 台を共有するとコメントが混ざる。
+- Authentication. `--host 0.0.0.0` puts it on the LAN with none.
+- Reviewing several files. One file per process today.
+- Automating the agent handoff. `comments` has to be called; there is no equivalent of crit's `agent_cmd`.
+- Replies and threads. One comment is one thread.
 
-vault の全 152 ノートで、行の取りこぼし・重複ともゼロ (24164 ブロック)。
+## Licence
 
-## 残っていること
-
-- 認証。`--host 0.0.0.0` は無認証で LAN に出る
-- 複数ファイルのレビュー。今は 1 ファイル 1 プロセス
-- 過去ラウンドの未解決コメントの受け渡し。`comments` は現ラウンド分しか出さないので、ラウンドを切ると前の指摘がエージェントに渡らない (#5)
-- 過去ラウンドを画面から辿る動線。ストアには残っているが UI が無い (#4)
-- エージェント連携の自動化。今は `comments` を叩いてもらう前提で、crit の `agent_cmd` 相当は無い
-- 返信・スレッド。今は 1 コメント 1 スレッド
-
-## ライセンス
-
-MIT。詳細は `LICENSE`。
+MIT. See `LICENSE`.

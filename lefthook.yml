@@ -1,11 +1,11 @@
-# git hook。CI と同じものを、CI より先に手元で落とすためのもの。
-# ここを通しても CI は同じ内容をもう一度回す (hook は --no-verify で飛ばせるため)。
+# Git hooks: the same checks CI runs, failing locally first.
+# Passing here does not skip CI, which runs them again — hooks can be bypassed with --no-verify.
 
 pre-commit:
   parallel: true
   jobs:
     - name: format
-      # 直してから stage し直す。ここで落として人に直させる必要は無い
+      # Fix and re-stage. There is no reason to fail and make a person do it by hand
       glob: '*.{js,ts,json}'
       run: bunx oxfmt {staged_files}
       stage_fixed: true

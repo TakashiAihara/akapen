@@ -11,10 +11,10 @@ import type {
 } from '../shared/types.ts';
 import { bindKeys, loadKeymap } from './keys.ts';
 
-/** index.html にある前提の要素。無ければ起動時に落として気づけるようにする。 */
+/** Elements index.html is expected to have. Missing one fails at startup so it is noticed. */
 function must<T extends HTMLElement = HTMLElement>(id: string): T {
   const found = document.getElementById(id);
-  if (!found) throw new Error(`akapen: #${id} が index.html にありません`);
+  if (!found) throw new Error(`akapen: #${id} is missing from index.html`);
   return found as T;
 }
 
@@ -35,11 +35,11 @@ const bannerTextEl = must('bannerText');
 const nextRoundBtn = must<HTMLButtonElement>('nextRound');
 const showLines = must<HTMLInputElement>('showLines');
 
-/** 入力中のコメント。範囲と本文を持ち、再描画をまたいで生き残る */
+/** A comment being written: its range and text, kept alive across re-renders. */
 type Draft = { startLine: number; endLine: number; text: string };
-/** 行の範囲選択 */
+/** A selected range of lines. */
 type Range = { start: number; end: number };
-/** mermaid は別 entry から動的に読む。使うのは初期化と実行だけ */
+/** mermaid is loaded on demand from its own entry. We only initialise and run it. */
 type MermaidLib = {
   initialize: (o: { startOnLoad: boolean; theme: string }) => void;
   run: (o: { nodes: ArrayLike<Element> }) => Promise<void>;
@@ -48,23 +48,23 @@ type MermaidLib = {
 type State = {
   doc: Doc | null;
   comments: Comment[];
-  /** viewing は「いま画面に出しているラウンド」。現ラウンドと違う間は読み取り専用 */
+  /** `viewing` is the round on screen. While it differs from the current one, everything is read-only. */
   round: RoundState | null;
   carried: RoundComment[];
   history: boolean;
 };
 
 let state: State = { doc: null, comments: [], round: null, carried: [], history: false };
-let drag: Range | null = null; // ガター上のドラッグ中だけ立つ
-// 選択範囲。マウスもキーボードも最終的にここを動かし、startDraft に入る。
-// 経路を 1 本にしないと「マウスでは範囲が取れるがキーボードでは取れない」がすぐ生える。
+let drag: Range | null = null; // set only while dragging in the gutter
+// The selection. Mouse and keyboard both end up moving this and calling startDraft.
+// Without a single path you immediately grow "the mouse can select a range, the keyboard cannot".
 let sel: Range | null = null;
-let focusLine: number | null = null; // キーボードで動かしている行 (先頭行の行番号)
+let focusLine: number | null = null; // the line the keyboard is on (its first line number)
 let draft: Draft | null = null;
-let active: string | null = null; // 選択中の吹き出し (comment id か 'draft')
+let active: string | null = null; // the selected bubble (a comment id, or 'draft')
 let mermaidLib: MermaidLib | null = null;
 
-/** DOM の dataset は文字列しか持てない。行番号の出し入れをここに寄せる */
+/** dataset holds strings only. Reading and writing line numbers goes through here. */
 function setLine(node: HTMLElement, key: string, value: number): void {
   node.dataset[key] = String(value);
 }
@@ -73,12 +73,12 @@ function getLine(node: Element, key: string): number {
   return Number((node as HTMLElement).dataset[key]);
 }
 
-/** イベントの target は EventTarget で来る。要素として扱えるものだけ返す */
+/** An event target arrives as EventTarget. Return it only when it is an element. */
 function targetEl(e: Event): HTMLElement | null {
   return e.target instanceof HTMLElement ? e.target : null;
 }
 
-/** 例外は unknown で来る。表示に使えるのは message だけ */
+/** Errors arrive as unknown. Only the message is fit to show. */
 function messageOf(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
@@ -88,20 +88,20 @@ nextRoundBtn.addEventListener('click', async () => {
   try {
     const res = await fetch('/api/rounds', { method: 'POST' });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    // ラウンドが変われば本文も変わる。ここは本文ごと差し替えてよい (人が押した結果なので)
+    // A new round means a new document, so swapping it wholesale is fine — a person asked for it
     draft = null;
     sel = null;
     focusLine = null;
     active = null;
     applyPayload((await res.json()) as DocPayload);
   } catch (err) {
-    bannerTextEl.textContent = `ラウンドを切れませんでした (${messageOf(err)})`;
+    bannerTextEl.textContent = `could not close the round (${messageOf(err)})`;
   } finally {
     nextRoundBtn.disabled = false;
   }
 });
 
-/** コメントだけが変わった時の更新。本文には触らない。 */
+/** Update after only comments changed. The document is left alone. */
 function applyComments(payload: CommentsPayload) {
   state = {
     ...state,
@@ -114,14 +114,14 @@ function applyComments(payload: CommentsPayload) {
   updateCount();
 }
 
-// live の変更で本文は差し替えない。何回変わったかを出して、進むかどうかは人が決める。
+// A live change never swaps the document. Show how often it changed; the person decides whether to move on.
 function renderBanner(changed: ChangedState | null | undefined) {
   if (!changed || !changed.dirty) {
     bannerEl.hidden = true;
     return;
   }
   const n = changed.changes;
-  bannerTextEl.textContent = n > 1 ? `⟳ 本文が ${n} 回更新されています` : '⟳ 本文が更新されています';
+  bannerTextEl.textContent = n > 1 ? `⟳ the document changed ${n} times` : '⟳ the document changed';
   bannerEl.hidden = false;
 }
 
@@ -145,7 +145,7 @@ function escapeHtml(s: string): string {
   return s.replace(/[&<>"]/g, (m) => table[m] ?? m);
 }
 
-// 失敗を console だけに落とすと、押した本人には何も起きていないように見える
+// Logging a failure to the console only makes it look, to the person who clicked, like nothing happened
 function fail(box: HTMLElement, message: string) {
   box.querySelector('.bubble-error')?.remove();
   box.append(el('div', 'bubble-error', escapeHtml(message)));
@@ -156,7 +156,7 @@ function overlaps(block: Block, startLine: number, endLine: number): boolean {
   return block.startLine <= endLine && block.endLine >= startLine;
 }
 
-/* ===== 本文 ===== */
+/* ===== Document ===== */
 
 function renderDoc() {
   const { doc, comments } = state;
@@ -171,23 +171,23 @@ function renderDoc() {
     if (block.quoted) cls.push('quoted');
     if (block.startLine === fmFirst) cls.push('fm-first');
     if (block.startLine === fmLast) cls.push('fm-last');
-    // 範囲コメントは複数行にまたがるので、重なる行をすべてアンカーとして印を付ける
+    // A range comment spans several lines, so mark every overlapping line as an anchor
     const mine = comments.filter((c) => overlaps(block, c.startLine, c.endLine));
     if (mine.length) cls.push('has-comment');
 
     const row = el('div', cls.join(' '));
     setLine(row, 'start', block.startLine);
     setLine(row, 'end', block.endLine);
-    // j/k で移動した行に DOM フォーカスも移す。Tab 順を 159 行ぶん汚さないよう -1。
-    // コメントの付いた行だけは下で 0 にして Tab でも辿れるようにしている
+    // Move DOM focus with j/k too. -1 keeps a hundred-odd rows out of the tab order;
+    // rows that carry a comment get 0 below so Tab can still reach them.
     row.tabIndex = -1;
 
     const gutter = el('div', 'gutter');
     gutter.append(el('span', 'lineno', String(block.startLine)));
-    // レールを畳んでいる間はこのマーカーだけが手がかりになる
+    // While the rail is collapsed this marker is the only clue left
     if (mine.length) gutter.append(makeMarker(mine));
     const add = el('button', 'add', '+');
-    add.title = `${block.startLine}-${block.endLine} 行にコメント`;
+    add.title = `comment on lines ${block.startLine}-${block.endLine}`;
     add.addEventListener('click', (e) => {
       e.stopPropagation();
       drag = null;
@@ -212,11 +212,11 @@ function renderDoc() {
       sel = { start: drag.start, end: drag.end };
       paintSelection();
     });
-    // 本文側からも吹き出しに飛べるようにする (連動は双方向)
+    // The document can jump to a bubble as well (the link works both ways)
     row.addEventListener('click', (e) => {
       if (targetEl(e)?.closest('a, button')) return;
-      // クリックも j/k と同じ経路に入れる。ここを繋がないと、行を選んでから c を押しても
-      // 先頭行にコメントが付く (マウスとキーボードで動線が割れる)
+      // A click feeds the same path as j/k. Without this, picking a row and pressing c
+      // still comments on the first line — mouse and keyboard drift apart.
       focusLine = block.startLine;
       sel = { start: block.startLine, end: block.endLine };
       paintSelection();
@@ -229,7 +229,7 @@ function renderDoc() {
   }
 }
 
-/** コメントの有無で行の印だけ塗り直す。本文の DOM は作り直さない。 */
+/** Repaint only the per-row marks for comments. The document DOM is not rebuilt. */
 function markCommentedRows() {
   for (const row of docEl.querySelectorAll<HTMLElement>('.row')) {
     const s = getLine(row, 'start');
@@ -243,7 +243,7 @@ function markCommentedRows() {
       marker?.remove();
     } else if (marker) {
       marker.textContent = String(mine.length);
-      marker.title = `${mine.length} 件のコメント`;
+      marker.title = `${mine.length} comments`;
     } else {
       gutter.insertBefore(makeMarker(mine), gutter.querySelector('.add'));
     }
@@ -253,16 +253,16 @@ function markCommentedRows() {
 function updateCount() {
   const open = state.comments.filter((c) => !c.resolved).length;
   const carried = state.carried.length;
-  countEl.textContent = `${open} open / ${state.comments.length}${carried ? ` (+ 過去 ${carried})` : ''}`;
+  countEl.textContent = `${open} open / ${state.comments.length}${carried ? ` (+ ${carried} earlier)` : ''}`;
 }
 
 function makeMarker(mine: Comment[]): HTMLButtonElement {
   const marker = el('button', 'marker', String(mine.length));
-  marker.title = `${mine.length} 件のコメント`;
+  marker.title = `${mine.length} comments`;
   marker.addEventListener('click', (e) => {
     e.stopPropagation();
     openRail();
-    // クリック時点のコメントを引き直す。行は作り直さないので古い配列を掴んだままになる
+    // Look the comment up again on click: rows are not rebuilt, so a captured array goes stale
     const row = marker.closest('.row');
     if (!row) return;
     const s = getLine(row, 'start');
@@ -283,7 +283,7 @@ function rowFor(line: number): HTMLElement | null {
   );
 }
 
-/* ===== 右レール ===== */
+/* ===== Right rail ===== */
 
 function rangeLabel(startLine: number, endLine: number): string {
   return `L${startLine}${endLine !== startLine ? `-${endLine}` : ''}`;
@@ -299,10 +299,10 @@ function bubbleFor(c: Comment | RoundComment, opts: { past?: boolean } = {}): HT
   const head = el('div', 'bubble-head');
   head.append(el('span', 'who', `@${escapeHtml(c.author)}`));
   if (opts.past) {
-    // どのラウンドのどの行に対する指摘かを持たせる。押すとその当時の本文へ飛ぶ
+    // Carry which round and which line this is about. Clicking jumps to the document as it was
     const round = (c as RoundComment).round;
     const tag = el('button', 'round-tag', `R${String(round).padStart(3, '0')}`);
-    tag.title = `R${String(round).padStart(3, '0')} の本文を見る`;
+    tag.title = `view the document at R${String(round).padStart(3, '0')}`;
     tag.addEventListener('click', (e) => {
       e.stopPropagation();
       void showRound(round, c.id);
@@ -324,13 +324,13 @@ function bubbleFor(c: Comment | RoundComment, opts: { past?: boolean } = {}): HT
       else if (state.round?.viewing) void showRound(state.round.viewing);
     } catch (err) {
       btn.disabled = false;
-      fail(box, `更新に失敗しました (${messageOf(err)})`);
+      fail(box, `update failed (${messageOf(err)})`);
     }
   });
   head.append(btn);
 
   box.append(head, el('div', 'bubble-body', escapeHtml(c.body)));
-  // 折りたたんだ本文を開く手段がマウスだけだと、キーボードでは 12em 以降が読めない
+  // If only a mouse can expand the collapsed body, the keyboard cannot read past 12em
   box.tabIndex = 0;
   box.addEventListener('click', () => {
     if (opts.past) void showRound((c as RoundComment).round, c.id);
@@ -341,13 +341,13 @@ function bubbleFor(c: Comment | RoundComment, opts: { past?: boolean } = {}): HT
 }
 
 function draftBubble(): HTMLElement {
-  if (!draft) throw new Error('akapen: draft が無い状態で draftBubble を呼んでいる');
+  if (!draft) throw new Error('akapen: draftBubble called with no draft');
   const { startLine, endLine, text } = draft;
   const box = el('div', 'bubble draft');
   box.dataset['id'] = 'draft';
   setLine(box, 'line', startLine);
-  // send() は作成時の範囲を閉じ込めるので、再利用の判定には終了行も要る。
-  // 開始行だけで見ると、範囲を伸ばした時に古い範囲で投稿される
+  // send() closes over the range it was built with, so reuse must compare the end line
+  // too. Checking only the start line posts the old range after the selection grows.
   setLine(box, 'end', endLine);
 
   const head = el('div', 'bubble-head');
@@ -358,12 +358,12 @@ function draftBubble(): HTMLElement {
   box.append(head);
 
   const ta = el('textarea');
-  ta.setAttribute('aria-label', `${rangeLabel(startLine, endLine)} 行へのコメント`);
-  ta.placeholder = 'ここを指摘する…  (Ctrl+Enter で送信)';
+  ta.setAttribute('aria-label', `comment on ${rangeLabel(startLine, endLine)}`);
+  ta.placeholder = 'say what is wrong here…  (Ctrl+Enter to send)';
   ta.value = text;
   ta.addEventListener('input', () => {
     if (draft) draft.text = ta.value;
-    layoutRail(); // 入力で高さが変わるので下の吹き出しを押し下げ直す
+    layoutRail(); // typing changes the height, so push the bubbles below back down
   });
 
   const actions = el('div', 'bubble-actions');
@@ -382,7 +382,7 @@ function draftBubble(): HTMLElement {
   const send = async () => {
     const body = ta.value.trim();
     if (!body) return close();
-    if (submit.disabled) return; // Ctrl+Enter 連打で二重投稿しない
+    if (submit.disabled) return; // hammering Ctrl+Enter must not post twice
     submit.disabled = true;
     try {
       const res = await fetch('/api/comments', {
@@ -393,30 +393,32 @@ function draftBubble(): HTMLElement {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       posted = (await res.json()) as CommentsPayload;
     } catch (err) {
-      // 下書きは残す。捨てると打った内容を取り戻す手段が無くなる
+      // Keep the draft. Discarding it leaves no way to get the typed text back
       submit.disabled = false;
-      fail(box, `送信に失敗しました (${messageOf(err)})`);
+      fail(box, `sending failed (${messageOf(err)})`);
       return;
     }
     draft = null;
     active = null;
-    // 選択は畳むが行フォーカスは残す。連続して打つ時に位置が飛ぶと使えない
+    // Collapse the selection but keep the line focus: jumping around ruins writing several in a row
     sel = null;
     paintSelection();
     applyComments(posted);
   };
   cancel.addEventListener('click', close);
   submit.addEventListener('click', send);
-  // Ctrl+Enter / Escape はここに書かない。keys.js の comment.submit / comment.cancel が
-  // 下のボタンを押す。二重に持つと片方だけ IME ガードが抜ける (実際に抜けていた)
+  // Ctrl+Enter and Escape are not handled here. keys.ts' comment.submit and
+  // comment.cancel click the buttons below. Holding them in two places lets one of
+  // them skip the IME guard — which is exactly what happened.
   return box;
 }
 
 /**
- * 下書きの吹き出しだけは作り直さず、DOM に置いたまま残す。
+ * The draft bubble is never rebuilt; it stays in the DOM.
  *
- * IME で変換中の textarea は、DOM から外れた時点で変換が打ち切られる。退避して戻す形も
- * 同じなので、そもそも触らない。フォーカスとキャレット (#26) もこれで自然に残る。
+ * A textarea in the middle of an IME composition loses that composition the moment it
+ * leaves the DOM — detaching and reattaching counts, so we simply do not touch it.
+ * Focus and caret position survive for free as a result.
  */
 function renderRail() {
   for (const b of anchoredEl.querySelectorAll('.bubble:not(.draft)')) b.remove();
@@ -429,13 +431,13 @@ function renderRail() {
     (existing as HTMLElement).dataset['line'] !== String(draft.startLine) ||
     (existing as HTMLElement).dataset['end'] !== String(draft.endLine)
   ) {
-    // 対象範囲が変わった時だけ作り直す。この時は変換中でないので外して問題ない
+    // Rebuild only when the range changed. No composition is in flight then, so removing it is safe
     existing?.remove();
     anchoredEl.append(draftBubble());
   }
 
-  // 行順に積む。位置合わせは data-line でやるので描画には効かないが、
-  // Tab の順序は DOM 順なので、揃えないとキーボードで飛び回ることになる
+  // Append in line order. Layout uses data-line so this does not affect drawing, but the
+  // tab order follows DOM order, and without matching it the keyboard jumps around.
   for (const c of state.comments.toSorted((a, b) => a.startLine - b.startLine)) {
     anchoredEl.append(bubbleFor(c));
   }
@@ -443,8 +445,9 @@ function renderRail() {
 }
 
 /**
- * 過去ラウンドの未解決コメント。現ラウンドの本文にアンカーが無いので位置は合わせられない。
- * それでも出すのは、持ち越さない設計では「画面から消えた = 解決した」に見えてしまうため。
+ * Unresolved comments from earlier rounds. They have no anchor in the current document,
+ * so they cannot be aligned. They are shown anyway because with nothing carrying over,
+ * "gone from the screen" would otherwise read as "dealt with".
  */
 function renderCarried() {
   carriedEl.textContent = '';
@@ -454,21 +457,22 @@ function renderCarried() {
     return;
   }
   carriedEl.hidden = false;
-  const h = el('h2', null, `過去ラウンドの未解決 ${carried.length} 件`);
+  const h = el('h2', null, `${carried.length} unresolved from earlier rounds`);
   carriedEl.append(h);
   for (const c of carried) carriedEl.append(bubbleFor(c, { past: true }));
 }
 
 /**
- * 吹き出しをアンカー行と垂直に揃える。重なったら下にずらすだけで、本文側は動かさない。
- * 本文に行を挿入しないのがこの機能の要点なので、位置合わせは全部こちら側で吸収する。
+ * Line each bubble up with its anchor row. Overlaps push down; the document never moves.
+ * Not inserting rows into the document is the whole point, so all the alignment is absorbed here.
  *
- * 読み (rect / offsetHeight) と書き (style.top) を分けている。混ぜるとバブルごとに
- * 強制同期レイアウトが走り、textarea の 1 文字ごとに呼ばれるこの関数が長い文書で目に見えて遅くなる。
+ * Reads (rect, offsetHeight) and writes (style.top) are kept apart. Interleaving them forces
+ * a synchronous layout per bubble, and this function runs on every keystroke in the textarea —
+ * on a long document that becomes visible.
  */
 function layoutRail() {
-  // 下書きを動かさないため DOM の順序は当てにできない。アンカー行で並べ替えてから積む。
-  // 順序が崩れると「重なったら下にずらす」が意味を成さない。
+  // DOM order cannot be trusted because the draft never moves. Sort by anchor line first;
+  // out of order, "overlaps push down" means nothing.
   const bubbles = [...anchoredEl.querySelectorAll<HTMLElement>('.bubble')].toSorted(
     (a, b) => getLine(a, 'line') - getLine(b, 'line'),
   );
@@ -478,7 +482,7 @@ function layoutRail() {
     return;
   }
 
-  // --- 読み ---
+  // --- read ---
   const rows = [...docEl.querySelectorAll<HTMLElement>('.row')].map((r) => ({
     start: getLine(r, 'start'),
     end: getLine(r, 'end'),
@@ -489,7 +493,7 @@ function layoutRail() {
   const gap =
     Number.parseInt(getComputedStyle(document.documentElement).getPropertyValue('--ak-bubble-gap'), 10) || 8;
 
-  // --- 計算 --- 吹き出しも行も行番号順なので、行側は 1 本のポインタで舐めれば足りる
+  // --- compute --- both are in line order, so one moving pointer over the rows is enough
   const tops: number[] = [];
   let cursor = 0;
   let ri = 0;
@@ -503,7 +507,7 @@ function layoutRail() {
     cursor = top + (heights[i] ?? 0) + gap;
   }
 
-  // --- 書き ---
+  // --- write ---
   for (const [i, b] of bubbles.entries()) b.style.top = `${tops[i] ?? 0}px`;
   anchoredEl.style.height = `${cursor}px`;
 }
@@ -518,7 +522,7 @@ function setActive(id: string, scroll?: 'doc' | 'rail') {
     const e = getLine(row, 'end');
     row.classList.toggle('linked', !!target && s <= target.endLine && e >= target.startLine);
   }
-  // active は .bubble-body の折りたたみを外すので高さが変わる。位置合わせを貼り直す
+  // `active` un-collapses .bubble-body, so the height changes. Re-run the alignment
   layoutRail();
   if (!target) return;
   if (scroll === 'doc') rowFor(target.startLine)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
@@ -529,10 +533,10 @@ function setActive(id: string, scroll?: 'doc' | 'rail') {
   }
 }
 
-/* ===== 畳んだ状態 (幅が足りない時) ===== */
+/* ===== Collapsed state (when there is not enough width) ===== */
 
-// 畳んだレールは画面外に出るだけで DOM に残る。inert を外し忘れると
-// Tab が画面外のボタンに入り、フォーカスの居場所が分からなくなる
+// A collapsed rail only moves off-screen; it stays in the DOM. Forget to set inert and
+// Tab walks into buttons nobody can see, and focus becomes impossible to locate.
 function openRail() {
   if (!document.body.classList.contains('rail-overlay')) return;
   document.body.classList.add('rail-open');
@@ -543,8 +547,8 @@ railCloseEl.addEventListener('click', () => {
   railEl.inert = true;
 });
 
-// style.css の @media (max-width: 1199px) と同じ条件。別々に書くと 1199.5px のような
-// 小数幅で CSS と JS の判定が食い違い、全吹き出しが同じ位置に重なる
+// The same condition as @media (max-width: 1199px) in style.css. Written separately, a
+// fractional width like 1199.5px makes CSS and JS disagree and every bubble stacks up.
 const railOverlayQuery = window.matchMedia('(max-width: 1199px)');
 
 function syncRailMode() {
@@ -554,8 +558,8 @@ function syncRailMode() {
   railEl.inert = overlay && !document.body.classList.contains('rail-open');
 }
 
-/* ===== 選択とフォーム ===== */
-/* マウスもキーボードも sel を動かして startDraft を呼ぶ。入口は 1 つに保つ */
+/* ===== Selection and the form ===== */
+/* Mouse and keyboard both move `sel` and call startDraft. One entry point. */
 
 function paintSelection() {
   const lo = sel ? Math.min(sel.start, sel.end) : null;
@@ -574,11 +578,11 @@ function clearSelection() {
 
 function startDraft(): void {
   if (!sel) return;
-  if (state.history) return; // 履歴は読み取り専用。当時の本文にいま指摘を足せてしまうと再現性が壊れる
+  if (state.history) return; // history is read-only: adding feedback to a past document breaks reproducibility
   const lo = Math.min(sel.start, sel.end);
   const hi = Math.max(sel.start, sel.end);
   draft = { startLine: lo, endLine: hi, text: draft?.text ?? '' };
-  // 本文には触らない。下書きを開くのはレールの中の出来事
+  // The document is untouched. Opening a draft happens inside the rail
   renderRail();
   layoutRail();
   openRail();
@@ -592,13 +596,13 @@ document.addEventListener('mouseup', () => {
   startDraft();
 });
 
-/* ===== 行フォーカス (キーボード動線) ===== */
+/* ===== Line focus (the keyboard path) ===== */
 
 function lineNumbers() {
   return [...docEl.querySelectorAll('.row')].map((r) => getLine(r, 'start'));
 }
 
-/** step ぶん行を移動する。extend が真なら選択範囲を伸ばし、偽なら 1 行に畳む */
+/** Move `step` rows. With `extend`, grow the selection; otherwise collapse it to one line. */
 function moveFocus(step: number, extend: boolean) {
   const lines = lineNumbers();
   if (!lines.length) return;
@@ -619,12 +623,13 @@ function moveFocus(step: number, extend: boolean) {
   row?.focus({ preventScroll: true });
 }
 
-/* ===== 描画 ===== */
+/* ===== Rendering ===== */
 
 /**
- * 再描画はレールを丸ごと作り直すので、下書きの textarea は別の要素に置き換わる。
- * 本文だけ引き継いでもフォーカスとキャレットが飛ぶと、打っている最中に手が止まる。
- * doc payload は他クライアントの投稿や resolve でも飛ぶため、自分の操作と無関係に起きる。
+ * A re-render rebuilds the rail, so the draft textarea becomes a different element.
+ * Carrying the text alone is not enough: losing focus and the caret stops you mid-sentence.
+ * A doc payload also arrives when another client posts or resolves, so this happens with
+ * nothing to do with what you did.
  */
 function captureFocus(): { start: number; end: number } | null {
   const ta = railEl.querySelector<HTMLTextAreaElement>('.bubble.draft textarea');
@@ -661,8 +666,8 @@ async function renderMermaid() {
   const nodes = docEl.querySelectorAll('pre.mermaid');
   if (!nodes.length) return;
   if (!mermaidLib) {
-    // ビルド成果物を指す。図が本文に無ければ最後まで読まれない。
-    // バンドラに解決させないよう URL は実行時に組み立てる
+    // Points at build output. With no diagram in the document it is never fetched.
+    // The URL is assembled at runtime so the bundler does not resolve it.
     const url = '/mermaid.js';
     const mod = (await import(/* @vite-ignore */ url)) as { default: MermaidLib };
     mermaidLib = mod.default;
@@ -672,10 +677,10 @@ async function renderMermaid() {
     });
   }
   await mermaidLib.run({ nodes });
-  layoutRail(); // 図の描画で本文の高さが変わるため必ず貼り直す
+  layoutRail(); // drawing a diagram changes the document height, so always realign
 }
 
-// 本文の高さが変わったら位置合わせをやり直す (画像・フォント・折り返し幅)
+// Realign whenever the document height changes (images, fonts, wrapping width)
 new ResizeObserver(() => layoutRail()).observe(docEl);
 railOverlayQuery.addEventListener('change', () => {
   syncRailMode();
@@ -685,11 +690,11 @@ window.addEventListener('resize', () => layoutRail());
 
 syncRailMode();
 
-/* ===== ラウンドの切り替え (履歴) ===== */
+/* ===== Switching rounds (history) ===== */
 
 /**
- * 過去ラウンドを表示する。当時の本文と当時のコメントをそのまま出す。
- * 本文と行アンカーは凍結済みなので、この間はコメントを打てない。
+ * Show a past round: the document and comments exactly as they were.
+ * The document and its line anchors are frozen, so no comments can be written here.
  */
 async function showRound(n: number, focusId?: string) {
   try {
@@ -703,7 +708,7 @@ async function showRound(n: number, focusId?: string) {
     applyPayload(payload);
     if (focusId) setActive(focusId, 'doc');
   } catch (err) {
-    historyTextEl.textContent = `ラウンドを開けませんでした (${messageOf(err)})`;
+    historyTextEl.textContent = `could not open the round (${messageOf(err)})`;
     historyBarEl.hidden = false;
   }
 }
@@ -733,7 +738,7 @@ function renderRoundControls() {
   if (roundPickEl.dataset['rounds'] !== want) {
     roundPickEl.textContent = '';
     for (const r of rounds) {
-      const o = el('option', null, `R${String(r.n).padStart(3, '0')}${r.n === round.n ? ' (現在)' : ''}`);
+      const o = el('option', null, `R${String(r.n).padStart(3, '0')}${r.n === round.n ? ' (current)' : ''}`);
       o.value = String(r.n);
       roundPickEl.append(o);
     }
@@ -745,15 +750,16 @@ function renderRoundControls() {
   document.body.classList.toggle('viewing-history', state.history);
   historyBarEl.hidden = !state.history;
   if (state.history) {
-    historyTextEl.textContent = `R${String(viewing).padStart(3, '0')} の当時の本文を見ています (読み取り専用)`;
+    historyTextEl.textContent = `viewing the document as it was at R${String(viewing).padStart(3, '0')} (read-only)`;
   }
 }
 
-/* ===== キーマップ =====
- * 割り当ては web/keys.js。ここは動作の実体だけを持つ。
- * マウス動線と同じ関数 (startDraft / setActive) を呼び、経路を分岐させない。
+/* ===== Keymap =====
+ * The bindings live in web/keys.ts; this holds only the actions themselves.
+ * They call the same functions the mouse path does (startDraft, setActive) so the
+ * two never fork.
  */
-/** false を返すと既定動作を止めない (keys.ts の約束) */
+/** Returning false leaves the browser default alone (keys.ts' contract). */
 const ACTIONS: Record<string, () => boolean | void> = {
   'row.next': () => moveFocus(1, false),
   'row.prev': () => moveFocus(-1, false),
@@ -767,7 +773,7 @@ const ACTIONS: Record<string, () => boolean | void> = {
   },
   'comment.submit': () => {
     const btn = railEl.querySelector<HTMLButtonElement>('.bubble.draft button.primary');
-    if (!btn) return false; // 入力中でなければ既定動作を邪魔しない
+    if (!btn) return false; // outside an editor, do not get in the way
     btn.click();
     return undefined;
   },
@@ -801,8 +807,8 @@ function applyPayload(payload: DocPayload) {
   window.scrollTo(0, y);
 }
 
-// 初回表示はここで 1 回だけ本文を取る。以降、本文の DOM を作り直すのは
-// ラウンドを切った時と履歴に切り替えた時だけ (どちらも人の操作)。
+// The first render fetches the document once, here. After that the document DOM is
+// rebuilt only when a round is cut or history is opened — both things a person did.
 async function boot() {
   const res = await fetch('/api/doc');
   if (!res.ok) return;
@@ -810,8 +816,9 @@ async function boot() {
 }
 
 /**
- * SSE で受けるのは通知だけ。ここで画面を作り直すと、読んでいる位置・入力中のフォーカス・
- * IME の変換・本文の選択が、人の操作と無関係に壊れる。
+ * SSE delivers notifications only. Rebuilding the screen here would destroy the reading
+ * position, the focused input, an in-flight IME composition and the text selection —
+ * none of it caused by anything the person did.
  */
 const sse = new EventSource('/events');
 sse.addEventListener('message', (e) => {

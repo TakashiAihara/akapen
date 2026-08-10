@@ -1,13 +1,13 @@
 import { spawnSync } from 'node:child_process';
 
 /**
- * E2E はサーバをテストごとに立てるが、ブラウザ側の成果物 (web/dist) は共通。
- * 各テストで毎回ビルドすると無駄なので、走らせる前に 1 回だけ作る。
- * playwright は node で動くので Bun の API は使えない。
+ * Each E2E test starts its own server, but the browser build (web/dist) is shared.
+ * Building per test would be waste, so build once before the run.
+ * Playwright runs on node, so Bun's APIs are unavailable here.
  */
 export default function globalSetup(): void {
   const build = spawnSync('bun', ['run', 'build:web'], { encoding: 'utf8' });
   if (build.status !== 0) {
-    throw new Error(`build:web が失敗しました\n${build.stderr}`);
+    throw new Error(`build:web failed\n${build.stderr}`);
   }
 }

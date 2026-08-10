@@ -1,8 +1,8 @@
 /*
- * 既定値の方針:
- * - 空行に row を作らない (行の間延びの主因を構造で消す)
- * - 行番号は既定で出さない (アンカーは内部で持つ。読むときに意識させない)
- * - すべての寸法は変数にする。custom.css 側で上書きできる
+ * Defaults, and why:
+ * - blank lines get no row (removes the main cause of vertical sprawl, structurally)
+ * - line numbers are hidden (anchors are held internally; reading should not involve them)
+ * - every dimension is a variable, so custom.css can override it
  */
 :root {
   --ak-content-width: 900px;
@@ -89,8 +89,9 @@ body {
 .banner-text { flex: 1; }
 
 /*
- * 本文と右レールの 2 カラム。本文側には行を挿入しないので、
- * 吹き出しの位置合わせ (アンカー行との垂直揃え・重なりの押し下げ) は全部レール側で吸収する。
+ * Two columns: the document and the right rail. No rows are inserted into the document,
+ * so all bubble alignment — matching the anchor row, pushing overlaps down — is absorbed
+ * by the rail.
  */
 .stage {
   display: grid;
@@ -98,7 +99,7 @@ body {
   gap: var(--ak-rail-gap);
   justify-content: center;
   align-items: start;
-  padding: 28px 16px 160px 56px; /* 左は本文の外に出るガターのぶん */
+  padding: 28px 16px 160px 56px; /* the left pad is for the gutter, which sits outside the text */
 }
 .doc { min-width: 0; }
 
@@ -116,7 +117,7 @@ body {
 }
 .banner.history { color: var(--ak-fg-muted); background: var(--ak-bg-subtle); }
 
-/* 過去ラウンドの未解決。アンカーが現ラウンドに無いので通常フローで積む */
+/* Earlier unresolved comments. No anchor in this round, so they stack in normal flow */
 .rail-carried { margin-top: var(--ak-bubble-gap); border-top: 1px dashed var(--ak-border); padding-top: 10px; }
 .rail-carried[hidden] { display: none; }
 .rail-carried > h2 { margin: 0 0 6px; font-size: 0.78rem; color: var(--ak-fg-muted); font-weight: 600; }
@@ -132,7 +133,7 @@ body.viewing-history .add, body.viewing-history .row:hover { opacity: 1; }
 body.viewing-history .add { display: none; }
 .rail-close { display: none; }
 
-/* ===== 行ブロック ===== */
+/* ===== Line blocks ===== */
 .row {
   position: relative;
   display: flex;
@@ -143,10 +144,10 @@ body.viewing-history .add { display: none; }
 }
 .row:hover { background: var(--ak-accent-subtle); }
 .row.selected, .row.in-range { background: var(--ak-accent-subtle); }
-/* アンカーの印は高さも位置も変えない。本文が動くと読みの連続性が切れる */
+/* The anchor mark changes neither height nor position: a moving document breaks the reading */
 .row.has-comment { box-shadow: inset 2px 0 0 var(--ak-accent); }
 .row.linked { background: var(--ak-accent-subtle); box-shadow: inset 3px 0 0 var(--ak-accent); }
-/* j/k で動かしている行。選択 (in-range) と区別が付くよう先頭に印を出す */
+/* The row j/k is on. A leading mark distinguishes it from the selection (in-range) */
 .row.focused { background: var(--ak-accent-subtle); }
 .row.focused .gutter::before {
   content: "\25B8";
@@ -188,7 +189,7 @@ body.show-lines .lineno { display: inline; }
   cursor: pointer;
 }
 .row:hover .add, .gutter:hover .add { opacity: 1; }
-/* レールを畳んだ時に残る唯一の手がかり。展開中は吹き出しがあるので出さない */
+/* The only clue left once the rail is collapsed. Hidden while expanded, where bubbles show */
 .marker {
   display: none;
   min-width: 16px;
@@ -203,7 +204,7 @@ body.show-lines .lineno { display: inline; }
   cursor: pointer;
   position: relative;
 }
-/* 見た目は小さいまま、押せる範囲だけ 24px 角にする (WCAG 2.5.8) */
+/* Keep it small visually while making the hit area 24px square (WCAG 2.5.8) */
 .marker::after {
   content: "";
   position: absolute;
@@ -266,7 +267,7 @@ body.rail-overlay .marker { display: inline-flex; align-items: center; justify-c
 
 .row.quoted .body { border-left: 3px solid var(--ak-border); padding-left: 12px; color: var(--ak-fg-muted); }
 
-/* ===== frontmatter ===== */
+/* ===== Frontmatter ===== */
 .row.frontmatter { background: var(--ak-bg-subtle); }
 .row.frontmatter:hover { background: var(--ak-accent-subtle); }
 .row.frontmatter .body { font-family: var(--ak-mono); font-size: 0.82rem; line-height: 1.5; padding: 0 10px; }
@@ -279,7 +280,7 @@ body.rail-overlay .marker { display: inline-flex; align-items: center; justify-c
 .fm-value { color: var(--ak-fg); }
 .fm-item .fm-value::before { content: "- "; color: var(--ak-fg-muted); }
 
-/* ===== コメント ===== */
+/* ===== Comments ===== */
 .bubble {
   position: absolute;
   left: 0;
@@ -302,7 +303,7 @@ body.rail-overlay .marker { display: inline-flex; align-items: center; justify-c
   font-size: 0.78rem;
 }
 .bubble-head .at { font-family: var(--ak-mono); }
-/* 長文は畳む。レールが 1 件で埋まると他の指摘が見えなくなる */
+/* Collapse long bodies: one comment filling the rail hides all the others */
 .bubble-body {
   padding: 8px 10px;
   white-space: pre-wrap;
@@ -343,7 +344,7 @@ body.rail-overlay .marker { display: inline-flex; align-items: center; justify-c
 }
 .bubble button.primary, .banner button.primary { background: var(--ak-accent); color: #fff; border-color: var(--ak-accent); }
 
-/* ===== 幅が足りない時はレールを畳む (本文側にはマーカーだけ残る) ===== */
+/* ===== Collapse the rail when width runs out (only markers remain in the document) ===== */
 @media (max-width: 1199px) {
   .stage { grid-template-columns: minmax(0, 1fr); padding-left: 56px; }
   .rail {

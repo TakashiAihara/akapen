@@ -1,8 +1,8 @@
 /**
- * 行マッピングの不変条件。
+ * Line-mapping invariants.
  *
- * 崩れると「指したい行が画面に存在しない」という最悪の壊れ方をする。
- * ここが akapen の土台なので、描画の見た目より先にこれを守る。
+ * Break them and you get the worst failure there is: the line you want to point at
+ * is not on the screen. This is what akapen stands on, so it comes before looks.
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -17,46 +17,46 @@ const doc = buildDoc(FIXTURE, source);
 describe('frontmatter', () => {
   const fm = doc.blocks.filter((b) => b.kind === 'frontmatter');
 
-  it('1 ソース行 = 1 ブロックで割れる', () => {
+  it('splits into one block per source line', () => {
     expect(fm.length).toBeGreaterThan(0);
     expect(fm.every((b) => b.startLine === b.endLine)).toBe(true);
   });
 
-  it('key: value の 1 行を単独で指せる', () => {
+  it('lets a single key: value line be addressed', () => {
     expect(fm.find((b) => b.text.startsWith('title:'))).toBeDefined();
     expect(fm.find((b) => b.text.trim().startsWith('status:'))).toBeDefined();
   });
 
-  it('原文が改変されない (typographer で引用符が化けない)', () => {
+  it('leaves the source untouched (typographer does not mangle quotes)', () => {
     const title = fm.find((b) => b.text.startsWith('title:'))!;
     expect(title.text).toBe(lines[title.startLine - 1]);
   });
 });
 
-describe('行の割り当て', () => {
+describe('line coverage', () => {
   const coverage = new Map<number, number>();
   for (const b of doc.blocks) {
     for (let ln = b.startLine; ln <= b.endLine; ln++) coverage.set(ln, (coverage.get(ln) ?? 0) + 1);
   }
 
-  it('同じ行を 2 つのブロックが持たない', () => {
+  it('never puts one line in two blocks', () => {
     expect([...coverage.entries()].filter(([, n]) => n > 1).map(([ln]) => ln)).toEqual([]);
   });
 
-  it('空行以外のすべての行がどれかのブロックに属する', () => {
+  it('puts every non-blank line in some block', () => {
     const missing: number[] = [];
     for (let ln = 1; ln <= lines.length; ln++) {
-      if (!lines[ln - 1]!.trim()) continue; // 空行は row を作らない (意図した設計)
+      if (!lines[ln - 1]!.trim()) continue; // blank lines get no row, by design
       if (!coverage.has(ln)) missing.push(ln);
     }
     expect(missing).toEqual([]);
   });
 
-  it('ブロックが行順に並ぶ', () => {
+  it('keeps blocks in line order', () => {
     expect(doc.blocks.filter((b, i) => i > 0 && b.startLine < doc.blocks[i - 1]!.startLine)).toEqual([]);
   });
 
-  it('各ブロックの text が原文の該当行と一致する', () => {
+  it('keeps each block text equal to its source lines', () => {
     const mismatched = doc.blocks.filter(
       (b) => b.kind !== 'frontmatter' && b.text !== lines.slice(b.startLine - 1, b.endLine).join('\n'),
     );
@@ -64,15 +64,15 @@ describe('行の割り当て', () => {
   });
 });
 
-describe('構造', () => {
-  it('表の各行が列を落とさずに割れる', () => {
+describe('structure', () => {
+  it('splits table rows without dropping columns', () => {
     const rows = doc.blocks.filter((b) => b.kind === 'table-row' && !b.flags.includes('table-separator'));
     expect(rows.length).toBeGreaterThan(0);
     const counts = new Set(rows.map((b) => (b.html.match(/<t[dh][ >]/g) ?? []).length));
     expect(counts.has(0)).toBe(false);
   });
 
-  it('ネストしたリスト項目が深さ付きで割れる', () => {
+  it('splits nested list items with their depth', () => {
     expect(doc.blocks.filter((b) => b.kind === 'list-item' && b.depth > 0).length).toBeGreaterThan(0);
   });
 });

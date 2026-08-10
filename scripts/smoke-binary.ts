@@ -1,9 +1,10 @@
 /**
- * 単一バイナリの動作確認。
+ * Smoke test for the single binary.
  *
- * 見たいのは 1 点だけ: web/ のアセットがバイナリに埋め込まれ、repo の外でも配信されること。
- * 埋め込みは `src/assets.ts` の静的な import でしか効かないので、web/ にファイルを足して
- * assets.ts への追記を忘れると本番で 404 になる。リリース時に気づくのでは遅い。
+ * One thing matters: the web assets are embedded and still served outside the repo.
+ * Embedding only works through the static imports in src/assets.ts, so adding a file
+ * to the build output and forgetting to register it there produces a 404 in
+ * production. Finding that out at release time is too late.
  */
 import { mkdtempSync, readdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -15,7 +16,7 @@ const WEB = join(import.meta.dir, '..', 'web', 'dist');
 const sandbox = mkdtempSync(join(tmpdir(), 'akapen-smoke-'));
 const bin = join(sandbox, 'akapen');
 const note = join(sandbox, 'note.md');
-writeFileSync(note, '---\ntitle: smoke\nstatus: active\n---\n\n# 見出し\n\n段落。\n');
+writeFileSync(note, '---\ntitle: smoke\nstatus: active\n---\n\n# Heading\n\nA paragraph.\n');
 
 let failures = 0;
 const ok = (label: string, pass: boolean, detail = '') => {
@@ -23,29 +24,30 @@ const ok = (label: string, pass: boolean, detail = '') => {
   console.log(`${pass ? 'PASS' : 'FAIL'}  ${label}${detail ? `  ${detail}` : ''}`);
 };
 
-// 先にブラウザ側をビルドする。web/dist が無いとバイナリに何も埋め込まれない
+// Build the browser side first: without web/dist nothing gets embedded.
 const web = Bun.spawnSync(['bun', 'run', 'build:web']);
 ok(
-  'ブラウザ側がビルドできる',
+  'the browser side builds',
   web.exitCode === 0,
   web.exitCode === 0 ? '' : new TextDecoder().decode(web.stderr).slice(0, 300),
 );
 
-// 埋め込みは assets.ts の静的な import でしか効かない。web/dist に出来たものを
-// assets.ts に書き忘れるとバイナリに入らず本番で 404 になるので、登録漏れをここで落とす。
+// Embedding only works through the static imports in assets.ts. Anything produced in
+// web/dist but not listed there is missing from the binary and 404s in production,
+// so an unregistered file fails here.
 const webNames = readdirSync(WEB, { recursive: true })
   .map(String)
   .filter((n) => !n.endsWith('/') && n.includes('.'));
 const unregistered = webNames.filter((n) => !(n in ASSETS));
 ok(
-  'web/ のファイルがすべて src/assets.ts に登録されている',
+  'every file in web/dist is registered in src/assets.ts',
   unregistered.length === 0,
   unregistered.join(', '),
 );
 
 const build = Bun.spawnSync(['bun', 'build', '--compile', 'src/cli.ts', '--outfile', bin]);
 ok(
-  'バイナリがビルドできる',
+  'the binary builds',
   build.exitCode === 0,
   build.exitCode === 0 ? '' : new TextDecoder().decode(build.stderr).slice(0, 400),
 );
@@ -56,7 +58,7 @@ if (build.exitCode !== 0) {
 
 const help = Bun.spawnSync([bin, '--help'], { cwd: sandbox });
 ok(
-  'repo の外で --help が動く',
+  '--help works outside the repo',
   help.exitCode === 0 && new TextDecoder().decode(help.stdout).includes('akapen'),
 );
 
@@ -77,36 +79,36 @@ for (let i = 0; i < 60; i++) {
       break;
     }
   } catch {
-    /* まだ立っていない */
+    /* not up yet */
   }
   await Bun.sleep(200);
 }
-ok('サーバが立つ', up);
+ok('the server comes up', up);
 
 if (up) {
   for (const name of Object.keys(ASSETS)) {
     const res = await fetch(`${base}/${name === 'index.html' ? '' : name}`);
     const body = await res.arrayBuffer();
     ok(
-      `埋め込みアセットが配信される: ${name}`,
+      `embedded asset is served: ${name}`,
       res.ok && body.byteLength > 0,
       `${res.status} ${body.byteLength}B`,
     );
   }
   const missing = await fetch(`${base}/nope.txt`);
-  ok('知らないパスは 404', missing.status === 404);
+  ok('an unknown path is 404', missing.status === 404);
 
   const posted = await fetch(`${base}/api/comments`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ startLine: 2, endLine: 2, body: 'smoke' }),
   });
-  ok('コメントを保存できる', posted.ok);
+  ok('a comment can be saved', posted.ok);
 }
 
 server.kill();
 await server.exited;
 rmSync(sandbox, { recursive: true, force: true });
 
-console.log(`\n${failures === 0 ? 'すべて PASS' : `${failures} 件 FAIL`}`);
+console.log(`\n${failures === 0 ? 'all passed' : `${failures} failed`}`);
 process.exit(failures === 0 ? 0 : 1);

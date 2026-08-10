@@ -1,8 +1,8 @@
 /**
- * 実ブラウザでの回帰。
+ * Regressions, in a real browser.
  *
- * ここに並んでいるのは全部、実際に壊して人か CodeRabbit に見つけてもらった挙動。
- * store 層のテストでは 1 件も捕まらなかったので、DOM を直接見る。
+ * Every case here is behaviour that actually broke and was caught by a person or by
+ * CodeRabbit. The storage-layer tests caught none of them, so these look at the DOM.
  */
 import type { Page } from '@playwright/test';
 import { expect, test } from './fixtures.ts';
@@ -12,11 +12,11 @@ const A = { rail: '#railAnchored .bubble', draft: '#rail .bubble.draft', ta: '#r
 test.beforeEach(async ({ page, akapen }) => {
   await page.goto(akapen.url);
   await expect(page.locator('.row').first()).toBeVisible();
-  // mermaid は非同期に描画されて本文の高さを変える。落ち着いてから測る
+  // mermaid renders asynchronously and changes the document height. Measure once it settles
   await expect(page.locator('#doc svg')).toBeVisible({ timeout: 15_000 });
 });
 
-/** ガターの + を押して下書きを開く */
+/** Open a draft by clicking + in the gutter. */
 async function openDraft(page: Page, rowIndex = 1) {
   const row = page.locator('.row').nth(rowIndex);
   await row.hover();
@@ -30,19 +30,21 @@ async function post(page: Page, body: string) {
   await expect(page.locator(A.draft)).toHaveCount(0);
 }
 
-test('本文には行を挿入しない (コメントの有無で高さが変わらない)', async ({ page }) => {
+test('never inserts rows into the document (height is the same with and without comments)', async ({
+  page,
+}) => {
   const before = await page.locator('#doc').boundingBox();
   await openDraft(page);
-  await post(page, '高さを変えないことの確認');
+  await post(page, 'checking the height does not move');
   await expect(page.locator(A.rail)).toHaveCount(1);
   const after = await page.locator('#doc').boundingBox();
   expect(after!.height).toBe(before!.height);
 });
 
-test('吹き出しはアンカー行に揃い、重ならない', async ({ page }) => {
+test('aligns bubbles to their anchor row without overlapping', async ({ page }) => {
   for (const i of [1, 2, 3]) {
     await openDraft(page, i);
-    await post(page, `L${i} への指摘。押し下げの確認用に少し長めにしておく。`);
+    await post(page, `Feedback on L${i}. Made a bit long so the push-down is visible.`);
   }
   const boxes = await page.locator(A.rail).evaluateAll((els) =>
     els.map((el) => {
@@ -57,12 +59,16 @@ test('吹き出しはアンカー行に揃い、重ならない', async ({ page 
   );
   expect(boxes.length).toBe(3);
   for (const [i, b] of boxes.entries()) {
-    expect(b.top).toBeGreaterThanOrEqual(b.rowTop - 1); // アンカー行より上に出ない
-    if (i > 0) expect(b.top).toBeGreaterThanOrEqual(boxes[i - 1]!.bottom - 1); // 重ならない
+    expect(b.top).toBeGreaterThanOrEqual(b.rowTop - 1); // never above its anchor row
+    if (i > 0) expect(b.top).toBeGreaterThanOrEqual(boxes[i - 1]!.bottom - 1); // never overlapping
   }
 });
 
-test('サーバ由来のイベントで本文の DOM と選択が壊れない', async ({ page, request, akapen }) => {
+test('keeps the document DOM and the text selection through server-driven events', async ({
+  page,
+  request,
+  akapen,
+}) => {
   await page.evaluate(() => {
     document.querySelectorAll('.row').forEach((r, i) => ((r as HTMLElement).dataset['mark'] = `g${i}`));
     const body = document.querySelectorAll('.row .body')[3]!;
@@ -75,9 +81,9 @@ test('サーバ由来のイベントで本文の DOM と選択が壊れない', 
   const selected = await page.evaluate(() => getSelection()!.toString());
   expect(selected.length).toBeGreaterThan(0);
 
-  // 別クライアントが投稿しても、こちらの画面は変わらない
+  // Another client posting must not change this screen
   await request.post(`${akapen.url}/api/comments`, {
-    data: { startLine: 9, endLine: 9, body: '別クライアント' },
+    data: { startLine: 9, endLine: 9, body: 'from another client' },
   });
   await page.waitForTimeout(700);
 
@@ -90,12 +96,13 @@ test('サーバ由来のイベントで本文の DOM と選択が壊れない', 
   expect(state.selection).toBe(selected);
 });
 
-test('入力中に doc payload が来ても textarea を作り直さない (IME が切れる)', async ({
+test('never rebuilds the textarea when a doc payload lands mid-typing (it would cut the IME)', async ({
   page,
   request,
   akapen,
 }) => {
   await openDraft(page);
+  // The text stays Japanese on purpose: this is what an IME composition looks like
   await page.locator(A.ta).fill('へんかんちゅう');
   await page.evaluate((sel) => {
     const ta = document.querySelector(sel) as HTMLTextAreaElement;
@@ -104,17 +111,17 @@ test('入力中に doc payload が来ても textarea を作り直さない (IME 
   }, A.ta);
 
   await request.post(`${akapen.url}/api/comments`, {
-    data: { startLine: 9, endLine: 9, body: '別クライアント' },
+    data: { startLine: 9, endLine: 9, body: 'from another client' },
   });
   await page.waitForTimeout(700);
 
   const ta = page.locator(A.ta);
-  await expect(ta).toHaveAttribute('data-mark', 'original'); // 同じ要素のまま
+  await expect(ta).toHaveAttribute('data-mark', 'original'); // still the same element
   await expect(ta).toBeFocused();
   await expect(ta).toHaveValue('へんかんちゅう');
 });
 
-test('範囲を伸ばした下書きは伸ばした範囲で投稿される', async ({ page }) => {
+test('posts the grown range after a draft range is extended', async ({ page }) => {
   await page.locator('.row').nth(1).click();
   await page.keyboard.press('c');
   await expect(page.locator(`${A.draft} .at`)).toHaveText('L2');
@@ -125,58 +132,60 @@ test('範囲を伸ばした下書きは伸ばした範囲で投稿される', as
   await page.keyboard.press('c');
   await expect(page.locator(`${A.draft} .at`)).toHaveText('L2-4');
 
-  await post(page, '範囲コメント');
+  await post(page, 'a range comment');
   await expect(page.locator(`${A.rail} .at`)).toHaveText('L2-4');
 });
 
-test('キーボードだけでコメントを打てる', async ({ page }) => {
+test('writes a comment with the keyboard alone', async ({ page }) => {
   await page.keyboard.press('j');
   await page.keyboard.press('j');
   await page.keyboard.press('c');
   await expect(page.locator(A.ta)).toBeFocused();
-  // 入力中は j/k が本文に入り、行フォーカスは動かない
-  await page.keyboard.type('jk キーボードから');
-  await expect(page.locator(A.ta)).toHaveValue('jk キーボードから');
+  // While typing, j/k become text and the line focus stays put
+  await page.keyboard.type('jk from the keyboard');
+  await expect(page.locator(A.ta)).toHaveValue('jk from the keyboard');
   await page.keyboard.press('Control+Enter');
   await expect(page.locator(A.draft)).toHaveCount(0);
   await expect(page.locator(A.rail)).toHaveCount(1);
 });
 
-test('ラウンドを切るまで本文は凍結され、締めても指摘は残る', async ({ page, akapen }) => {
+test('freezes the document until a round is cut, and keeps the feedback after', async ({ page, akapen }) => {
   await openDraft(page);
-  await post(page, 'R001 の指摘');
+  await post(page, 'raised in R001');
 
-  // エージェントの編集を模す。本文は差し替わらず、バナーだけ出る
-  akapen.append('\n## エージェントが足した節\n\n直した結果。\n');
+  // Imitate an agent's edit: the document does not swap, only the banner appears
+  akapen.append('\n## A section the agent added\n\nThe result of the fix.\n');
   await expect(page.locator('#banner')).toBeVisible();
-  await expect(page.locator('#doc')).not.toContainText('エージェントが足した節');
+  await expect(page.locator('#doc')).not.toContainText('A section the agent added');
   await expect(page.locator('#round')).toHaveText('R001');
 
   await page.locator('#nextRound').click();
   await expect(page.locator('#round')).toHaveText('R002');
-  await expect(page.locator('#doc')).toContainText('エージェントが足した節');
-  await expect(page.locator(A.rail)).toHaveCount(0); // 持ち越さない
-  await expect(page.locator('#railCarried .bubble')).toHaveCount(1); // 消えてはいない
-  await expect(page.locator('#count')).toContainText('過去 1');
+  await expect(page.locator('#doc')).toContainText('A section the agent added');
+  await expect(page.locator(A.rail)).toHaveCount(0); // nothing carries over
+  await expect(page.locator('#railCarried .bubble')).toHaveCount(1); // but it has not vanished
+  await expect(page.locator('#count')).toContainText('1 earlier');
 });
 
-test('md に書いた生 HTML は実行されず、文字として出る', async ({ page }) => {
-  // 描画も mermaid の非同期実行も終わってから見る
+test('shows raw HTML from the markdown as text instead of running it', async ({ page }) => {
+  // Look after both rendering and mermaid's async run have finished
   await page.waitForTimeout(500);
   expect(await page.evaluate(() => (window as unknown as { xssMarker?: string }).xssMarker)).toBeUndefined();
 
-  // DOM に要素として入っていないこと
+  // It must not be in the DOM as elements
   expect(await page.locator('#doc script').count()).toBe(0);
   expect(await page.locator('#doc img').count()).toBe(0);
   expect(await page.locator('#doc b').count()).toBe(0);
 
-  // 文字としては読めること (レビュー対象なので消してはいけない)
+  // It must still be readable as text: this is what is under review
   await expect(page.locator('#doc')).toContainText("<script>window.xssMarker = 'executed';</script>");
+  // The fixture stays Japanese on purpose (it also exercises CJK wrapping), so the
+  // expected text is quoted from it verbatim
   await expect(page.locator('#doc')).toContainText('<b>太字にはならない</b>');
 });
 
-test('mermaid は図がある時だけ読み込まれ、描画される', async ({ page, akapen }) => {
-  // beforeEach で 1 度開いているので、読み込みを見るには開き直す
+test('loads and renders mermaid only when a diagram is present', async ({ page, akapen }) => {
+  // beforeEach already opened it once, so reopen to observe the fetch
   const fetched: string[] = [];
   page.on('response', (r) => fetched.push(new URL(r.url()).pathname));
   await page.goto(akapen.url);

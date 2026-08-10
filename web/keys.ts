@@ -1,21 +1,22 @@
 /**
- * キーマップはこの 1 ファイルに集約する。
+ * The keymap lives in this one file.
  *
- * 散らすと「何のキーが空いているか」が誰にも分からなくなり、割り当ての見直し (この先やる前提)
- * ができなくなる。app.js 側は動作名 (`row.next` 等) を実装するだけで、キーとの対応はここが持つ。
+ * Spread it around and nobody can tell which keys are free, which makes the
+ * revisit we already plan impossible. app.ts implements the actions (`row.next`
+ * and friends); the key bindings belong here.
  *
- * 既定値は暫定。`--keymap <file>` の JSON で上書きできる。
+ * The defaults are provisional. `--keymap <file>` overrides them.
  */
 
-/** 動作名 → 既定のキー。1 つの動作に複数のキーを割り当ててよい。 */
-/** 動作名 → キーの配列 */
+/** Default keys per action. An action may have several keys. */
+/** action name → keys */
 export type Keymap = Record<string, string[]>;
 
 export const DEFAULT_KEYMAP: Keymap = {
   'row.next': ['j'],
   'row.prev': ['k'],
-  // マウスのドラッグと同じ範囲選択をキーボードでも取れるようにする。
-  // 片方でしか範囲が作れないと、動線が 2 本に割れる
+  // The keyboard can select a range the same way a mouse drag does.
+  // If only one of them can, the two paths diverge.
   'row.extendNext': ['shift+j'],
   'row.extendPrev': ['shift+k'],
   'comment.start': ['c'],
@@ -24,39 +25,40 @@ export const DEFAULT_KEYMAP: Keymap = {
   'lines.toggle': ['l'],
 };
 
-// 矢印キーは既定に入れない。奪うとページのスクロールが効かなくなり、読む方が壊れる。
-// 欲しい人は --keymap で足せる (examples/keymap.json)。同じ理由で Enter も入れていない
-// (吹き出しに DOM フォーカスがある時に別の意味を持つため)。
+// Arrow keys are not bound by default. Taking them breaks page scrolling, which
+// breaks reading. Add them with --keymap if you want them (examples/keymap.json).
+// Enter is left out for the same kind of reason: it means something else while a
+// bubble holds DOM focus.
 
 /**
- * 入力中 (textarea / input) でも効かせる動作。
- * ここに無いものは打鍵がそのまま本文になるべきなので、入力中は動かさない。
+ * Actions that still fire while typing in a textarea or input.
+ * Anything else must let the keystroke become text, so it stays inert.
  */
 const WHILE_TYPING = new Set(['comment.submit', 'comment.cancel']);
 
 /**
- * キー名を正規化する。設定ファイル側と KeyboardEvent 側の両方をここに通し、
- * 「書いたのに効かない」を作らない。
+ * Normalise a key name. Both the config file and KeyboardEvent go through here, so
+ * "I wrote it but it does nothing" cannot happen.
  *
- * KeyboardEvent.key は矢印を `ArrowDown` で返すが、設定に `arrowdown` と書かせるのは
- * 冗長なので `down` に寄せる。両方の綴りを受け付ける。
+ * KeyboardEvent.key reports arrows as `ArrowDown`, but making people write
+ * `arrowdown` in config is noise, so it collapses to `down`. Both spellings work.
  */
 export function normalizeKey(name: string): string {
   const parts = String(name).toLowerCase().split('+');
   let base = parts.pop() ?? '';
-  // 空白キーは trim で消えるので、先に拾う
+  // trim would eat the space key, so catch it first
   base = base === ' ' ? 'space' : base.trim();
   if (base.startsWith('arrow')) base = base.slice(5);
   return [...parts.map((p) => p.trim()), base].join('+');
 }
 
-/** KeyboardEvent → `ctrl+shift+k` 形式。修飾子の順序を固定して表記のブレを潰す。 */
+/** KeyboardEvent → `ctrl+shift+k`. A fixed modifier order removes spelling drift. */
 export function keyOf(e: KeyboardEvent): string {
   const parts = [];
   if (e.ctrlKey) parts.push('ctrl');
   if (e.metaKey) parts.push('meta');
   if (e.altKey) parts.push('alt');
-  // 英字は shift で大文字になるので、修飾子として正規化して 'shift+j' に寄せる
+  // shift uppercases letters, so normalise it as a modifier and land on 'shift+j'
   if (e.shiftKey) parts.push('shift');
   parts.push(normalizeKey(e.key));
   return parts.join('+');
@@ -70,8 +72,9 @@ function isTyping(target: EventTarget | null): boolean {
 }
 
 /**
- * 上書き用 JSON をマージする。形は既定値と同じ `{ 動作名: [キー] }`。
- * 値に `null` / `[]` を書くと既定の割り当てを外せる (無効化する手段が無いと詰む)。
+ * Merge the override JSON. Same shape as the defaults: `{ action: [key] }`.
+ * Writing `null` or `[]` drops a default binding — without a way to disable one
+ * you get stuck.
  */
 export function mergeKeymap(base: Keymap, override: unknown): Keymap {
   const merged: Keymap = { ...base };
@@ -84,12 +87,12 @@ export function mergeKeymap(base: Keymap, override: unknown): Keymap {
     } else if (typeof keys === 'string') {
       merged[action] = [normalizeKey(keys)];
     }
-    // 上記以外 (数値・オブジェクト等) は無視する。壊れた設定でキーが全部死ぬより既定に留まる方がまし
+    // Ignore anything else (numbers, objects). Staying on the defaults beats a broken config killing every key.
   }
   return merged;
 }
 
-/** キー → 動作名 の逆引き。後勝ちにせず、先に定義された動作を優先する。 */
+/** key → action. Not last-wins: the action defined first keeps the key. */
 function invert(keymap: Keymap): Map<string, string> {
   const index = new Map<string, string>();
   for (const [action, keys] of Object.entries(keymap)) {
@@ -102,8 +105,8 @@ function invert(keymap: Keymap): Map<string, string> {
 }
 
 /**
- * @param keymap  mergeKeymap の結果
- * @param actions 動作名 → 関数。戻り値が false なら既定動作を止めない
+ * @param keymap  the result of mergeKeymap
+ * @param actions action name → handler. Returning false leaves the browser default alone.
  */
 export function bindKeys(
   keymap: Keymap,
@@ -111,9 +114,9 @@ export function bindKeys(
 ): Map<string, string> {
   const index = invert(keymap);
   document.addEventListener('keydown', (e) => {
-    // IME 変換中のキーは変換の操作であって akapen への指示ではない。
-    // ここを通すと、変換を Escape で取り消したつもりが下書きごと消える。
-    // keyCode 229 は isComposing を出さない環境向けの保険。
+    // Keys during IME composition drive the conversion, not akapen. Letting them
+    // through means Escape, meant to cancel the conversion, discards the draft too.
+    // keyCode 229 is the fallback for environments that do not set isComposing.
     if (e.isComposing || e.keyCode === 229) return;
     const action = index.get(keyOf(e));
     if (!action) return;
@@ -132,7 +135,7 @@ export async function loadKeymap(): Promise<Keymap> {
     if (!res.ok) return { ...DEFAULT_KEYMAP };
     return mergeKeymap(DEFAULT_KEYMAP, await res.json());
   } catch {
-    // 設定が読めないだけで操作不能にはしない
+    // An unreadable config must not make the tool unusable
     return { ...DEFAULT_KEYMAP };
   }
 }

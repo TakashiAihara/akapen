@@ -1,10 +1,10 @@
 /**
- * mermaid だけを別 entry にする。
+ * mermaid gets its own entry.
  *
- * app に取り込むと 3.3MB になり、図が 1 つも無い文書でも毎回読んで解析することになる。
- * かといって bun の --splitting はハッシュ名のチャンクを 100 個以上作るので、
- * 名指しで埋め込む src/assets.ts と噛み合わない。
+ * Bundling it into app makes that 3.3MB, parsed on every load even for documents with
+ * no diagram at all. But bun's --splitting emits a hundred-odd hash-named chunks, which
+ * does not fit src/assets.ts naming each file it embeds.
  *
- * entry を 2 つにすれば、出力は既知の 2 ファイルのままで、図がある時だけ読める。
+ * Two entries keep the output at two known files while still loading it only on demand.
  */
 export { default } from 'mermaid';

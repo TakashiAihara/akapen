@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>akapen</title>
 <link rel="stylesheet" href="/style.css">
-<!-- 拡張 CSS は常に最後。既定のスタイルを上書きできることを設計で保証する -->
+<!-- Extra CSS always comes last, so overriding the defaults is guaranteed by construction -->
 <link rel="stylesheet" href="/custom.css">
 </head>
 <body>
@@ -13,28 +13,28 @@
   <span class="brand">akapen</span>
   <span class="file" id="filePath"></span>
   <span class="round" id="round"></span>
-  <select class="round-pick" id="roundPick" aria-label="表示するラウンド"></select>
+  <select class="round-pick" id="roundPick" aria-label="Round to display"></select>
   <span class="spacer"></span>
-  <label class="toggle"><input type="checkbox" id="showLines"> 行番号</label>
+  <label class="toggle"><input type="checkbox" id="showLines"> Line numbers</label>
   <span class="count" id="count"></span>
 </header>
-<!-- 本文は現ラウンドの凍結スナップショット。live の変更はここで知らせるだけで、進むのは人が押した時 -->
+<!-- The document is the current round's frozen snapshot. A live change is only announced here; moving on takes a click -->
 <div class="banner" id="banner" hidden>
   <span class="banner-text" id="bannerText"></span>
-  <button class="primary" id="nextRound">このラウンドを終える</button>
+  <button class="primary" id="nextRound">End this round</button>
 </div>
-<!-- 過去ラウンドを見ている間。当時の本文と当時のコメントがそのまま出る -->
+<!-- While viewing a past round: the document and comments exactly as they were -->
 <div class="banner history" id="historyBar" hidden>
   <span class="banner-text" id="historyText"></span>
-  <button id="backToCurrent">現在のラウンドへ</button>
+  <button id="backToCurrent">Back to the current round</button>
 </div>
 <main class="stage">
   <div id="doc" class="doc"></div>
-  <!-- コメントは本文の行間に差し込まず、ここに逃がす。本文の読みを分断しないため -->
+  <!-- Comments go here instead of between the lines, so reading is never interrupted -->
   <aside id="rail" class="rail">
-    <button type="button" class="rail-close" id="railClose" aria-label="レールを閉じる" title="閉じる">×</button>
+    <button type="button" class="rail-close" id="railClose" aria-label="Close the rail" title="Close">×</button>
     <div id="railAnchored" class="rail-anchored"></div>
-    <!-- 持ち越さない代わりに、過去ラウンドの未解決はここに残す -->
+    <!-- Nothing carries over, so earlier unresolved comments stay here -->
     <section id="railCarried" class="rail-carried" hidden></section>
   </aside>
 </main>

@@ -1,4 +1,4 @@
-// 標準ライブラリの型を安全側に寄せる。
-// JSON.parse / Response.json() が any ではなく unknown を返すようになるのが主目的で、
-// 「parse した瞬間に何でも通る」経路を塞ぐ。
+// Tighten the standard library types.
+// Mainly so JSON.parse and Response.json() return unknown instead of any, closing
+// the path where anything passes the moment it is parsed.
 import '@total-typescript/ts-reset';

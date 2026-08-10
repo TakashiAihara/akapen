@@ -1,9 +1,10 @@
 /**
- * テストごとに専用のサーバ・専用の md・専用のストアを立てる。
+ * Every test gets its own server, its own markdown file and its own store.
  *
- * akapen は 1 プロセス 1 ファイルで、コメントはストアに溜まる。1 台を共有すると
- * 前のテストのコメントが次のテストに漏れ、件数を見るアサーションが崩れる
- * (実際 8 件溜まって落ちた)。隔離をテスト側の書き方で回避しない。
+ * akapen is one file per process and comments accumulate in the store. Sharing one
+ * server leaks the previous test's comments into the next and breaks any assertion
+ * that counts them — eight of them piled up and it failed. Isolate rather than
+ * writing the tests around it.
  */
 import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
@@ -17,14 +18,14 @@ let nextPort = 4400;
 
 export type Akapen = {
   url: string;
-  /** live のファイル。エージェントの編集を模す時に使う */
+  /** The live file, for imitating an agent's edit. */
   file: string;
   append: (text: string) => void;
 };
 
 export const test = base.extend<{ akapen: Akapen }>({
-  // playwright は第 1 引数に分割代入パターンを要求する (名前付き引数にすると
-  // "First argument must use the object destructuring pattern" で落ちる)。
+  // Playwright requires a destructuring pattern as the first argument; a named one
+  // fails with "First argument must use the object destructuring pattern".
   // oxlint-disable-next-line no-empty-pattern
   akapen: async ({}, use) => {
     const port = nextPort++;
@@ -43,9 +44,9 @@ export const test = base.extend<{ akapen: Akapen }>({
       try {
         if ((await fetch(`${url}/api/doc`)).ok) break;
       } catch {
-        /* まだ立っていない */
+        /* not up yet */
       }
-      if (Date.now() > deadline) throw new Error(`akapen が起動しませんでした: ${url}`);
+      if (Date.now() > deadline) throw new Error(`akapen did not start: ${url}`);
       await new Promise((r) => setTimeout(r, 150));
     }
 

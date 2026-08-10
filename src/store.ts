@@ -18,14 +18,15 @@ export type { Comment, RoundComment, RoundMeta };
 export type Review = {
   version: 2;
   path: string;
-  /** 0 はラウンドがまだ 1 つも無い状態。 */
+  /** 0 means no round has been opened yet. */
   currentRound: number;
   rounds: RoundMeta[];
 };
 
 /**
- * コメントは md 実ファイルには一切書かない。crit と同じくサイドカーに隔離する。
- * md 本体が成果物なので、レビュー用の注記が commit に混入する経路を設計から消す。
+ * Comments are never written into the markdown file. Like crit, they live in a
+ * sidecar. The markdown is the deliverable, so the path by which review notes
+ * could end up in a commit is removed by design.
  */
 export function storeDir(filePath: string): string {
   const abs = resolve(filePath);
@@ -43,8 +44,9 @@ function reviewFile(filePath: string): string {
 }
 
 function writeAtomic(target: string, data: string): void {
-  // 一時ファイル名を一意にする。固定名だと 2 プロセスが同じ tmp を truncate し合い、
-  // renameSync が atomic でも確定する内容が壊れる (同じ md を 2 回開くと store を共有するため)。
+  // Give the temp file a unique name. With a fixed name two processes truncate the
+  // same file, so what rename commits is garbage even though rename itself is atomic
+  // (opening the same markdown twice shares one store).
   const tmp = `${target}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`;
   try {
     writeFileSync(tmp, data);
@@ -53,7 +55,7 @@ function writeAtomic(target: string, data: string): void {
     try {
       unlinkSync(tmp);
     } catch {
-      /* 消せなくても元の失敗を潰さない */
+      /* Losing the temp file must not hide the original failure. */
     }
     throw e;
   }
@@ -71,9 +73,10 @@ function isRoundMeta(v: unknown): v is RoundMeta {
 }
 
 /**
- * ラウンドの実体 (content.md があるディレクトリ) からメタ情報を組み直す。
- * 時刻は content.md の mtime から取る。凍結した本文そのものは失われないので、
- * review.json を正としてラウンド番号を 0 に戻すより、実体を信じる方が安全。
+ * Rebuild round metadata from what is actually on disk (directories holding a
+ * content.md). Timestamps come from content.md's mtime. The frozen documents
+ * themselves are never lost, so trusting the directories beats trusting
+ * review.json and resetting the round number to 0.
  */
 function roundsOnDisk(filePath: string): RoundMeta[] {
   const dir = join(storeDir(filePath), 'rounds');
@@ -98,8 +101,9 @@ export function loadReview(filePath: string): Review {
       const rounds = Array.isArray(parsed.rounds) ? parsed.rounds.filter(isRoundMeta) : null;
       const currentRound = parsed.currentRound;
       if (rounds && Number.isInteger(currentRound) && currentRound! >= 0) {
-        // review.json に載っていないラウンドがディスクにあることがある (古い review.json を
-        // 戻した / 途中で落ちた)。実体を正として突き合わせないと、横断読みが静かに取りこぼす。
+        // Rounds can exist on disk without being listed in review.json (an old
+        // review.json was restored, or a write died halfway). Reconciling against
+        // the directories is what keeps cross-round reads from silently missing them.
         const disk = roundsOnDisk(filePath);
         const known = new Set(rounds.map((r) => r.n));
         const merged = [...rounds, ...disk.filter((r) => !known.has(r.n))].toSorted((a, b) => a.n - b.n);
@@ -111,11 +115,12 @@ export function loadReview(filePath: string): Review {
         };
       }
     } catch {
-      /* 壊れている。下の復元に落とす */
+      /* Corrupt. Fall through to the recovery below. */
     }
   }
-  // review.json が無い / 壊れている場合はラウンドの実体から復元する。
-  // ここで currentRound を 0 に戻すと openRound が 001 を上書きし、凍結済みの本文とコメントが消える。
+  // With review.json missing or corrupt, recover from the rounds on disk.
+  // Resetting currentRound to 0 here would make openRound overwrite round 001,
+  // destroying a frozen document and its comments.
   const rounds = roundsOnDisk(filePath);
   return { version: 2, path: resolve(filePath), currentRound: rounds.at(-1)?.n ?? 0, rounds };
 }
@@ -126,14 +131,16 @@ export function saveReview(review: Review): void {
 }
 
 /**
- * 現在のファイル内容を凍結して次のラウンドを開く。
- * コメントは持ち越さない。ラウンドをまたいだ位置合わせをしないのがラウンド制の要点で、
- * 持ち越すと結局「どの本文に対する指摘か」が曖昧になって再アンカーの問題が戻る。
+ * Freeze the current file contents and open the next round.
+ *
+ * Comments do not carry over. Not aligning positions across rounds is the whole
+ * point of rounds; carrying them makes "which document is this about" vague again
+ * and brings the re-anchoring problem back.
  */
 export function openRound(filePath: string, source: string): Review {
   const review = loadReview(filePath);
   const now = new Date().toISOString();
-  // review.json が古い状態のまま (バックアップから戻した等) でも既存ラウンドを踏まない
+  // Never step on an existing round, even when review.json is stale (restored from a backup).
   const n = Math.max(review.currentRound, roundsOnDisk(filePath).at(-1)?.n ?? 0) + 1;
 
   const dir = roundDir(filePath, n);
@@ -150,7 +157,7 @@ export function openRound(filePath: string, source: string): Review {
   return review;
 }
 
-/** ラウンドがまだ無い / スナップショットが失われている場合だけ新しく開く。 */
+/** Open a round only when there is none, or its snapshot has gone missing. */
 export function ensureRound(filePath: string, source: string): Review {
   const review = loadReview(filePath);
   if (review.currentRound > 0 && existsSync(join(roundDir(filePath, review.currentRound), 'content.md'))) {
@@ -175,11 +182,11 @@ export function loadComments(filePath: string, n: number): Comment[] {
 }
 
 /**
- * 全ラウンドのコメントを新しいラウンドから順に返す。
+ * Every round's comments, newest round first.
  *
- * ラウンド制ではコメントを持ち越さないので、「過去に何を指摘したか」を知る手段は
- * 各ラウンドの comments.json を横断して読むことしかない。UI の履歴 (#4) も
- * エージェントへの受け渡し (#5) も同じ問いなので、読む場所を 1 つにしておく。
+ * Rounds do not carry comments over, so the only way to answer "what was raised
+ * before" is to read each round's comments.json. The history UI and the agent
+ * handoff ask the same question, so they read from one place.
  */
 export function loadAllComments(filePath: string): RoundComment[] {
   const review = loadReview(filePath);
@@ -190,24 +197,24 @@ export function loadAllComments(filePath: string): RoundComment[] {
   return out;
 }
 
-/** 横断読みが取りこぼしていないかの自己点検用。ディスク上のラウンド番号を返す。 */
+/** Round numbers present on disk. Used to check the cross-round read misses nothing. */
 export function roundNumbersOnDisk(filePath: string): number[] {
   return roundsOnDisk(filePath).map((r) => r.n);
 }
 
-/** 現ラウンドより前の未解決コメント。画面から消えても指摘は消えていない、を表す。 */
+/** Unresolved comments from earlier rounds: gone from the screen, not gone as feedback. */
 export function carriedOver(filePath: string): RoundComment[] {
   const review = loadReview(filePath);
   return loadAllComments(filePath).filter((c) => c.round !== review.currentRound && !c.resolved);
 }
 
 /**
- * エージェントに渡すコメント。現ラウンドを先に、その中は行順で返す。
+ * Comments handed to the agent: current round first, in line order within a round.
  *
- * 持ち越しを廃止したので、ラウンド N の未解決コメントは N+1 の画面には出ない。
- * 画面から消えるだけなら履歴 (#4) で足りるが、エージェントに渡らないと指摘が失われる。
- * ラウンドを締める操作が「エージェントに渡す」の意味を持つので、締めた後も
- * 未解決のものは出し続ける。
+ * Since nothing carries over, round N's unresolved comments do not appear on N+1's
+ * screen. Disappearing from the screen is fine — history covers that — but not
+ * reaching the agent would lose the feedback itself. Closing a round *means*
+ * handing work over, so unresolved comments keep being emitted after it closes.
  */
 export function pendingComments(filePath: string, includeResolved = false): RoundComment[] {
   return loadAllComments(filePath)
@@ -216,11 +223,11 @@ export function pendingComments(filePath: string, includeResolved = false): Roun
 }
 
 /**
- * ラウンドを指定せずにコメントの状態だけを更新する。
+ * Update a comment's state by id, without naming a round.
  *
- * 過去ラウンドの「読み取り専用」はスナップショットと行アンカーの話であって、
- * ステータスまで凍らせると未解決コメントを閉じる手段が無くなり、
- * `akapen comments` (#5) が同じ指摘を永遠に出し続ける。
+ * "Past rounds are read-only" is about the snapshot and the line anchors. Freezing
+ * the status too would leave no way to close an unresolved comment, and
+ * `akapen comments` would emit the same feedback forever.
  */
 export function updateComment(
   filePath: string,
@@ -245,7 +252,7 @@ export function saveComments(filePath: string, n: number, comments: Comment[]): 
   writeAtomic(join(dir, 'comments.json'), JSON.stringify(comments, null, 2));
 }
 
-/** source はラウンドのスナップショット。live のファイルを渡すと anchor が本文とズレる。 */
+/** `source` must be the round's snapshot. Passing the live file makes the anchor disagree with the document. */
 export function makeComment(
   source: string,
   startLine: number,

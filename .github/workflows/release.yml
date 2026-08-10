@@ -6,13 +6,13 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'リリースするタグ (例 v0.1.0)'
+        description: 'tag to release (for example v0.1.0)'
         required: true
 
 permissions:
   contents: write
-  # 同じ Release から取る checksum は真正性を保証しない。どのワークフローが
-  # どのコミットから作ったかを検証できるよう provenance を付ける。
+  # A checksum from the same release proves nothing about authenticity. Attach provenance
+  # so which workflow built it, from which commit, can be verified.
   id-token: write
   attestations: write
 
@@ -20,9 +20,10 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      # 手動実行では inputs.tag と既定ブランチの HEAD が食い違う。ref を明示しないと
-      # 「タグと中身が違うバイナリ」が Release に上がり、後から見分けが付かない。
-      # 指定タグが無ければここで落ちる (存在しないタグに勝手に Release を作らない)。
+      # On a manual run inputs.tag and the default branch HEAD disagree. Without an
+      # explicit ref, binaries whose contents do not match the tag end up in the release
+      # and become impossible to tell apart later. A missing tag fails here, so no
+      # release is created for a tag that does not exist.
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.inputs.tag || github.ref }}
@@ -31,8 +32,8 @@ jobs:
           bun-version: latest
       - run: bun install --frozen-lockfile
 
-      # bun はクロスコンパイルできるので 1 台で 4 つ作る。
-      # runner を OS ごとに分けると、同じ入力から作った保証が薄くなる。
+      # bun cross-compiles, so all four are built on one machine. Splitting the runners
+      # per OS weakens the guarantee that they came from the same input.
       - name: build
         run: |
           set -eux
@@ -43,7 +44,7 @@ jobs:
           done
           cd dist && sha256sum akapen-* > SHA256SUMS && cat SHA256SUMS
 
-      - name: 作ったバイナリが動くか (自分の環境で動く 1 つだけ)
+      - name: check the built binary runs (only the one this runner can execute)
         run: ./dist/akapen-linux-x64 --help
 
       - uses: actions/attest-build-provenance@v2

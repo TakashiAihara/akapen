@@ -1,5 +1,5 @@
 {
-  "_comment": "--keymap で渡すと既定の割り当てを上書きできる。既定は web/keys.js を参照",
+  "_comment": "pass with --keymap to override the defaults; see web/keys.ts for them",
 
   "row.next": ["j", "down"],
   "row.prev": ["k", "up"],
