@@ -1,0 +1,12 @@
+{
+  "name": "@akapen/shared",
+  "version": "0.1.0-rc.2",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/contract.ts"
+  },
+  "dependencies": {
+    "valibot": "^1.4.2"
+  }
+}

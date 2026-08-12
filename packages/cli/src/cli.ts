@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { startServer } from './server.ts';
-import { loadReview, pendingComments } from './store.ts';
+import { startServer } from '@akapen/server';
+import { loadReview, pendingComments } from '@akapen/core/store';
 
 const USAGE = `akapen — markdown inline review (PoC)
 

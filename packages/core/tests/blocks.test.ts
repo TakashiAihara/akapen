@@ -9,7 +9,9 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { buildDoc } from '../src/blocks.ts';
 
-const FIXTURE = join(import.meta.dirname, '..', 'examples', 'sample.md');
+// The repository's own sample, not a copy: it is the file the README tells you to open,
+// so a split that breaks on it breaks the first thing anyone sees.
+const FIXTURE = join(import.meta.dirname, '..', '..', '..', 'examples', 'sample.md');
 const source = readFileSync(FIXTURE, 'utf8');
 const lines = source.split('\n');
 const doc = buildDoc(FIXTURE, source);

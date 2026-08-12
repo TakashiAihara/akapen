@@ -13,20 +13,28 @@
  * embedding only works through static analysis. Add a file to web/ and you must
  * add it here too.
  */
-import indexHtml from '../web/index.html' with { type: 'file' };
-import styleCss from '../web/style.css' with { type: 'file' };
-import appJs from '../web/dist/app.js' with { type: 'file' };
-import mermaidJs from '../web/dist/mermaid.js' with { type: 'file' };
+import indexHtml from '@akapen/web/index.html' with { type: 'file' };
+import styleCss from '@akapen/web/style.css' with { type: 'file' };
+import appJs from '@akapen/web/dist/app.js' with { type: 'file' };
+import mermaidJs from '@akapen/web/dist/mermaid.js' with { type: 'file' };
 
-/** URL path → a path readable at runtime. */
-export const ASSETS: Record<string, string> = {
+/**
+ * URL path → a path readable at runtime.
+ *
+ * Null-prototype, because this is looked up with a name taken straight from the URL.
+ * An object literal inherits from Object.prototype, so `/constructor` and `/toString`
+ * would find a function, pass a truthy check and reach `Bun.file()` — a 500 where a
+ * 404 belongs. Cutting the prototype removes the whole class rather than guarding the
+ * one call site that exists today.
+ */
+export const ASSETS: Record<string, string> = Object.assign(Object.create(null) as Record<string, string>, {
   // Bun's types ignore import attributes and treat .html as an HTMLBundle.
   // At runtime it is the embedded path (a string), so line the type up here.
   'index.html': indexHtml as unknown as string,
   'style.css': styleCss,
   'app.js': appJs,
   'mermaid.js': mermaidJs,
-};
+});
 
 export const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',

@@ -15,10 +15,10 @@
     // the server never touches the DOM, but splitting the config buys too little.
     "lib": ["ESNext", "DOM", "DOM.Iterable"],
 
-    // Build output (web/dist) is only embedded via `with { type: 'file' }`.
+    // Build output (packages/web/dist) is only embedded via `with { type: 'file' }`.
     // Resolving the real files instead fails with "no default export".
     "allowJs": false
   },
 
-  "include": ["src", "scripts", "tests", "types", "shared", "web"]
+  "include": ["packages", "scripts", "tests", "types"]
 }

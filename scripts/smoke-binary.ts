@@ -2,16 +2,15 @@
  * Smoke test for the single binary.
  *
  * One thing matters: the web assets are embedded and still served outside the repo.
- * Embedding only works through the static imports in src/assets.ts, so adding a file
+ * Embedding only works through the static imports in the server's assets.ts, so adding a file
  * to the build output and forgetting to register it there produces a 404 in
  * production. Finding that out at release time is too late.
  */
 import { mkdtempSync, readdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ASSETS } from '../src/assets.ts';
 
-const WEB = join(import.meta.dir, '..', 'web', 'dist');
+const WEB = join(import.meta.dir, '..', 'packages', 'web', 'dist');
 
 const sandbox = mkdtempSync(join(tmpdir(), 'akapen-smoke-'));
 const bin = join(sandbox, 'akapen');
@@ -24,7 +23,7 @@ const ok = (label: string, pass: boolean, detail = '') => {
   console.log(`${pass ? 'PASS' : 'FAIL'}  ${label}${detail ? `  ${detail}` : ''}`);
 };
 
-// Build the browser side first: without web/dist nothing gets embedded.
+// Build the browser side first: without packages/web/dist nothing gets embedded.
 const web = Bun.spawnSync(['bun', 'run', 'build:web']);
 ok(
   'the browser side builds',
@@ -32,20 +31,30 @@ ok(
   web.exitCode === 0 ? '' : new TextDecoder().decode(web.stderr).slice(0, 300),
 );
 
-// Embedding only works through the static imports in assets.ts. Anything produced in
-// web/dist but not listed there is missing from the binary and 404s in production,
-// so an unregistered file fails here.
+if (web.exitCode !== 0) {
+  rmSync(sandbox, { recursive: true, force: true });
+  process.exit(1);
+}
+
+// Loaded after the build, not at the top of the file. assets.ts statically imports
+// packages/web/dist/*, which is not in git, so a top-level import fails on a clean
+// checkout — before this script gets to the build step that would have created it.
+const { ASSETS } = await import('@akapen/server/assets');
+
+// Embedding only works through those static imports. Anything produced in
+// packages/web/dist but not listed there is missing from the binary and 404s in
+// production, so an unregistered file fails here.
 const webNames = readdirSync(WEB, { recursive: true })
   .map(String)
   .filter((n) => !n.endsWith('/') && n.includes('.'));
 const unregistered = webNames.filter((n) => !(n in ASSETS));
 ok(
-  'every file in web/dist is registered in src/assets.ts',
+  'every file in packages/web/dist is registered in packages/server/src/assets.ts',
   unregistered.length === 0,
   unregistered.join(', '),
 );
 
-const build = Bun.spawnSync(['bun', 'build', '--compile', 'src/cli.ts', '--outfile', bin]);
+const build = Bun.spawnSync(['bun', 'build', '--compile', 'packages/cli/src/cli.ts', '--outfile', bin]);
 ok(
   'the binary builds',
   build.exitCode === 0,
