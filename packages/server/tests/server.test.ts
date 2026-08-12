@@ -43,24 +43,32 @@ async function start(file: string, home: string, extra: string[] = []): Promise<
   proc.stderr?.on('data', (chunk: Buffer) => {
     out += chunk.toString();
   });
-  const port = await new Promise<string>((resolve, reject) => {
-    // Shorter than the hook timeout below, so a server that never starts is reported
-    // as "did not start" with its output rather than as a hook that ran out of time.
-    const timer = setTimeout(() => reject(new Error(`akapen did not start:\n${out}`)), 15_000);
-    proc.stdout?.on('data', (chunk: Buffer) => {
-      out += chunk.toString();
-      const found = /url\s+http:\/\/[^:]+:(\d+)/.exec(out);
-      if (!found) return;
-      clearTimeout(timer);
-      resolve(found[1]!);
+  try {
+    const port = await new Promise<string>((resolve, reject) => {
+      // Shorter than the hook timeout below, so a server that never starts is reported
+      // as "did not start" with its output rather than as a hook that ran out of time.
+      const timer = setTimeout(() => reject(new Error(`akapen did not start:\n${out}`)), 15_000);
+      proc.stdout?.on('data', (chunk: Buffer) => {
+        out += chunk.toString();
+        const found = /url\s+http:\/\/[^:]+:(\d+)/.exec(out);
+        if (!found) return;
+        clearTimeout(timer);
+        resolve(found[1]!);
+      });
+      proc.on('exit', (code) => {
+        clearTimeout(timer);
+        reject(new Error(`akapen exited with ${code}\n${out}`));
+      });
     });
-    proc.on('exit', (code) => {
-      clearTimeout(timer);
-      reject(new Error(`akapen exited with ${code}\n${out}`));
-    });
-  });
 
-  return { url: `http://127.0.0.1:${port}`, stop };
+    return { url: `http://127.0.0.1:${port}`, stop };
+  } catch (err) {
+    // Nothing else can reach this process: the caller never receives a handle, and the
+    // hook fails before `server` is assigned, so afterEach has nothing to stop. Without
+    // this, a run that times out leaves a bun process holding the note and its store.
+    stop();
+    throw err;
+  }
 }
 
 let sandbox: string;
