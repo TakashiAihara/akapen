@@ -37,31 +37,86 @@ export const DEFAULT_KEYMAP: Keymap = {
 const WHILE_TYPING = new Set(['comment.submit', 'comment.cancel']);
 
 /**
- * Normalise a key name. Both the config file and KeyboardEvent go through here, so
- * "I wrote it but it does nothing" cannot happen.
- *
- * KeyboardEvent.key reports arrows as `ArrowDown`, but making people write
- * `arrowdown` in config is noise, so it collapses to `down`. Both spellings work.
+ * The one order modifiers are written in. Everything is rewritten into it, so the
+ * order someone typed never has to match the order a KeyboardEvent produces.
  */
-export function normalizeKey(name: string): string {
-  const parts = String(name).toLowerCase().split('+');
+const MODIFIERS = ['ctrl', 'meta', 'alt', 'shift'] as const;
+
+const isModifier = (part: string): part is (typeof MODIFIERS)[number] =>
+  (MODIFIERS as readonly string[]).includes(part);
+
+/** Modifier names in a binding that are not modifiers. Only a typo can produce one. */
+export function unknownModifiers(name: string): string[] {
+  const parts = splitKey(String(name).toLowerCase());
+  return [...new Set(parts.modifiers.filter((p) => !isModifier(p)))];
+}
+
+/**
+ * Split a written key into its modifiers and its base.
+ *
+ * `+` is both the separator and a key someone may bind. The base is `+` only when the
+ * separator before it is there too: `ctrl++` is ctrl plus the plus key. A single
+ * trailing `+` as in `ctrl+` is a binding with no key, and it stays that way — reading
+ * it as the plus key would drop the ctrl and quietly take over a real `+` binding.
+ */
+function splitKey(lower: string): { modifiers: string[]; base: string } {
+  const parts = lower.split('+');
   let base = parts.pop() ?? '';
+  if (base === '' && parts[parts.length - 1] === '') {
+    base = '+';
+    parts.pop();
+  }
   // trim would eat the space key, so catch it first
   base = base === ' ' ? 'space' : base.trim();
   if (base.startsWith('arrow')) base = base.slice(5);
-  return [...parts.map((p) => p.trim()), base].join('+');
+  return { modifiers: parts.map((p) => p.trim()).filter((p) => p !== ''), base };
 }
 
-/** KeyboardEvent → `ctrl+shift+k`. A fixed modifier order removes spelling drift. */
+/**
+ * Normalise a key name. Both the config file and KeyboardEvent go through here, so
+ * "I wrote it but it does nothing" cannot happen.
+ *
+ * Modifiers are rewritten into one fixed order and de-duplicated. Without that, only
+ * the half of the promise above that concerns spelling held: `shift+ctrl+k` in a config
+ * stayed `shift+ctrl+k` while the event produced `ctrl+shift+k`, and the binding never
+ * fired — with nothing said about it.
+ *
+ * KeyboardEvent.key reports arrows as `ArrowDown`, but making people write
+ * `arrowdown` in config is noise, so it collapses to `down`. Both spellings work.
+ *
+ * A modifier that is not one of the four is kept, in a fixed position, so that the
+ * result is still deterministic. Such a binding cannot fire — no event produces it —
+ * which is why mergeKeymap says so rather than leaving it silent.
+ */
+export function normalizeKey(name: string): string {
+  const { modifiers, base } = splitKey(String(name).toLowerCase());
+  const known = MODIFIERS.filter((m) => modifiers.includes(m));
+  const rest = [...new Set(modifiers.filter((p) => !isModifier(p)))].toSorted();
+  return [...known, ...rest, base].join('+');
+}
+
+/**
+ * A single character whose shifted form is itself, so holding shift is already visible
+ * in the character that arrived. Space is the exception: shift does not change it, so
+ * the modifier is the only thing that could distinguish `shift+space` from `space`.
+ */
+const shiftIsInTheCharacter = (key: string): boolean =>
+  key.length === 1 && key !== ' ' && key.toLowerCase() === key.toUpperCase();
+
+/** KeyboardEvent → `ctrl+shift+k`. The same normalisation the config goes through. */
 export function keyOf(e: KeyboardEvent): string {
   const parts = [];
   if (e.ctrlKey) parts.push('ctrl');
   if (e.metaKey) parts.push('meta');
   if (e.altKey) parts.push('alt');
-  // shift uppercases letters, so normalise it as a modifier and land on 'shift+j'
-  if (e.shiftKey) parts.push('shift');
-  parts.push(normalizeKey(e.key));
-  return parts.join('+');
+  // Shift counts as a modifier only when it is not already spelled out by the key. A
+  // letter arrives as 'J' and is folded to 'j', so the shift is the only thing left
+  // saying it was held. A symbol arrives as the shifted character — on most layouts `+`
+  // is shift and another key — and counting it twice would produce `shift++`, which no
+  // binding can be written to match.
+  if (e.shiftKey && !shiftIsInTheCharacter(e.key)) parts.push('shift');
+  parts.push(e.key);
+  return normalizeKey(parts.join('+'));
 }
 
 function isTyping(target: EventTarget | null): boolean {
@@ -88,6 +143,16 @@ export function mergeKeymap(base: Keymap, override: unknown): Keymap {
       merged[action] = [normalizeKey(keys)];
     }
     // Ignore anything else (numbers, objects). Staying on the defaults beats a broken config killing every key.
+
+    // Ordering is handled, but a misspelled modifier still cannot match any event. The
+    // binding is kept — dropping it would shadow the plain key — and said out loud,
+    // because a key that does nothing with no explanation is the whole complaint.
+    for (const key of merged[action] ?? []) {
+      const unknown = unknownModifiers(key);
+      if (unknown.length > 0) {
+        console.warn(`akapen: ${action} is bound to "${key}", which no key press can produce`);
+      }
+    }
   }
   return merged;
 }

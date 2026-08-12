@@ -159,6 +159,8 @@ bun run packages/cli/src/cli.ts note.md --keymap examples/keymap.json
 
 Each action lists its keys. Actions you do not name keep their defaults; `null` disables one. A broken JSON starts with the default keymap and logs a warning on the server, so a mistake in the config never makes the tool unusable.
 
+Modifiers can be written in any order: `shift+ctrl+k` and `ctrl+shift+k` are the same binding. A modifier that is not one of `ctrl`, `meta`, `alt` or `shift` cannot match any key press, so the browser console names it rather than leaving the key quietly dead.
+
 ### Packages
 
 One binary, five packages. The split is about which direction knowledge is allowed to flow, not about shipping units.
