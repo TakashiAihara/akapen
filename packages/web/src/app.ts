@@ -734,10 +734,18 @@ async function showRound(n: number, focusId?: string) {
 }
 
 async function showCurrent() {
-  const res = await fetch('/api/doc');
-  if (!res.ok) return;
-  active = null;
-  applyPayload(await decode(res, DocPayloadSchema));
+  try {
+    const res = await fetch('/api/doc');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const payload = await decode(res, DocPayloadSchema);
+    active = null;
+    applyPayload(payload);
+  } catch (err) {
+    // Returning quietly would make the back button look dead. Keep what is on screen —
+    // it is still the round the person was reading — and say why it did not move.
+    historyTextEl.textContent = `could not leave history (${messageOf(err)})`;
+    historyBarEl.hidden = false;
+  }
 }
 
 backBtn.addEventListener('click', () => showCurrent());
@@ -830,9 +838,16 @@ function applyPayload(payload: DocPayload) {
 // The first render fetches the document once, here. After that the document DOM is
 // rebuilt only when a round is cut or history is opened — both things a person did.
 async function boot() {
-  const res = await fetch('/api/doc');
-  if (!res.ok) return;
-  applyPayload(await decode(res, DocPayloadSchema));
+  try {
+    const res = await fetch('/api/doc');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    applyPayload(await decode(res, DocPayloadSchema));
+  } catch (err) {
+    // There is nothing on screen yet, so a silent return leaves a blank page with no
+    // way to tell a slow load from a dead server.
+    bannerTextEl.textContent = `could not load the document (${messageOf(err)})`;
+    bannerEl.hidden = false;
+  }
 }
 
 /**
@@ -844,7 +859,15 @@ const sse = new EventSource('/events');
 sse.addEventListener('message', (e) => {
   // An event arrives outside any request, so a throw here has nobody to catch it.
   // A payload we cannot read is dropped: the next one, or the next /api/doc, recovers.
-  const parsed = v.safeParse(ChangedEventSchema, JSON.parse(e.data));
+  // JSON.parse has to be inside the guard — it runs while building safeParse's argument,
+  // so a non-JSON event would throw before any of the checking happens.
+  let data: unknown;
+  try {
+    data = JSON.parse(e.data);
+  } catch {
+    return;
+  }
+  const parsed = v.safeParse(ChangedEventSchema, data);
   if (!parsed.success) return;
   if (!state.history) renderBanner(parsed.output);
 });

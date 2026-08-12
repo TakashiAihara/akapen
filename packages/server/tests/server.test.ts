@@ -33,13 +33,20 @@ type Server = { url: string; stop: () => void };
 async function start(file: string, home: string, extra: string[] = []): Promise<Server> {
   const proc: ChildProcess = spawn('bun', ['run', CLI, file, '-p', '0', ...extra], {
     env: { ...process.env, AKAPEN_HOME: home },
-    stdio: ['ignore', 'pipe', 'ignore'],
+    // stderr is piped, not dropped: when startup fails, the reason is only on stderr,
+    // and a discarded one turns every failure into a bare timeout.
+    stdio: ['ignore', 'pipe', 'pipe'],
   });
 
   const stop = () => void proc.kill();
   let out = '';
+  proc.stderr?.on('data', (chunk: Buffer) => {
+    out += chunk.toString();
+  });
   const port = await new Promise<string>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`akapen did not start:\n${out}`)), 20_000);
+    // Shorter than the hook timeout below, so a server that never starts is reported
+    // as "did not start" with its output rather than as a hook that ran out of time.
+    const timer = setTimeout(() => reject(new Error(`akapen did not start:\n${out}`)), 15_000);
     proc.stdout?.on('data', (chunk: Buffer) => {
       out += chunk.toString();
       const found = /url\s+http:\/\/[^:]+:(\d+)/.exec(out);
@@ -58,19 +65,24 @@ async function start(file: string, home: string, extra: string[] = []): Promise<
 
 let sandbox: string;
 let work: string;
-let server: Server;
+let server: Server | null = null;
 let base: string;
 
+// Spawning bun and waiting for it to listen does not fit vitest's 10s default, and a
+// hook that times out reports itself instead of the startup output that says why.
 beforeEach(async () => {
   sandbox = mkdtempSync(join(tmpdir(), 'akapen-server-'));
   work = join(sandbox, 'note.md');
   writeFileSync(work, SOURCE);
   server = await start(work, join(sandbox, 'home'));
   base = server.url;
-});
+}, 30_000);
 
 afterEach(() => {
-  server.stop();
+  // Guarded: if beforeEach threw, stopping a server that was never started would fail
+  // on top of the real error and hide it.
+  server?.stop();
+  server = null;
   rmSync(sandbox, { recursive: true, force: true });
 });
 
@@ -129,6 +141,16 @@ describe('creating a comment', () => {
     expect((await post('/api/comments', { startLine: 5, endLine: 2, body: 'x' })).status).toBe(400);
   });
 
+  it('refuses a range that points at no text', async () => {
+    // SOURCE ends with a newline, so split gives an eighth element that is not a line
+    // anyone can see. Line 4 is a real but blank line. Neither is addressable, and both
+    // used to be accepted and stored with an empty anchor.
+    expect((await post('/api/comments', { startLine: 8, endLine: 8, body: 'x' })).status).toBe(400);
+    expect((await post('/api/comments', { startLine: 4, endLine: 4, body: 'x' })).status).toBe(400);
+    // A range that spans a blank line but also covers text is fine.
+    expect((await post('/api/comments', { startLine: 4, endLine: 5, body: 'x' })).ok).toBe(true);
+  });
+
   it('leaves nothing behind when a request is refused', async () => {
     await post('/api/comments', { startLine: 900, endLine: 900, body: 'x' });
     expect(await (await fetch(`${base}/api/comments`)).json()).toEqual([]);
@@ -156,8 +178,19 @@ describe('resolving', () => {
 describe('what is served', () => {
   it('answers 404 for a path that is not a registered asset', async () => {
     // Only what ASSETS names is served, so there is no directory to walk out of.
+    // `/../package.json` is not worth asserting: fetch folds it to `/package.json`
+    // before the request leaves, so the server never sees the `..`. An encoded slash
+    // survives normalisation and does reach the lookup.
     expect((await fetch(`${base}/nope.txt`)).status).toBe(404);
-    expect((await fetch(`${base}/../package.json`)).status).toBe(404);
+    expect((await fetch(`${base}/..%2fpackage.json`)).status).toBe(404);
+  });
+
+  it('answers 404 for a name that only exists on Object.prototype', async () => {
+    // The lookup key comes straight from the URL. With an ordinary object literal these
+    // find a function, pass the truthy check and reach Bun.file() as a 500.
+    expect((await fetch(`${base}/constructor`)).status).toBe(404);
+    expect((await fetch(`${base}/toString`)).status).toBe(404);
+    expect((await fetch(`${base}/__proto__`)).status).toBe(404);
   });
 
   it('falls back to the default keymap when the override is broken JSON', async () => {

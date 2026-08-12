@@ -165,7 +165,7 @@ One binary, five packages. The split is about which direction knowledge is allow
 
 | Package | What it is |
 |---|---|
-| `@akapen/shared` | the contract: valibot schemas for every payload, and the types derived from them |
+| `@akapen/shared` | the contract: Valibot schemas for every payload, and the types derived from them |
 | `@akapen/core` | line mapping and the comment store. Knows nothing about HTTP |
 | `@akapen/server` | Hono routes over `Bun.serve`, plus the embedded assets |
 | `@akapen/web` | the browser side, bundled by `bun build` |
@@ -179,7 +179,7 @@ Everything points at `shared`, and nothing points back. `server` embeds `web`'s 
 
 Both sides read the payloads through the same schemas rather than casting to a shared type. A cast holds only at compile time, and the two places that need it most are both run time: a request body arrives as unknown JSON, and akapen is left open while the file is edited, so a tab can outlive the server it was built against.
 
-Schemas are valibot, not zod. The browser imports them, so what matters is that only the validators actually reached get bundled: checking the whole contract at run time cost 2.4KB gzipped on top of a 5.8KB `app.js`.
+Schemas are Valibot, not Zod. The browser imports them, so what matters is that only the validators actually reached get bundled: checking the whole contract at run time cost 2.4KB gzipped on top of a 5.8KB `app.js`.
 
 There are two outputs, since `bun build --compile` embeds them by name.
 

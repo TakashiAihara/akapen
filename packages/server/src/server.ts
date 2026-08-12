@@ -107,7 +107,7 @@ export function startServer(opts: ServeOptions) {
   // A live change never swaps the document. We only say that it changed and leave
   // the decision to move to the next round with the person.
   let timer: ReturnType<typeof setTimeout> | null = null;
-  watch(file, () => {
+  const watcher = watch(file, () => {
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => {
       const live = readLive();
@@ -131,15 +131,23 @@ export function startServer(opts: ServeOptions) {
 
   app.post('/api/comments', vValidator('json', CreateCommentSchema), (c) => {
     const { startLine, endLine, body } = c.req.valid('json');
-    // The schema only knows a line number is a positive integer. Whether the range
-    // exists depends on the snapshot, which the schema cannot see. Out of range would
-    // otherwise store a comment whose anchor is empty — it would never match again.
-    if (endLine < startLine || endLine > snapshot.split('\n').length) {
-      return c.text('line range is outside the document', 400);
+    // The schema only knows a line number is a positive integer. What the range points
+    // at depends on the snapshot, which the schema cannot see. The test is not "within
+    // the line count" — a trailing newline makes a last line that is not there, and a
+    // blank line is not addressable either. Both would store an anchor that is empty or
+    // whitespace, and an anchor that matches nothing is feedback nobody can find again.
+    const lines = snapshot.split('\n');
+    const selected = lines.slice(startLine - 1, endLine);
+    if (endLine < startLine || endLine > lines.length || !selected.some((l) => l.trim() !== '')) {
+      return c.text('line range does not point at any text', 400);
     }
     const comment = makeComment(snapshot, startLine, endLine, body, opts.author);
-    comments.push(comment);
-    saveComments(file, review.currentRound, comments);
+    // Written before it is shown. Pushing first would leave a comment that only exists
+    // in memory when the write fails: the POST reports failure, GET returns it anyway,
+    // and the next successful save persists the one that was refused.
+    const next = [...comments, comment];
+    saveComments(file, review.currentRound, next);
+    comments = next;
     // Just answer. The author's own screen updates locally.
     return c.json({ comment, comments, carried: carriedOver(file) });
   });
@@ -241,5 +249,19 @@ export function startServer(opts: ServeOptions) {
     fetch: app.fetch,
   });
 
-  return { server, storeDir: storeDir(file), round: review.currentRound };
+  /**
+   * Shut everything this started, not just the socket.
+   *
+   * The CLI never needs it — the process exits and takes the watcher with it. Anything
+   * that starts a server and keeps running does need it: `server.stop()` alone leaves
+   * the FSWatcher and a pending debounce timer holding the event loop open.
+   */
+  const stop = async () => {
+    if (timer) clearTimeout(timer);
+    timer = null;
+    watcher.close();
+    await server.stop(true);
+  };
+
+  return { server, stop, storeDir: storeDir(file), round: review.currentRound };
 }

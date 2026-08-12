@@ -9,7 +9,6 @@
 import { mkdtempSync, readdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ASSETS } from '@akapen/server/assets';
 
 const WEB = join(import.meta.dir, '..', 'packages', 'web', 'dist');
 
@@ -32,7 +31,17 @@ ok(
   web.exitCode === 0 ? '' : new TextDecoder().decode(web.stderr).slice(0, 300),
 );
 
-// Embedding only works through the static imports in assets.ts. Anything produced in
+if (web.exitCode !== 0) {
+  rmSync(sandbox, { recursive: true, force: true });
+  process.exit(1);
+}
+
+// Loaded after the build, not at the top of the file. assets.ts statically imports
+// packages/web/dist/*, which is not in git, so a top-level import fails on a clean
+// checkout — before this script gets to the build step that would have created it.
+const { ASSETS } = await import('@akapen/server/assets');
+
+// Embedding only works through those static imports. Anything produced in
 // packages/web/dist but not listed there is missing from the binary and 404s in
 // production, so an unregistered file fails here.
 const webNames = readdirSync(WEB, { recursive: true })
