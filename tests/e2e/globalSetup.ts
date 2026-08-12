@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process';
 
 /**
- * Each E2E test starts its own server, but the browser build (web/dist) is shared.
+ * Each E2E test starts its own server, but the browser build (packages/web/dist) is shared.
  * Building per test would be waste, so build once before the run.
  * Playwright runs on node, so Bun's APIs are unavailable here.
  */

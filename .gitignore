@@ -4,4 +4,3 @@ dist/
 .playwright-akapen/
 test-results/
 playwright-report/
-web/dist/

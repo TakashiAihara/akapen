@@ -14,13 +14,18 @@ declare module '*.min.js' {
   export default path;
 }
 
-// web/dist is browser build output. We embed the path only and never look inside.
-declare module '*/web/dist/app.js' {
+// @akapen/web/dist is browser build output. We embed the path only and never look inside.
+declare module '@akapen/web/dist/app.js' {
   const path: string;
   export default path;
 }
 
-declare module '*/web/dist/mermaid.js' {
+declare module '@akapen/web/dist/mermaid.js' {
+  const path: string;
+  export default path;
+}
+
+declare module '@akapen/web/style.css' {
   const path: string;
   export default path;
 }

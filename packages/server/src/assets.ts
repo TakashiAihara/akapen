@@ -13,10 +13,10 @@
  * embedding only works through static analysis. Add a file to web/ and you must
  * add it here too.
  */
-import indexHtml from '../web/index.html' with { type: 'file' };
-import styleCss from '../web/style.css' with { type: 'file' };
-import appJs from '../web/dist/app.js' with { type: 'file' };
-import mermaidJs from '../web/dist/mermaid.js' with { type: 'file' };
+import indexHtml from '@akapen/web/index.html' with { type: 'file' };
+import styleCss from '@akapen/web/style.css' with { type: 'file' };
+import appJs from '@akapen/web/dist/app.js' with { type: 'file' };
+import mermaidJs from '@akapen/web/dist/mermaid.js' with { type: 'file' };
 
 /** URL path → a path readable at runtime. */
 export const ASSETS: Record<string, string> = {

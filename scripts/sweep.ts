@@ -6,7 +6,7 @@
  */
 import { readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { buildDoc } from '../src/blocks.ts';
+import { buildDoc } from '@akapen/core/blocks';
 
 const dir = process.argv[2];
 if (!dir) {

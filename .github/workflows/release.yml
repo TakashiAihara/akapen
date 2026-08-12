@@ -40,7 +40,7 @@ jobs:
           bun run build:web
           mkdir -p dist
           for t in linux-x64 linux-arm64 darwin-x64 darwin-arm64; do
-            bun build --compile --target="bun-$t" src/cli.ts --outfile "dist/akapen-$t"
+            bun build --compile --target="bun-$t" packages/cli/src/cli.ts --outfile "dist/akapen-$t"
           done
           cd dist && sha256sum akapen-* > SHA256SUMS && cat SHA256SUMS
 

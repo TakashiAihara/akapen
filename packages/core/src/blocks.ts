@@ -1,7 +1,7 @@
 // markdown-it 15 ships its own types. The old @types/markdown-it subpath
 // ('markdown-it/lib/token.mjs') does not resolve, so take Token from the package.
 import MarkdownIt, { type Token } from 'markdown-it';
-import type { Block, BlockKind, Doc } from '../shared/types.ts';
+import type { Block, BlockKind, Doc } from '@akapen/shared';
 import hljs from 'highlight.js';
 
 /**

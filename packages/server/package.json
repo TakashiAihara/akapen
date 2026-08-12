@@ -1,0 +1,18 @@
+{
+  "name": "@akapen/server",
+  "version": "0.1.0-rc.2",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/server.ts",
+    "./assets": "./src/assets.ts"
+  },
+  "dependencies": {
+    "@akapen/core": "workspace:*",
+    "@akapen/shared": "workspace:*",
+    "@akapen/web": "workspace:*",
+    "@hono/valibot-validator": "^0.6.1",
+    "hono": "^4.13.1",
+    "valibot": "^1.4.2"
+  }
+}

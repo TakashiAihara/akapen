@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
-import type { Comment, RoundComment, RoundMeta } from '../shared/types.ts';
+import type { Comment, RoundComment, RoundMeta } from '@akapen/shared';
 import {
   mkdirSync,
   readFileSync,

@@ -56,7 +56,7 @@ bun install
 bun run start <file.md> [options]
 ```
 
-The examples below use `bun run src/cli.ts`; read that as `akapen` if you installed it.
+The examples below use `bun run packages/cli/src/cli.ts`; read that as `akapen` if you installed it.
 
 ## Usage
 
@@ -73,8 +73,8 @@ Use `--host 0.0.0.0` to run it on a remote machine and read it from a local brow
 The handoff to an agent is a CLI command.
 
 ```bash
-bun run src/cli.ts comments <file.md>          # unresolved comments as JSON
-bun run src/cli.ts comments <file.md> --all    # include resolved ones
+bun run packages/cli/src/cli.ts comments <file.md>          # unresolved comments as JSON
+bun run packages/cli/src/cli.ts comments <file.md> --all    # include resolved ones
 ```
 
 ```json
@@ -103,20 +103,20 @@ Current-round comments come first, ordered by line. Entries with `current_round:
 There is an example stylesheet in `examples/dense.css`.
 
 ```bash
-bun run src/cli.ts note.md --css examples/dense.css
+bun run packages/cli/src/cli.ts note.md --css examples/dense.css
 ```
 
 `examples/sample.md` is there to try it on.
 
 ```bash
-bun run src/cli.ts examples/sample.md
+bun run packages/cli/src/cli.ts examples/sample.md
 ```
 
 ## Design
 
 ### Line mapping
 
-Walk markdown-it's tokens and split the document into "one source line = one block" (`src/blocks.ts`). Paragraphs, list items, table rows, code lines and frontmatter lines each become an independently addressable unit.
+Walk markdown-it's tokens and split the document into "one source line = one block" (`packages/core/src/blocks.ts`). Paragraphs, list items, table rows, code lines and frontmatter lines each become an independently addressable unit.
 
 There is one invariant: every non-blank source line belongs to exactly one block. Break it and you get the worst failure there is — the line you want to point at is not on the screen. Lines that produce no token (a bare `>` inside a quote, for instance) are picked up at the end.
 
@@ -141,12 +141,12 @@ While skimming you are scrolling, so a hover-based path is needed. While writing
 | `Esc` | cancel (draft, then rail, then selection) | `comment.cancel` |
 | `l` | toggle line numbers | `lines.toggle` |
 
-The assignment is provisional and will be revisited as a whole. It is defined in one place: `web/keys.ts`.
+The assignment is provisional and will be revisited as a whole. It is defined in one place: `packages/web/src/keys.ts`.
 
 Arrow keys and `Enter` are deliberately unbound. Taking the arrows breaks page scrolling, which breaks reading. Add them with `--keymap`.
 
 ```bash
-bun run src/cli.ts note.md --keymap examples/keymap.json
+bun run packages/cli/src/cli.ts note.md --keymap examples/keymap.json
 ```
 
 ```json
@@ -159,18 +159,34 @@ bun run src/cli.ts note.md --keymap examples/keymap.json
 
 Each action lists its keys. Actions you do not name keep their defaults; `null` disables one. A broken JSON starts with the default keymap and logs a warning on the server, so a mistake in the config never makes the tool unusable.
 
+### Packages
+
+One binary, five packages. The split is about which direction knowledge is allowed to flow, not about shipping units.
+
+| Package | What it is |
+|---|---|
+| `@akapen/shared` | the contract: valibot schemas for every payload, and the types derived from them |
+| `@akapen/core` | line mapping and the comment store. Knows nothing about HTTP |
+| `@akapen/server` | Hono routes over `Bun.serve`, plus the embedded assets |
+| `@akapen/web` | the browser side, bundled by `bun build` |
+| `@akapen/cli` | argument parsing and the `comments` subcommand |
+
+Everything points at `shared`, and nothing points back. `server` embeds `web`'s build output, which is the one edge that runs the other way; it stays acyclic because `web` never reaches for the server. A typed client generated from the routes (Hono's `hc`, tRPC) would close that loop — the browser would import the server to learn the shapes — and clients only get added over time. Putting the contract in `shared` keeps every client one hop from the same definition.
+
 ### The browser side is TypeScript too
 
-`web/` is bundled with `bun build` before being served, so the same `tsconfig` as the server (`@tsconfig/strictest` plus `ts-reset`) applies.
+`packages/web/` is bundled with `bun build` before being served, so the same `tsconfig` as the server (`@tsconfig/strictest` plus `ts-reset`) applies.
 
-Types live in `shared/` and are used by both sides. Both handle the same comments and the same payloads; with only one side typed, changing the shape lets the other drift silently.
+Both sides read the payloads through the same schemas rather than casting to a shared type. A cast holds only at compile time, and the two places that need it most are both run time: a request body arrives as unknown JSON, and akapen is left open while the file is edited, so a tab can outlive the server it was built against.
+
+Schemas are valibot, not zod. The browser imports them, so what matters is that only the validators actually reached get bundled: checking the whole contract at run time cost 2.4KB gzipped on top of a 5.8KB `app.js`.
 
 There are two outputs, since `bun build --compile` embeds them by name.
 
 | Output | Contents |
 |---|---|
-| `web/dist/app.js` | 15KB |
-| `web/dist/mermaid.js` | 3.4MB, **fetched only when the document has a diagram** |
+| `packages/web/dist/app.js` | 23KB |
+| `packages/web/dist/mermaid.js` | 3.4MB, **fetched only when the document has a diagram** |
 
 Bundling mermaid into `app.js` makes that 3.3MB, parsed on every load even with no diagram. `--splitting` emits a hundred-odd hash-named chunks, which does not fit embedding by name. Two entries satisfy both.
 
@@ -237,10 +253,10 @@ bun run sweep <dir>                # block splitting across every markdown file 
 bun run scripts/smoke-binary.ts    # build the single binary and check the embedded assets
 ```
 
-`tests/` has two layers.
+There are two layers, and they sit in different places for a reason.
 
-- `tests/*.test.ts` — line mapping and the storage layer. When these break, the line you want is missing from the screen, or a frozen document disappears.
-- `tests/e2e/` — a real browser. Focus, IME composition, the text selection and re-rendering are only visible in real DOM behaviour. None of those bugs were caught by the storage-layer tests.
+- `packages/<name>/tests/` — what one package promises. `core` covers line mapping and the storage layer: when these break, the line you want is missing from the screen, or a frozen document disappears. `server` covers the HTTP surface, where unknown JSON becomes a stored comment; it starts akapen as a process rather than importing it, because the assets are embedded through Bun's import attributes and because that is the path the binary takes.
+- `tests/e2e/` — a real browser, driving the whole product, so it belongs to no single package and stays at the root. Focus, IME composition, the text selection and re-rendering are only visible in real DOM behaviour. None of those bugs were caught by the storage-layer tests.
 
 E2E starts a server, a markdown file and a store per test (`tests/e2e/fixtures.ts`). Sharing one mixes comments between tests.
 

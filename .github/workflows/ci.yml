@@ -41,7 +41,7 @@ jobs:
         run: bun run sweep docs
 
       # Avoid finding out at release time. Embedding only works through static analysis,
-      # so adding a file to the build output and forgetting src/assets.ts fails here.
+      # so adding a file to the build output and forgetting packages/server/src/assets.ts fails here.
       - name: build the single binary and check it runs
         run: bun run scripts/smoke-binary.ts
 

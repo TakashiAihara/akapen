@@ -1,11 +1,15 @@
 import { defineConfig } from 'vitest/config';
 
 /**
- * E2E belongs to Playwright, so keep it out of vitest.
- * The default include also matches *.spec.ts, which drags tests/e2e/ in and fails.
+ * Tests live with the package they test (`packages/<name>/tests/`), so a package can
+ * be read without jumping back to the repository root to find out what protects it.
+ *
+ * `tests/e2e/` is the exception and stays at the root: it drives the whole product
+ * through a browser, so it belongs to no single package. It is Playwright's, and the
+ * default vitest include would match its *.spec.ts and fail.
  */
 export default defineConfig({
   test: {
-    include: ['tests/*.test.ts'],
+    include: ['packages/*/tests/*.test.ts'],
   },
 });

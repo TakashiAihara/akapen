@@ -1,14 +1,17 @@
-import type {
-  Block,
-  ChangedEvent,
-  ChangedState,
-  Comment,
-  CommentsPayload,
-  Doc,
-  DocPayload,
-  RoundComment,
-  RoundState,
-} from '../shared/types.ts';
+import * as v from 'valibot';
+import {
+  ChangedEventSchema,
+  CommentsPayloadSchema,
+  DocPayloadSchema,
+  type Block,
+  type ChangedState,
+  type Comment,
+  type CommentsPayload,
+  type Doc,
+  type DocPayload,
+  type RoundComment,
+  type RoundState,
+} from '@akapen/shared';
 import { bindKeys, loadKeymap } from './keys.ts';
 
 /** Elements index.html is expected to have. Missing one fails at startup so it is noticed. */
@@ -83,17 +86,34 @@ function messageOf(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+/**
+ * Read a body against the contract instead of asserting it.
+ *
+ * A cast holds only at compile time, and this is the one place where compile time
+ * says nothing: akapen is left open while the file is edited, so a tab can outlive
+ * the server it was built against. Checking here turns a shape mismatch into the
+ * failure message the surrounding code already knows how to show, instead of an
+ * undefined surfacing halfway through a render.
+ *
+ * The HTTP status stays with the caller — each one already decides what a failed
+ * request means for its own bit of the screen.
+ */
+async function decode<S extends v.GenericSchema>(res: Response, schema: S): Promise<v.InferOutput<S>> {
+  return v.parse(schema, await res.json());
+}
+
 nextRoundBtn.addEventListener('click', async () => {
   nextRoundBtn.disabled = true;
   try {
     const res = await fetch('/api/rounds', { method: 'POST' });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const payload = await decode(res, DocPayloadSchema);
     // A new round means a new document, so swapping it wholesale is fine — a person asked for it
     draft = null;
     sel = null;
     focusLine = null;
     active = null;
-    applyPayload((await res.json()) as DocPayload);
+    applyPayload(payload);
   } catch (err) {
     bannerTextEl.textContent = `could not close the round (${messageOf(err)})`;
   } finally {
@@ -320,7 +340,7 @@ function bubbleFor(c: Comment | RoundComment, opts: { past?: boolean } = {}): HT
     try {
       const res = await fetch(`/api/comments/${c.id}/resolve`, { method: 'POST' });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      if (!state.history) applyComments((await res.json()) as CommentsPayload);
+      if (!state.history) applyComments(await decode(res, CommentsPayloadSchema));
       else if (state.round?.viewing) void showRound(state.round.viewing);
     } catch (err) {
       btn.disabled = false;
@@ -391,7 +411,7 @@ function draftBubble(): HTMLElement {
         body: JSON.stringify({ startLine, endLine, body }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      posted = (await res.json()) as CommentsPayload;
+      posted = await decode(res, CommentsPayloadSchema);
     } catch (err) {
       // Keep the draft. Discarding it leaves no way to get the typed text back
       submit.disabled = false;
@@ -700,7 +720,7 @@ async function showRound(n: number, focusId?: string) {
   try {
     const res = await fetch(`/api/doc?round=${n}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const payload = (await res.json()) as DocPayload;
+    const payload = await decode(res, DocPayloadSchema);
     draft = null;
     sel = null;
     focusLine = null;
@@ -717,7 +737,7 @@ async function showCurrent() {
   const res = await fetch('/api/doc');
   if (!res.ok) return;
   active = null;
-  applyPayload((await res.json()) as DocPayload);
+  applyPayload(await decode(res, DocPayloadSchema));
 }
 
 backBtn.addEventListener('click', () => showCurrent());
@@ -812,7 +832,7 @@ function applyPayload(payload: DocPayload) {
 async function boot() {
   const res = await fetch('/api/doc');
   if (!res.ok) return;
-  applyPayload((await res.json()) as DocPayload);
+  applyPayload(await decode(res, DocPayloadSchema));
 }
 
 /**
@@ -822,9 +842,11 @@ async function boot() {
  */
 const sse = new EventSource('/events');
 sse.addEventListener('message', (e) => {
-  const payload = JSON.parse(e.data) as ChangedEvent;
-  if (payload.type !== 'changed') return;
-  if (!state.history) renderBanner(payload);
+  // An event arrives outside any request, so a throw here has nobody to catch it.
+  // A payload we cannot read is dropped: the next one, or the next /api/doc, recovers.
+  const parsed = v.safeParse(ChangedEventSchema, JSON.parse(e.data));
+  if (!parsed.success) return;
+  if (!state.history) renderBanner(parsed.output);
 });
 
 boot();

@@ -1,0 +1,17 @@
+{
+  "name": "@akapen/cli",
+  "version": "0.1.0-rc.2",
+  "private": true,
+  "bin": {
+    "akapen": "./src/cli.ts"
+  },
+  "type": "module",
+  "exports": {
+    ".": "./src/cli.ts"
+  },
+  "dependencies": {
+    "@akapen/core": "workspace:*",
+    "@akapen/server": "workspace:*",
+    "@akapen/shared": "workspace:*"
+  }
+}

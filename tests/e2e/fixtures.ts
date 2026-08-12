@@ -33,7 +33,7 @@ export const test = base.extend<{ akapen: Akapen }>({
     const file = join(sandbox, 'note.md');
     writeFileSync(file, readFileSync(FIXTURE_MD, 'utf8'));
 
-    const proc: ChildProcess = spawn('bun', ['run', 'src/cli.ts', file, '-p', String(port)], {
+    const proc: ChildProcess = spawn('bun', ['run', 'packages/cli/src/cli.ts', file, '-p', String(port)], {
       env: { ...process.env, AKAPEN_HOME: join(sandbox, 'home') },
       stdio: 'ignore',
     });
