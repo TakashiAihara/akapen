@@ -47,6 +47,9 @@ describe('flags that take a value', () => {
     ['at the end of the line', ['note.md', '--css']],
     ['followed by another flag', ['note.md', '--css', '--all']],
     ['attached but empty', ['note.md', '--css=']],
+    // The separated form has to answer the same way. An empty value that got through
+    // would be dropped later by a truthiness check, without a word.
+    ['separated but empty', ['note.md', '--css', '']],
   ])('refuses a value flag %s', (_label, argv) => {
     // This is the whole point: `true` must never reach resolve(), a listen address or
     // a comment author.
@@ -56,6 +59,7 @@ describe('flags that take a value', () => {
   it('refuses -p and --port without a value', () => {
     expect(() => parseArgs(['note.md', '-p'])).toThrow(/-p needs a value/);
     expect(() => parseArgs(['note.md', '--port'])).toThrow(/--port needs a value/);
+    expect(() => parseArgs(['note.md', '-p', ''])).toThrow(/-p needs a value/);
     // `-p --host 0.0.0.0` used to store "--host" as the port and reach Number() as NaN.
     expect(() => parseArgs(['note.md', '-p', '--host', '0.0.0.0'])).toThrow(UsageError);
   });
@@ -103,9 +107,20 @@ describe('resolvePort', () => {
 describe('the binary', () => {
   const CLI = join(import.meta.dirname, '..', 'src', 'cli.ts');
 
-  /** Run the real entry point: the parser is only useful if cli.ts acts on it. */
+  /**
+   * Run the real entry point: the parser is only useful if cli.ts acts on it.
+   *
+   * Bounded, because the failure mode being tested is "it starts a server instead of
+   * refusing". Without a timeout a regression would hang here until the whole run gives
+   * up, and SIGKILL because a listening server need not honour SIGTERM promptly.
+   */
   const run = (args: string[]) =>
-    spawnSync('bun', ['run', CLI, ...args], { encoding: 'utf8', env: { ...process.env } });
+    spawnSync('bun', ['run', CLI, ...args], {
+      encoding: 'utf8',
+      env: { ...process.env },
+      timeout: 10_000,
+      killSignal: 'SIGKILL',
+    });
 
   it('exits non-zero and names the flag instead of starting a server', () => {
     const sandbox = mkdtempSync(join(tmpdir(), 'akapen-cli-'));

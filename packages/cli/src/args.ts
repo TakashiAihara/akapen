@@ -31,6 +31,10 @@ const isValueFlag = (name: string): name is ValueFlag => (VALUE_FLAGS as readonl
 const isBooleanFlag = (name: string): name is BooleanFlag =>
   (BOOLEAN_FLAGS as readonly string[]).includes(name);
 
+/** Both forms of "no value given": absent, empty, or the next flag. */
+const missing = (value: string | undefined): boolean =>
+  value === undefined || value === '' || value.startsWith('-');
+
 /**
  * A value may be attached (`--host=x`) or be the next argument (`--host x`).
  *
@@ -38,6 +42,10 @@ const isBooleanFlag = (name: string): name is BooleanFlag =>
  * more likely to be a forgotten name than an author called `--all`, and swallowing the
  * next flag hides two mistakes at once. Values that really do start with a dash go
  * through the attached form.
+ *
+ * The two forms answer the same way. `--css=` and `--css ""` are the same mistake, and
+ * an empty one that got through would be dropped later by a truthiness check — silently,
+ * which is the failure this file exists to remove.
  */
 export function parseArgs(argv: string[]): Args {
   const args: Args = { positional: [], help: false, all: false };
@@ -47,8 +55,8 @@ export function parseArgs(argv: string[]): Args {
 
     if (token === '-p' || token === '--port') {
       const next = argv[i + 1];
-      if (next === undefined || next.startsWith('-')) throw new UsageError(`${token} needs a value`);
-      args.port = next;
+      if (missing(next)) throw new UsageError(`${token} needs a value`);
+      args.port = next!;
       i++;
       continue;
     }
@@ -83,8 +91,8 @@ export function parseArgs(argv: string[]): Args {
     }
 
     const next = argv[i + 1];
-    if (next === undefined || next.startsWith('-')) throw new UsageError(`--${name} needs a value`);
-    args[name] = next;
+    if (missing(next)) throw new UsageError(`--${name} needs a value`);
+    args[name] = next!;
     i++;
   }
 
