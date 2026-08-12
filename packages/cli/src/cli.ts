@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { startServer } from '@akapen/server';
 import { loadReview, pendingComments } from '@akapen/core/store';
+import { parseArgs, resolvePort, UsageError, type Args } from './args.ts';
 
 const USAGE = `akapen — markdown inline review (PoC)
 
@@ -18,42 +19,21 @@ options:
   --all            comments: include resolved ones
 `;
 
-/**
- * Name the flags we accept.
- *
- * With only an index signature, `args.port` trips noPropertyAccessFromIndexSignature
- * and everything turns into bracket notation. Listing the known flags keeps dot
- * access readable and puts the accepted set in the type.
- */
-type Args = {
-  _: string[];
-  help?: string | boolean;
-  host?: string | boolean;
-  port?: string | boolean;
-  css?: string | boolean;
-  keymap?: string | boolean;
-  author?: string | boolean;
-  all?: string | boolean;
-  [k: string]: string | boolean | string[] | undefined;
-};
-
-function parseArgs(argv: string[]): Args {
-  const args: Args = { _: [] };
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i]!;
-    if (a === '-p') args.port = argv[++i]!;
-    else if (a.startsWith('--')) {
-      const [k, v] = a.slice(2).split('=');
-      if (v !== undefined) args[k!] = v;
-      else if (argv[i + 1] && !argv[i + 1]!.startsWith('-')) args[k!] = argv[++i]!;
-      else args[k!] = true;
-    } else (args._ as string[]).push(a);
-  }
-  return args;
+/** Anything typed wrong ends here: the reason, then how to type it. */
+function fail(message: string): never {
+  console.error(`akapen: ${message}`);
+  console.error(`\n${USAGE}`);
+  process.exit(1);
 }
 
-const args = parseArgs(process.argv.slice(2));
-const positional = args._ as string[];
+let args: Args;
+try {
+  args = parseArgs(process.argv.slice(2));
+} catch (err) {
+  if (!(err instanceof UsageError)) throw err;
+  fail(err.message);
+}
+const positional = args.positional;
 
 if (positional.length === 0 || args.help) {
   console.log(USAGE);
@@ -62,15 +42,12 @@ if (positional.length === 0 || args.help) {
 
 if (positional[0] === 'comments') {
   const file = positional[1];
-  if (!file || !existsSync(file)) {
-    console.error(`akapen: no such file: ${file ?? '(missing)'}`);
-    process.exit(1);
-  }
+  if (!file || !existsSync(file)) fail(`no such file: ${file ?? '(missing)'}`);
   // Unresolved comments from earlier rounds are included. Closing a round removes them
   // from the screen, not from the feedback. Line numbers refer to that round's snapshot
   // and will not match the live file, so an agent matches on `anchor` (the text as it was).
   const review = loadReview(file);
-  const comments = pendingComments(file, Boolean(args.all));
+  const comments = pendingComments(file, args.all);
   console.log(
     JSON.stringify(
       comments.map((c) => ({
@@ -95,22 +72,28 @@ if (positional[0] === 'comments') {
 }
 
 const file = positional[0]!;
-if (!existsSync(file)) {
-  console.error(`akapen: no such file: ${file}`);
-  process.exit(1);
+if (!existsSync(file)) fail(`no such file: ${file}`);
+
+// Every value below is a string or absent — parseArgs rejects the boolean case — so
+// there is nothing left here to cast.
+const host = args.host ?? '127.0.0.1';
+let port: number;
+try {
+  port = resolvePort(args.port, 4300);
+} catch (err) {
+  if (!(err instanceof UsageError)) throw err;
+  fail(err.message);
 }
 
-const host = (args.host as string) ?? '127.0.0.1';
-const port = Number(args.port ?? 4300);
 const { server, storeDir, round } = startServer({
   file,
   host,
   port,
-  author: (args.author as string) ?? process.env['USER'] ?? 'user',
+  author: args.author ?? process.env['USER'] ?? 'user',
   // exactOptionalPropertyTypes: `?:` means "may be absent", not "may be undefined".
   // With no value given, drop the key entirely.
-  ...(args.css ? { cssPath: resolve(args.css as string) } : {}),
-  ...(args.keymap ? { keymapPath: resolve(args.keymap as string) } : {}),
+  ...(args.css ? { cssPath: resolve(args.css) } : {}),
+  ...(args.keymap ? { keymapPath: resolve(args.keymap) } : {}),
 });
 
 console.log(`akapen  ${resolve(file)}`);
