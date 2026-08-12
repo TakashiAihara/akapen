@@ -88,6 +88,18 @@ describe('unknown flags', () => {
     // are enumerated, an unknown one can only be a typo. `--kemap` did nothing at all.
     expect(() => parseArgs(['note.md', '--kemap', 'k.json'])).toThrow(/unknown option: --kemap/);
   });
+
+  it.each([['-p4300'], ['-p=4300'], ['-x']])('refuses %s instead of filing it as a file name', (token) => {
+    // Only `-p` matched whole was recognised, so these fell through to the positional
+    // list: `note.md -p4300` started on the default port with the asked-for one gone,
+    // and `-p4300 note.md` reported "no such file: -p4300".
+    expect(() => parseArgs(['note.md', token])).toThrow(/unknown option/);
+    expect(() => parseArgs([token, 'note.md'])).toThrow(/unknown option/);
+  });
+
+  it('still takes a lone dash as positional, since it is not an option', () => {
+    expect(parseArgs(['-']).positional).toEqual(['-']);
+  });
 });
 
 describe('resolvePort', () => {

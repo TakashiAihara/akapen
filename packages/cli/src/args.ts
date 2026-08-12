@@ -62,6 +62,13 @@ export function parseArgs(argv: string[]): Args {
     }
 
     if (!token.startsWith('--')) {
+      // `-p` is matched whole, above. Anything else that starts with a dash is meant as
+      // an option, so it cannot be filed as a file name: `akapen note.md -p4300` would
+      // otherwise start on the default port with the one that was asked for ignored,
+      // and `akapen -p4300 note.md` would report "no such file: -p4300".
+      if (token.startsWith('-') && token !== '-') {
+        throw new UsageError(`unknown option: ${token} (values are separate: -p 4300)`);
+      }
       args.positional.push(token);
       continue;
     }
