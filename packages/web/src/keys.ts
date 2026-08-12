@@ -54,13 +54,15 @@ export function unknownModifiers(name: string): string[] {
 /**
  * Split a written key into its modifiers and its base.
  *
- * `+` is both the separator and a key someone may bind. A name ending in `+` has `+`
- * as its base — `ctrl++` is ctrl plus the plus key, not ctrl plus nothing.
+ * `+` is both the separator and a key someone may bind. The base is `+` only when the
+ * separator before it is there too: `ctrl++` is ctrl plus the plus key. A single
+ * trailing `+` as in `ctrl+` is a binding with no key, and it stays that way — reading
+ * it as the plus key would drop the ctrl and quietly take over a real `+` binding.
  */
 function splitKey(lower: string): { modifiers: string[]; base: string } {
   const parts = lower.split('+');
   let base = parts.pop() ?? '';
-  if (base === '' && lower.endsWith('+') && parts.length > 0) {
+  if (base === '' && parts[parts.length - 1] === '') {
     base = '+';
     parts.pop();
   }

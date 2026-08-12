@@ -67,13 +67,24 @@ describe('base keys', () => {
     expect(keyOf(press(' '))).toBe('space');
   });
 
-  it('treats a trailing + as the plus key, not as a missing one', () => {
+  it('treats a doubled trailing + as the plus key, not as a missing one', () => {
     // `+` is both the separator and something a person may bind.
     expect(normalizeKey('+')).toBe('+');
     expect(normalizeKey('ctrl++')).toBe('ctrl++');
     expect(keyOf(press('+'))).toBe('+');
     expect(keyOf(press('+', { ctrl: true }))).toBe('ctrl++');
     expect(normalizeKey('ctrl++')).toBe(keyOf(press('+', { ctrl: true })));
+  });
+
+  it('leaves a single trailing + as a binding with no key, keeping the modifier', () => {
+    // `ctrl+` is malformed either way, but reading it as the plus key would drop the
+    // ctrl and hand it a binding that a real `ctrl++` or `+` is entitled to.
+    expect(normalizeKey('ctrl+')).toBe('ctrl+');
+    expect(normalizeKey('ctrl+')).not.toBe('+');
+    expect(normalizeKey('shift+ctrl+')).toBe('ctrl+shift+');
+    // Nothing can press it, and it must not shadow the real plus bindings.
+    expect(normalizeKey('ctrl+')).not.toBe(keyOf(press('+', { ctrl: true })));
+    expect(normalizeKey('ctrl+')).not.toBe(keyOf(press('+')));
   });
 });
 
