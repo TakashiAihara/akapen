@@ -95,14 +95,26 @@ export function normalizeKey(name: string): string {
   return [...known, ...rest, base].join('+');
 }
 
+/**
+ * A single character whose shifted form is itself, so holding shift is already visible
+ * in the character that arrived. Space is the exception: shift does not change it, so
+ * the modifier is the only thing that could distinguish `shift+space` from `space`.
+ */
+const shiftIsInTheCharacter = (key: string): boolean =>
+  key.length === 1 && key !== ' ' && key.toLowerCase() === key.toUpperCase();
+
 /** KeyboardEvent → `ctrl+shift+k`. The same normalisation the config goes through. */
 export function keyOf(e: KeyboardEvent): string {
   const parts = [];
   if (e.ctrlKey) parts.push('ctrl');
   if (e.metaKey) parts.push('meta');
   if (e.altKey) parts.push('alt');
-  // shift uppercases letters, so normalise it as a modifier and land on 'shift+j'
-  if (e.shiftKey) parts.push('shift');
+  // Shift counts as a modifier only when it is not already spelled out by the key. A
+  // letter arrives as 'J' and is folded to 'j', so the shift is the only thing left
+  // saying it was held. A symbol arrives as the shifted character — on most layouts `+`
+  // is shift and another key — and counting it twice would produce `shift++`, which no
+  // binding can be written to match.
+  if (e.shiftKey && !shiftIsInTheCharacter(e.key)) parts.push('shift');
   parts.push(e.key);
   return normalizeKey(parts.join('+'));
 }

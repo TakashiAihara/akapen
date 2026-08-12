@@ -76,6 +76,23 @@ describe('base keys', () => {
     expect(normalizeKey('ctrl++')).toBe(keyOf(press('+', { ctrl: true })));
   });
 
+  it('does not count shift twice when the character already spells it', () => {
+    // On most layouts `+` is shift and another key, so the event carries both `+` and
+    // shiftKey. Counting the shift again gives `shift++`, which `ctrl++` cannot match.
+    expect(keyOf(press('+', { shift: true }))).toBe('+');
+    expect(keyOf(press('+', { ctrl: true, shift: true }))).toBe('ctrl++');
+    expect(normalizeKey('ctrl++')).toBe(keyOf(press('+', { ctrl: true, shift: true })));
+    expect(keyOf(press('?', { shift: true }))).toBe('?');
+  });
+
+  it('still counts shift for a letter, where folding the case would lose it', () => {
+    // 'J' becomes 'j', so the modifier is the only thing left saying shift was held.
+    expect(keyOf(press('J', { shift: true }))).toBe('shift+j');
+    // Space is unchanged by shift, so the modifier is the only way to tell them apart.
+    expect(keyOf(press(' ', { shift: true }))).toBe('shift+space');
+    expect(keyOf(press('Enter', { shift: true }))).toBe('shift+enter');
+  });
+
   it('leaves a single trailing + as a binding with no key, keeping the modifier', () => {
     // `ctrl+` is malformed either way, but reading it as the plus key would drop the
     // ctrl and hand it a binding that a real `ctrl++` or `+` is entitled to.
