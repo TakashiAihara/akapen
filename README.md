@@ -89,7 +89,16 @@ bun run packages/cli/src/cli.ts comments <file.md> --all    # include resolved o
     "body": "feedback on the status line",
     "anchor": "status: active",
     "author": "root",
-    "resolved": false
+    "resolved": false,
+    "replies": [
+      {
+        "id": "r_1a2b3c",
+        "body": "could not fix, because X",
+        "author": "agent-1",
+        "author_kind": "agent",
+        "created_at": "2026-08-12T14:03:11.000Z"
+      }
+    ]
   }
 ]
 ```
@@ -99,6 +108,8 @@ bun run packages/cli/src/cli.ts comments <file.md> --all    # include resolved o
 **Unresolved comments from earlier rounds are included.** Since nothing carries over, round N's feedback does not appear on N+1's screen. Disappearing from the screen is what history is for; not reaching the agent would lose the feedback itself. Closing a round *means* handing work over.
 
 Current-round comments come first, ordered by line. Entries with `current_round: false` are feedback on the document as it was, so treat their line numbers as already shifted.
+
+`replies` is the thread on that comment, oldest first, one level deep — a reply cannot be replied to. An agent's own replies are noise to it, but a person's answer to one is not: "could not fix, because X" met with "then do Y instead" makes Y new feedback, and it only arrives if the thread comes with the comment. `author_kind` says which side wrote it. Today the server stamps every reply `human`, since nothing authenticates a claim to be otherwise; the path by which an agent writes back is not built yet.
 
 There is an example stylesheet in `examples/dense.css`.
 

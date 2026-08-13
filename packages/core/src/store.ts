@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
-import type { Comment, RoundComment, RoundMeta } from '@akapen/shared';
+import type { AuthorKind, Comment, Reply, RoundComment, RoundMeta } from '@akapen/shared';
 import {
   mkdirSync,
   readFileSync,
@@ -13,7 +13,7 @@ import {
   existsSync,
 } from 'node:fs';
 
-export type { Comment, RoundComment, RoundMeta };
+export type { AuthorKind, Comment, Reply, RoundComment, RoundMeta };
 
 export type Review = {
   version: 2;
@@ -252,6 +252,39 @@ export function saveComments(filePath: string, n: number, comments: Comment[]): 
   writeAtomic(join(dir, 'comments.json'), JSON.stringify(comments, null, 2));
 }
 
+/**
+ * Add a reply to a comment, wherever it lives.
+ *
+ * Built on updateComment for the same reason resolve is: the round a comment belongs
+ * to is not something the caller should have to know, and a comment carried from an
+ * earlier round is exactly the one most likely to be replied to — "this could not be
+ * fixed, and here is why" is about work already handed over.
+ *
+ * The reply is stored inside its parent, so a thread travels with the comment when the
+ * comment is carried, and a reply without a comment cannot exist.
+ */
+export function addReply(
+  filePath: string,
+  commentId: string,
+  body: string,
+  author: string,
+  authorKind: AuthorKind = 'human',
+): { comment: RoundComment; reply: Reply } | null {
+  const reply: Reply = {
+    id: `r_${randomBytes(4).toString('hex')}`,
+    body,
+    author,
+    authorKind,
+    createdAt: new Date().toISOString(),
+  };
+  const comment = updateComment(filePath, commentId, (c) => {
+    // `?? []` rather than a plain push: every file written before replies existed has
+    // no such key, and the type says otherwise because stored JSON is not checked (#61).
+    c.replies = [...(c.replies ?? []), reply];
+  });
+  return comment ? { comment, reply } : null;
+}
+
 /** `source` must be the round's snapshot. Passing the live file makes the anchor disagree with the document. */
 export function makeComment(
   source: string,
@@ -270,5 +303,6 @@ export function makeComment(
     createdAt: new Date().toISOString(),
     resolved: false,
     anchor: lines.slice(startLine - 1, endLine).join('\n'),
+    replies: [],
   };
 }

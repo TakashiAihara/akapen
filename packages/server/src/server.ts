@@ -5,6 +5,7 @@ import { vValidator } from '@hono/valibot-validator';
 import { ASSETS, mimeFor } from './assets.ts';
 import { buildDoc } from '@akapen/core/blocks';
 import {
+  addReply,
   carriedOver,
   ensureRound,
   loadComments,
@@ -19,6 +20,7 @@ import {
 } from '@akapen/core/store';
 import {
   CreateCommentSchema,
+  CreateReplySchema,
   DocQuerySchema,
   type ChangedEvent,
   type ChangedState,
@@ -161,6 +163,23 @@ export function startServer(opts: ServeOptions) {
     if (!updated) return c.text('not found', 404);
     if (updated.round === review.currentRound) comments = loadComments(file, review.currentRound);
     return c.json({ comment: updated, comments, carried: carriedOver(file) });
+  });
+
+  /**
+   * A reply lands on its parent wherever that parent lives, including a round that has
+   * already closed. What a closed round freezes is the document and its line anchors;
+   * the conversation about it is the same side of that line as `resolved`, which #4
+   * already decided can still move.
+   *
+   * `authorKind` is stamped here rather than taken from the request. Without
+   * authentication (#10) a client saying "I am the agent" means nothing, and #12 turns
+   * that distinction into whether the conversation can be read at all.
+   */
+  app.post('/api/comments/:id/replies', vValidator('json', CreateReplySchema), (c) => {
+    const added = addReply(file, c.req.param('id'), c.req.valid('json').body, opts.author, 'human');
+    if (!added) return c.text('not found', 404);
+    if (added.comment.round === review.currentRound) comments = loadComments(file, review.currentRound);
+    return c.json({ comment: added.comment, comments, carried: carriedOver(file) });
   });
 
   // Only a person cuts a round. An agent's intermediate save never does.

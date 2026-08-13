@@ -193,3 +193,66 @@ test('loads and renders mermaid only when a diagram is present', async ({ page, 
   expect(fetched).toContain('/mermaid.js');
   expect(fetched).toContain('/app.js');
 });
+
+test('replies to a comment, and keeps the thread on a comment carried past a round', async ({
+  page,
+  akapen,
+}) => {
+  await page.goto(akapen.url);
+  await page.locator('.row').nth(2).hover();
+  await page.locator('.row').nth(2).locator('.add').click();
+  await page.locator('.bubble.draft textarea').fill('this reads stiffly');
+  await page.locator('.bubble.draft textarea').press('Control+Enter');
+  await expect(page.locator('.bubble').first()).toBeVisible();
+
+  // The form only appears once the bubble is being read, or every bubble grows by one.
+  const bubble = page.locator('.bubble').first();
+  await bubble.hover();
+  await bubble.locator('.reply-input').fill('reworded');
+  await bubble.locator('.reply-send').click();
+  await expect(bubble.locator('.reply-body')).toHaveText('reworded');
+
+  // Cutting a round moves the comment to the carried rail. The thread has to come with
+  // it — a reply that stays behind is feedback nobody can find again.
+  akapen.append('\n## Added\n\nmore text.\n');
+  await page.locator('#nextRound').click();
+  const carried = page.locator('#railCarried .bubble').first();
+  await expect(carried).toBeVisible();
+  await expect(carried.locator('.reply-body')).toHaveText('reworded');
+
+  // A closed round is read-only for the document, not for the conversation. Hover, not
+  // click: clicking a carried bubble opens that round's history, so a form that needed a
+  // click to appear could never be reached with a mouse.
+  await carried.hover();
+  await carried.locator('.reply-input').fill('still open because X');
+  await carried.locator('.reply-send').click();
+  await expect(page.locator('#railCarried .bubble').first().locator('.reply-body')).toHaveCount(2);
+});
+
+test('replies from the history view without swapping the round on screen', async ({ page, akapen }) => {
+  await page.goto(akapen.url);
+  await page.locator('.row').nth(2).hover();
+  await page.locator('.row').nth(2).locator('.add').click();
+  await page.locator('.bubble.draft textarea').fill('about R001');
+  await page.locator('.bubble.draft textarea').press('Control+Enter');
+  await expect(page.locator('.bubble').first()).toBeVisible();
+
+  akapen.append('\n## Added\n\nmore text.\n');
+  await page.locator('#nextRound').click();
+  await page.locator('#roundPick').selectOption('1');
+  await expect(page.locator('#historyBar')).toBeVisible();
+
+  // The reply response carries the *current* round's comments. Applying them here would
+  // not merely miss the reply — it would replace R001 on screen with the current round.
+  const bubble = page.locator('#railAnchored .bubble').first();
+  await bubble.hover();
+  await bubble.locator('.reply-input').fill('answered on the old round');
+  await bubble.locator('.reply-send').click();
+
+  await expect(page.locator('#railAnchored .bubble').first().locator('.reply-body')).toHaveText(
+    'answered on the old round',
+  );
+  // Still R001, still read-only.
+  await expect(page.locator('#historyBar')).toBeVisible();
+  await expect(page.locator('#round')).toHaveText('R001');
+});
