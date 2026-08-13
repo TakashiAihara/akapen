@@ -366,8 +366,12 @@ function repliesFor(c: Comment | RoundComment, past: boolean): HTMLElement {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const payload = await decode(res, CommentsPayloadSchema);
       ta.value = '';
-      // A reply on a past round is not in `comments`, so re-open that round to see it.
-      if (past && state.round?.viewing) void showRound(state.round.viewing, c.id);
+      // The response always carries the *current* round's comments, whichever round the
+      // parent was in. Two cases cannot use them: a carried bubble, whose parent is in
+      // an earlier round, and the history view, whose bubbles are that round's own. In
+      // the second, applying them would not merely fail to show the reply — it would
+      // swap the round on screen for the current one. Re-open the round instead.
+      if ((past || state.history) && state.round?.viewing) void showRound(state.round.viewing, c.id);
       else applyComments(payload);
     } catch (err) {
       // Keep what was typed. Losing it leaves no way to get the words back.

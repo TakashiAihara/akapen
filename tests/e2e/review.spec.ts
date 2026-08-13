@@ -228,3 +228,31 @@ test('replies to a comment, and keeps the thread on a comment carried past a rou
   await carried.locator('.reply-send').click();
   await expect(page.locator('#railCarried .bubble').first().locator('.reply-body')).toHaveCount(2);
 });
+
+test('replies from the history view without swapping the round on screen', async ({ page, akapen }) => {
+  await page.goto(akapen.url);
+  await page.locator('.row').nth(2).hover();
+  await page.locator('.row').nth(2).locator('.add').click();
+  await page.locator('.bubble.draft textarea').fill('about R001');
+  await page.locator('.bubble.draft textarea').press('Control+Enter');
+  await expect(page.locator('.bubble').first()).toBeVisible();
+
+  akapen.append('\n## Added\n\nmore text.\n');
+  await page.locator('#nextRound').click();
+  await page.locator('#roundPick').selectOption('1');
+  await expect(page.locator('#historyBar')).toBeVisible();
+
+  // The reply response carries the *current* round's comments. Applying them here would
+  // not merely miss the reply — it would replace R001 on screen with the current round.
+  const bubble = page.locator('#railAnchored .bubble').first();
+  await bubble.hover();
+  await bubble.locator('.reply-input').fill('answered on the old round');
+  await bubble.locator('.reply-send').click();
+
+  await expect(page.locator('#railAnchored .bubble').first().locator('.reply-body')).toHaveText(
+    'answered on the old round',
+  );
+  // Still R001, still read-only.
+  await expect(page.locator('#historyBar')).toBeVisible();
+  await expect(page.locator('#round')).toHaveText('R001');
+});

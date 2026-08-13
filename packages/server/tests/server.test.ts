@@ -263,14 +263,24 @@ describe('replying', () => {
   it('reads a stored comment with no replies key as having none', async () => {
     // Every file written before this feature has no such key. Defaulting it is what
     // keeps the browser-side checking from rejecting them and leaving a blank screen.
-    const stored = join(sandbox, 'home', 'reviews');
-    const roundFile = execSync(`find ${stored} -name comments.json`, { encoding: 'utf8' }).trim();
+    //
+    // The file has to be edited *between* two servers. A running one holds the current
+    // round's comments in memory and /api/doc answers from there, so mutating the file
+    // under it proves nothing — an earlier version of this test did exactly that and
+    // passed while never reading the old shape at all.
     const parent = await createComment();
+    const home = join(sandbox, 'home');
+    server?.stop();
+    server = null;
+
+    const roundFile = execSync(`find ${home} -name comments.json`, { encoding: 'utf8' }).trim();
     const raw = JSON.parse(readFileSync(roundFile, 'utf8')) as Record<string, unknown>[];
+    expect(raw[0]?.['replies']).toBeDefined();
     for (const c of raw) delete c['replies'];
     writeFileSync(roundFile, JSON.stringify(raw, null, 2));
 
-    const payload = v.parse(DocPayloadSchema, await (await fetch(`${base}/api/doc`)).json());
+    server = await start(work, home);
+    const payload = v.parse(DocPayloadSchema, await (await fetch(`${server.url}/api/doc`)).json());
     expect(payload.comments.find((c) => c.id === parent.id)?.replies).toEqual([]);
-  });
+  }, 30_000);
 });
