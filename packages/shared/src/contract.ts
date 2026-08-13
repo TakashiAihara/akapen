@@ -57,6 +57,37 @@ export type Doc = v.InferOutput<typeof DocSchema>;
 
 /* ===== Comments ===== */
 
+/**
+ * Who wrote something.
+ *
+ * Kept apart from `author`, which is a name and can be anything. Telling a person from
+ * an agent by name would break the moment someone sets `--author` to the agent's name,
+ * and #12 turns that distinction into whether a conversation can be read at all.
+ *
+ * The server stamps this. A client cannot be trusted to say which it is until there is
+ * authentication (#10), so what it sends is ignored.
+ */
+export const AuthorKindSchema = v.picklist(['human', 'agent']);
+export type AuthorKind = v.InferOutput<typeof AuthorKindSchema>;
+
+/**
+ * A reply on a comment. One level: a reply cannot be replied to.
+ *
+ * The exchange this carries is a person and an agent going back and forth on one
+ * point, which does not branch. A tree would need indentation, a depth limit and
+ * collapsing in the rail, and would make an agent walk a structure instead of reading
+ * an array. If a branch is ever wanted, this can grow a `replyTo` without moving
+ * anything already on disk.
+ */
+export const ReplySchema = v.object({
+  id: v.string(),
+  body: v.string(),
+  author: v.string(),
+  authorKind: AuthorKindSchema,
+  createdAt: v.string(),
+});
+export type Reply = v.InferOutput<typeof ReplySchema>;
+
 export const CommentSchema = v.object({
   id: v.string(),
   /** Line number inside the round's snapshot. It means nothing against the live file. */
@@ -72,6 +103,14 @@ export const CommentSchema = v.object({
    * text, so it still lands when other edits have shifted the lines.
    */
   anchor: v.string(),
+  /**
+   * Replies, oldest first.
+   *
+   * Optional with an empty default because every file written before replies existed
+   * has no such key. Making it required would have the browser-side checking added in
+   * #68 reject those files, and the screen would come up blank.
+   */
+  replies: v.optional(v.array(ReplySchema), []),
 });
 export type Comment = v.InferOutput<typeof CommentSchema>;
 
@@ -124,6 +163,18 @@ export const CreateCommentSchema = v.object({
   body: v.pipe(v.string(), v.minLength(1)),
 });
 export type CreateComment = v.InferOutput<typeof CreateCommentSchema>;
+
+/**
+ * A reply the browser is asking to add.
+ *
+ * Only the text. Which comment it belongs to is in the path, and the author and its
+ * kind are stamped by the server — a client cannot be trusted to name either while
+ * there is no authentication (#10).
+ */
+export const CreateReplySchema = v.object({
+  body: v.pipe(v.string(), v.minLength(1)),
+});
+export type CreateReply = v.InferOutput<typeof CreateReplySchema>;
 
 /**
  * The query string of /api/doc. `round` absent means the current round.

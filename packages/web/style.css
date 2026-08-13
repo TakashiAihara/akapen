@@ -315,6 +315,47 @@ body.rail-overlay .marker { display: inline-flex; align-items: center; justify-c
 .bubble:focus-visible, .row:focus-visible { outline: 2px solid var(--ak-accent); outline-offset: 1px; }
 .bubble-error { padding: 0 10px 8px; color: var(--ak-warn); font-size: 0.8rem; }
 
+/* The thread under a comment. One level, so there is no depth to indent for. */
+.replies { border-top: 1px solid var(--ak-border); }
+.reply { padding: 6px 10px; border-bottom: 1px solid var(--ak-border); }
+.reply .who { font-size: 0.75rem; color: var(--ak-fg-muted); }
+/* Named rather than only coloured: a custom.css that drops the colour must not take
+   the distinction with it, and telling a person from an agent is the point of #12. */
+.reply .kind {
+  margin-left: 4px;
+  padding: 0 4px;
+  border: 1px solid var(--ak-border);
+  border-radius: 3px;
+  font-size: 0.7rem;
+}
+.reply-body { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.85rem; }
+.reply-form { display: flex; gap: 6px; padding: 6px 10px; }
+.reply-input {
+  flex: 1;
+  min-height: 2em;
+  resize: vertical;
+  font: inherit;
+  font-size: 0.85rem;
+  color: inherit;
+  background: var(--ak-bg);
+  border: 1px solid var(--ak-border);
+  border-radius: 3px;
+  padding: 4px 6px;
+}
+.reply-send { align-self: flex-start; }
+/* A closed round is read-only for the document, not for the conversation, so the form
+   stays on a carried bubble too. Collapsed until the bubble is being read, or every
+   bubble grows by a form.
+   Hover is in the list because clicking a carried bubble opens that round's history:
+   without it the form would only ever appear on the way to somewhere else, and no
+   mouse could reach it. */
+.replies .reply-form { display: none; }
+.bubble.active .reply-form,
+.bubble:hover .reply-form,
+.bubble:focus-within .reply-form {
+  display: flex;
+}
+
 .bubble.draft { background: var(--ak-bg); border-color: var(--ak-accent); }
 .bubble textarea {
   display: block;

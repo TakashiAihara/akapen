@@ -63,6 +63,16 @@ if (positional[0] === 'comments') {
         anchor: c.anchor,
         author: c.author,
         resolved: c.resolved,
+        // The agent's own replies are noise to it, but a person's reply to one is new
+        // feedback — "could not fix, because X" answered with "then do Y instead". Y
+        // only arrives if the thread comes with the comment.
+        replies: (c.replies ?? []).map((r) => ({
+          id: r.id,
+          body: r.body,
+          author: r.author,
+          author_kind: r.authorKind,
+          created_at: r.createdAt,
+        })),
       })),
       null,
       2,

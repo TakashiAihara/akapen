@@ -309,6 +309,89 @@ function rangeLabel(startLine: number, endLine: number): string {
   return `L${startLine}${endLine !== startLine ? `-${endLine}` : ''}`;
 }
 
+/** Keep a click inside the reply form from reaching the bubble, which navigates. */
+function stopClick(e: Event): void {
+  e.stopPropagation();
+}
+
+/**
+ * The thread under a comment: the replies, then a box to add one.
+ *
+ * One level. A reply cannot be replied to, so this is a list and not a tree — the
+ * exchange it carries is a person and an agent on one point, which does not branch.
+ *
+ * Replying is offered on a carried comment too. What a closed round freezes is the
+ * document and its line anchors, and "this could not be fixed, and here is why" is
+ * about work already handed over — the case that matters most.
+ */
+function repliesFor(c: Comment | RoundComment, past: boolean): HTMLElement {
+  const wrap = el('div', 'replies');
+  for (const r of c.replies ?? []) {
+    const item = el('div', `reply${r.authorKind === 'agent' ? ' from-agent' : ''}`);
+    const who = el('span', 'who', `@${escapeHtml(r.author)}`);
+    // Named, not just styled: colour alone would not survive a custom.css that drops it,
+    // and telling a person from an agent is the point once #12 lands.
+    if (r.authorKind === 'agent') who.append(el('span', 'kind', 'agent'));
+    item.append(who, el('div', 'reply-body', escapeHtml(r.body)));
+    wrap.append(item);
+  }
+
+  const form = el('div', 'reply-form');
+  const ta = el('textarea', 'reply-input');
+  ta.rows = 1;
+  ta.placeholder = 'reply';
+  const send = el('button', 'reply-send', 'Reply');
+  send.disabled = true;
+
+  const sync = () => {
+    send.disabled = ta.value.trim() === '';
+    // The bubble just changed height, so everything below it has to move.
+    layoutRail();
+  };
+  ta.addEventListener('input', sync);
+  // Clicking into the box must not count as clicking the bubble, which navigates.
+  ta.addEventListener('click', stopClick);
+  form.addEventListener('click', stopClick);
+
+  const submit = async () => {
+    const body = ta.value.trim();
+    if (!body || send.disabled) return;
+    send.disabled = true;
+    try {
+      const res = await fetch(`/api/comments/${c.id}/replies`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ body }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const payload = await decode(res, CommentsPayloadSchema);
+      ta.value = '';
+      // A reply on a past round is not in `comments`, so re-open that round to see it.
+      if (past && state.round?.viewing) void showRound(state.round.viewing, c.id);
+      else applyComments(payload);
+    } catch (err) {
+      // Keep what was typed. Losing it leaves no way to get the words back.
+      send.disabled = false;
+      fail(form, `reply failed (${messageOf(err)})`);
+    }
+  };
+  send.addEventListener('click', (e) => {
+    e.stopPropagation();
+    void submit();
+  });
+  ta.addEventListener('keydown', (e) => {
+    // Same send key as a comment. Enter alone has to stay a newline.
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      void submit();
+    }
+  });
+
+  form.append(ta, send);
+  wrap.append(form);
+  return wrap;
+}
+
 function bubbleFor(c: Comment, opts?: { past?: false }): HTMLElement;
 function bubbleFor(c: RoundComment, opts: { past: true }): HTMLElement;
 function bubbleFor(c: Comment | RoundComment, opts: { past?: boolean } = {}): HTMLElement {
@@ -350,6 +433,7 @@ function bubbleFor(c: Comment | RoundComment, opts: { past?: boolean } = {}): HT
   head.append(btn);
 
   box.append(head, el('div', 'bubble-body', escapeHtml(c.body)));
+  box.append(repliesFor(c, opts.past === true));
   // If only a mouse can expand the collapsed body, the keyboard cannot read past 12em
   box.tabIndex = 0;
   box.addEventListener('click', () => {

@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  addReply,
   carriedOver,
   ensureRound,
   loadAllComments,
@@ -240,5 +241,62 @@ describe('handing work to the agent', () => {
   it('carries the source text as it was', () => {
     seed();
     expect(pendingComments(work).every((c) => c.anchor.length > 0)).toBe(true);
+  });
+});
+
+describe('replies', () => {
+  it('adds one to a comment in the current round', () => {
+    const [first] = seed();
+    const added = addReply(work, first!.id, 'reworded', 'someone');
+    expect(added?.reply.body).toBe('reworded');
+    expect(added?.reply.authorKind).toBe('human');
+    expect(added?.comment.round).toBe(1);
+    // Read back from disk, not from the return value: the point is that it persisted.
+    expect(loadComments(work, 1)[0]?.replies).toHaveLength(1);
+  });
+
+  it('adds one to a comment carried from a closed round', () => {
+    // The main thing replies are for: answering feedback on work already handed over.
+    const [first] = seed();
+    openRound(work, EDITED);
+    const added = addReply(work, first!.id, 'could not fix, because X', 'agent-1', 'agent');
+    expect(added?.comment.round).toBe(1);
+    expect(added?.reply.authorKind).toBe('agent');
+    expect(loadComments(work, 1)[0]?.replies?.[0]?.body).toBe('could not fix, because X');
+    // The reply went to the parent's round, not the current one.
+    expect(loadComments(work, 2)).toEqual([]);
+  });
+
+  it('keeps them in the order they were written', () => {
+    const [first] = seed();
+    addReply(work, first!.id, 'one', 't');
+    addReply(work, first!.id, 'two', 't');
+    expect(loadComments(work, 1)[0]?.replies?.map((r) => r.body)).toEqual(['one', 'two']);
+  });
+
+  it('answers null for a comment that does not exist', () => {
+    seed();
+    expect(addReply(work, 'c_nope', 'x', 't')).toBeNull();
+  });
+
+  it('reads a comment written before replies existed as having none', () => {
+    // Files on disk predate this feature and have no `replies` key. A plain push would
+    // throw on undefined; the reply has to land on an empty list instead.
+    ensureRound(work, SOURCE);
+    const legacy = makeComment(SOURCE, 6, 6, 'about the heading', 't');
+    delete (legacy as { replies?: unknown }).replies;
+    saveComments(work, 1, [legacy]);
+
+    const added = addReply(work, legacy.id, 'first reply', 't');
+    expect(added?.reply.body).toBe('first reply');
+    expect(loadComments(work, 1)[0]?.replies).toHaveLength(1);
+  });
+
+  it('travels with its parent into carriedOver', () => {
+    const [first] = seed();
+    addReply(work, first!.id, 'why it is still open', 't');
+    openRound(work, EDITED);
+    const carried = carriedOver(work).find((c) => c.id === first!.id);
+    expect(carried?.replies?.[0]?.body).toBe('why it is still open');
   });
 });
