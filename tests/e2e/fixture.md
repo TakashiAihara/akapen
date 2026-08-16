@@ -41,3 +41,10 @@ graph TD
   A[読む] --> B[投げる]
   B --> C[締める]
 ```
+
+## 図（大文字の fence）
+
+```Mermaid
+graph TD
+  D[書く] --> E[直す]
+```

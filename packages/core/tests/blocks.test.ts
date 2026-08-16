@@ -78,3 +78,36 @@ describe('structure', () => {
     expect(doc.blocks.filter((b) => b.kind === 'list-item' && b.depth > 0).length).toBeGreaterThan(0);
   });
 });
+
+const kindsOf = (md: string) => [...new Set(buildDoc('t.md', md).blocks.map((b) => b.kind))];
+
+/** A fenced block with the given info string, holding something mermaid can draw. */
+const fence = (info: string) => `\`\`\`${info}\ngraph TD\n  A-->B\n\`\`\``;
+
+describe('fence info strings', () => {
+  it.each([['mermaid'], ['Mermaid'], ['MERMAID'], ['mermaid title="x"'], ['Mermaid  title="x"']])(
+    'renders ```%s as a diagram',
+    (info) => {
+      // A language name is case-insensitive to anyone writing markdown. Comparing the raw
+      // string made a capitalised fence come out as an ordinary code block, with nothing
+      // said about why — it just was not a diagram.
+      expect(kindsOf(fence(info))).toEqual(['mermaid']);
+    },
+  );
+
+  it.each([['ts'], ['TypeScript'], [''], ['mermaidjs'], ['not-mermaid']])('leaves ```%s as code', (info) => {
+    // Only the whole first word counts. A fence that merely starts with the letters
+    // must not be swallowed.
+    expect(kindsOf(fence(info))).toEqual(['code']);
+  });
+
+  it('highlights a language whatever case it is written in', () => {
+    // hljs.getLanguage folds case itself, so this is a guard rather than a fix.
+    const upper = buildDoc('t.md', '```TypeScript\nconst a: number = 1;\n```');
+    const lower = buildDoc('t.md', '```typescript\nconst a: number = 1;\n```');
+    expect(upper.blocks.some((b) => b.html.includes('hljs-'))).toBe(true);
+    expect(upper.blocks.map((b) => b.html.replace(/TypeScript/g, 'typescript'))).toEqual(
+      lower.blocks.map((b) => b.html),
+    );
+  });
+});
