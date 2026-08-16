@@ -13,9 +13,11 @@ test.beforeEach(async ({ page, akapen }) => {
   await page.goto(akapen.url);
   await expect(page.locator('.row').first()).toBeVisible();
   // mermaid renders asynchronously and changes the document height. Measure once it settles.
-  // The fixture has more than one diagram, so wait on the last: the height is not final
-  // until every one of them has been drawn.
-  await expect(page.locator('#doc svg').last()).toBeVisible({ timeout: 15_000 });
+  // The count comes first: `.last()` resolves to whichever svg exists at the time, so on
+  // its own it is satisfied by the first one and the height can still be measured while
+  // the second diagram is being drawn. The fixture has two.
+  await expect(page.locator('#doc svg')).toHaveCount(2, { timeout: 15_000 });
+  await expect(page.locator('#doc svg').last()).toBeVisible();
 });
 
 /** Open a draft by clicking + in the gutter. */
@@ -191,7 +193,7 @@ test('loads and renders mermaid only when a diagram is present', async ({ page, 
   const fetched: string[] = [];
   page.on('response', (r) => fetched.push(new URL(r.url()).pathname));
   await page.goto(akapen.url);
-  await expect(page.locator('#doc svg').last()).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('#doc svg')).toHaveCount(2, { timeout: 15_000 });
   expect(fetched).toContain('/mermaid.js');
   expect(fetched).toContain('/app.js');
 
