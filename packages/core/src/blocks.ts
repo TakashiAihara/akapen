@@ -153,7 +153,11 @@ function walkFence(token: Token, ctx: Ctx): void {
   const [start, end] = token.map ?? [0, 0];
   const startLine = start + 1;
   const endLine = end; // the fence includes its opening and closing lines
-  const info = (token.info || '').trim().split(/\s+/)[0] ?? '';
+  // The first word only, lowercased. Markdown treats a language name as case-insensitive
+  // — ```Mermaid is the same fence as ```mermaid to anyone writing it — and comparing the
+  // raw string made a capitalised one render as an ordinary code block with nothing said
+  // about why. hljs.getLanguage already folds case, so this only has to hold here.
+  const info = ((token.info || '').trim().split(/\s+/)[0] ?? '').toLowerCase();
 
   if (info === 'mermaid') {
     push(ctx, {

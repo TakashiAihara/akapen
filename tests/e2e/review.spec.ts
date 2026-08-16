@@ -12,8 +12,12 @@ const A = { rail: '#railAnchored .bubble', draft: '#rail .bubble.draft', ta: '#r
 test.beforeEach(async ({ page, akapen }) => {
   await page.goto(akapen.url);
   await expect(page.locator('.row').first()).toBeVisible();
-  // mermaid renders asynchronously and changes the document height. Measure once it settles
-  await expect(page.locator('#doc svg')).toBeVisible({ timeout: 15_000 });
+  // mermaid renders asynchronously and changes the document height. Measure once it settles.
+  // The count comes first: `.last()` resolves to whichever svg exists at the time, so on
+  // its own it is satisfied by the first one and the height can still be measured while
+  // the second diagram is being drawn. The fixture has two.
+  await expect(page.locator('#doc svg')).toHaveCount(2, { timeout: 15_000 });
+  await expect(page.locator('#doc svg').last()).toBeVisible();
 });
 
 /** Open a draft by clicking + in the gutter. */
@@ -189,9 +193,14 @@ test('loads and renders mermaid only when a diagram is present', async ({ page, 
   const fetched: string[] = [];
   page.on('response', (r) => fetched.push(new URL(r.url()).pathname));
   await page.goto(akapen.url);
-  await expect(page.locator('#doc svg')).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('#doc svg')).toHaveCount(2, { timeout: 15_000 });
   expect(fetched).toContain('/mermaid.js');
   expect(fetched).toContain('/app.js');
+
+  // Both diagrams, one fenced ```mermaid and one ```Mermaid. A language name is
+  // case-insensitive to anyone writing markdown, and the capitalised one used to come
+  // out as an ordinary code block with nothing said about why.
+  await expect(page.locator('#doc svg')).toHaveCount(2, { timeout: 15_000 });
 });
 
 test('replies to a comment, and keeps the thread on a comment carried past a round', async ({
