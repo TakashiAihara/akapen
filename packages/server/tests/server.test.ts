@@ -284,3 +284,81 @@ describe('replying', () => {
     expect(payload.comments.find((c) => c.id === parent.id)?.replies).toEqual([]);
   }, 30_000);
 });
+
+describe('editing and withdrawing over HTTP', () => {
+  const created = async () =>
+    v.parse(
+      CommentsPayloadSchema,
+      await (await post('/api/comments', { startLine: 5, endLine: 5, body: 'about the heading' })).json(),
+    ).comment;
+
+  const patch = (id: string, body: unknown) =>
+    fetch(`${base}/api/comments/${id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+  it('changes the body and leaves the anchor where it was', async () => {
+    const before = await created();
+    const res = await patch(before.id, { body: 'clearer wording' });
+    expect(res.ok).toBe(true);
+    const payload = v.parse(CommentsPayloadSchema, await res.json());
+    expect(payload.comment.body).toBe('clearer wording');
+    expect(payload.comment.updatedAt).not.toBeNull();
+    expect(payload.comment.anchor).toBe(before.anchor);
+    expect(payload.comment.startLine).toBe(before.startLine);
+  });
+
+  it.each([
+    ['a missing body', {}],
+    ['an empty body', { body: '' }],
+  ])('refuses an edit with %s', async (_label, body) => {
+    const c = await created();
+    expect((await patch(c.id, body)).status).toBe(400);
+  });
+
+  it('withdraws a comment from every view while keeping it on disk', async () => {
+    const c = await created();
+    const res = await fetch(`${base}/api/comments/${c.id}`, { method: 'DELETE' });
+    expect(res.ok).toBe(true);
+    const payload = v.parse(CommentsPayloadSchema, await res.json());
+    expect(payload.comment.deletedAt).not.toBeNull();
+    expect(payload.comments.map((x) => x.id)).not.toContain(c.id);
+
+    // Gone from the list and from the document, but still recorded.
+    expect(await (await fetch(`${base}/api/comments`)).json()).toEqual([]);
+    const doc = v.parse(DocPayloadSchema, await (await fetch(`${base}/api/doc`)).json());
+    expect(doc.comments).toHaveLength(0);
+
+    const roundFile = execSync(`find ${join(sandbox, 'home')} -name comments.json`, {
+      encoding: 'utf8',
+    }).trim();
+    const raw = JSON.parse(readFileSync(roundFile, 'utf8')) as { id: string; deletedAt: string }[];
+    expect(raw.find((x) => x.id === c.id)?.deletedAt).toBeTruthy();
+  });
+
+  it('puts one back', async () => {
+    const c = await created();
+    await fetch(`${base}/api/comments/${c.id}`, { method: 'DELETE' });
+    const res = await post(`/api/comments/${c.id}/restore`);
+    expect(res.ok).toBe(true);
+    const payload = v.parse(CommentsPayloadSchema, await res.json());
+    expect(payload.comment.deletedAt).toBeNull();
+    expect(payload.comments.map((x) => x.id)).toContain(c.id);
+  });
+
+  it('keeps a withdrawn comment out of a past round it was written in', async () => {
+    const c = await created();
+    await post('/api/rounds');
+    await fetch(`${base}/api/comments/${c.id}`, { method: 'DELETE' });
+    const past = v.parse(DocPayloadSchema, await (await fetch(`${base}/api/doc?round=1`)).json());
+    expect(past.comments.map((x) => x.id)).not.toContain(c.id);
+  });
+
+  it('answers 404 for a comment that does not exist', async () => {
+    expect((await patch('c_nope', { body: 'x' })).status).toBe(404);
+    expect((await fetch(`${base}/api/comments/c_nope`, { method: 'DELETE' })).status).toBe(404);
+    expect((await post('/api/comments/c_nope/restore')).status).toBe(404);
+  });
+});

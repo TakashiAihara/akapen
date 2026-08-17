@@ -315,6 +315,33 @@ body.rail-overlay .marker { display: inline-flex; align-items: center; justify-c
 .bubble:focus-visible, .row:focus-visible { outline: 2px solid var(--ak-accent); outline-offset: 1px; }
 .bubble-error { padding: 0 10px 8px; color: var(--ak-warn); font-size: 0.8rem; }
 
+/* Head actions. Hidden until the bubble is being read, so a rail full of comments is
+   not a rail full of buttons. Same trigger list as the reply form, and for the same
+   reason: clicking a carried bubble navigates, so hover has to be one of them. */
+.bubble-act, .bubble .edited { font-size: 0.7rem; }
+.bubble .edited { color: var(--ak-fg-muted); font-style: italic; }
+.bubble-act { visibility: hidden; }
+.bubble.active .bubble-act,
+.bubble:hover .bubble-act,
+.bubble:focus-within .bubble-act {
+  visibility: visible;
+}
+.bubble-act.armed { color: var(--ak-warn); border-color: var(--ak-warn); }
+
+.bubble-edit { display: flex; flex-wrap: wrap; gap: 6px; padding: 6px 10px; }
+.edit-input {
+  flex: 1 1 100%;
+  min-height: 4em;
+  resize: vertical;
+  font: inherit;
+  font-size: 0.85rem;
+  color: inherit;
+  background: var(--ak-bg);
+  border: 1px solid var(--ak-border);
+  border-radius: 3px;
+  padding: 4px 6px;
+}
+
 /* The thread under a comment. One level, so there is no depth to indent for. */
 .replies { border-top: 1px solid var(--ak-border); }
 .reply { padding: 6px 10px; border-bottom: 1px solid var(--ak-border); }

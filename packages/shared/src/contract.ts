@@ -111,6 +111,17 @@ export const CommentSchema = v.object({
    * #68 reject those files, and the screen would come up blank.
    */
   replies: v.optional(v.array(ReplySchema), []),
+  /** When the body was last changed. null while it is still as written. */
+  updatedAt: v.optional(v.nullable(v.string()), null),
+  /**
+   * When it was withdrawn, or null.
+   *
+   * Deletion is logical, and it has to be: a comment can be withdrawn after the round
+   * it belongs to has closed, which means an agent may already have read it and acted
+   * on it. Removing the row would leave whatever it did unexplained. The record stays;
+   * only the places that show or hand over comments skip it.
+   */
+  deletedAt: v.optional(v.nullable(v.string()), null),
 });
 export type Comment = v.InferOutput<typeof CommentSchema>;
 
@@ -175,6 +186,18 @@ export const CreateReplySchema = v.object({
   body: v.pipe(v.string(), v.minLength(1)),
 });
 export type CreateReply = v.InferOutput<typeof CreateReplySchema>;
+
+/**
+ * A new body for a comment. The body only.
+ *
+ * The range and the anchor are not editable. They are what says which text the comment
+ * is about, and letting them move would turn "I meant the line below" into a comment
+ * that silently claims to have always been about something else.
+ */
+export const EditCommentSchema = v.object({
+  body: v.pipe(v.string(), v.minLength(1)),
+});
+export type EditComment = v.InferOutput<typeof EditCommentSchema>;
 
 /**
  * The query string of /api/doc. `round` absent means the current round.

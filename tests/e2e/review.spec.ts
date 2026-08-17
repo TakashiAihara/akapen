@@ -265,3 +265,46 @@ test('replies from the history view without swapping the round on screen', async
   await expect(page.locator('#historyBar')).toBeVisible();
   await expect(page.locator('#round')).toHaveText('R001');
 });
+
+test('edits a comment, and withdraws one in two steps', async ({ page, akapen }) => {
+  await page.goto(akapen.url);
+  await openDraft(page, 2);
+  await post(page, 'this reads stifly');
+
+  const bubble = page.locator(A.rail).first();
+  await bubble.hover();
+  await bubble.getByRole('button', { name: 'Edit' }).click();
+  await bubble.locator('.edit-input').fill('this reads stiffly');
+  await bubble.getByRole('button', { name: 'Save' }).click();
+  await expect(page.locator(`${A.rail} .bubble-body`).first()).toHaveText('this reads stiffly');
+  // The wording changed and the screen says so, without claiming what it used to be.
+  await expect(page.locator(`${A.rail} .edited`).first()).toBeVisible();
+
+  // Two steps rather than a dialog: one click cannot lose a comment, and walking away
+  // from a button that says "Really?" is the undo.
+  const again = page.locator(A.rail).first();
+  await again.hover();
+  await again.getByRole('button', { name: 'Delete' }).click();
+  await expect(again.getByRole('button', { name: 'Really?' })).toBeVisible();
+  await expect(page.locator(A.rail)).toHaveCount(1);
+  await again.getByRole('button', { name: 'Really?' }).click();
+  await expect(page.locator(A.rail)).toHaveCount(0);
+});
+
+test('withdraws a comment carried from a closed round', async ({ page, akapen }) => {
+  // The case the feature is for: a typo from an earlier round keeps reaching the agent,
+  // and resolving it would claim it had been dealt with.
+  await page.goto(akapen.url);
+  await openDraft(page, 2);
+  await post(page, 'raised in R001');
+
+  akapen.append('\n## Added\n\nmore text.\n');
+  await page.locator('#nextRound').click();
+  const carried = page.locator('#railCarried .bubble').first();
+  await expect(carried).toBeVisible();
+
+  await carried.hover();
+  await carried.getByRole('button', { name: 'Delete' }).click();
+  await carried.getByRole('button', { name: 'Really?' }).click();
+  await expect(page.locator('#railCarried .bubble')).toHaveCount(0);
+});

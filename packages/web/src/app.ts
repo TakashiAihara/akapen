@@ -396,6 +396,26 @@ function repliesFor(c: Comment | RoundComment, past: boolean): HTMLElement {
   return wrap;
 }
 
+/**
+ * Apply what an edit, a withdrawal or a restore answered with.
+ *
+ * The response always carries the *current* round's comments, whichever round the
+ * comment was in. A carried bubble or the history view cannot use them — applying them
+ * would swap the round on screen — so those re-open the round they are showing. Same
+ * rule as replying, and the same reason.
+ */
+function applyCommentChange(payload: CommentsPayload, id: string, past: boolean): void {
+  if ((past || state.history) && state.round?.viewing) void showRound(state.round.viewing, id);
+  else applyComments(payload);
+}
+
+/** A small button in the bubble head. */
+function headButton(label: string, title: string): HTMLButtonElement {
+  const b = el('button', 'bubble-act', label);
+  b.title = title;
+  return b;
+}
+
 function bubbleFor(c: Comment, opts?: { past?: false }): HTMLElement;
 function bubbleFor(c: RoundComment, opts: { past: true }): HTMLElement;
 function bubbleFor(c: Comment | RoundComment, opts: { past?: boolean } = {}): HTMLElement {
@@ -417,6 +437,13 @@ function bubbleFor(c: Comment | RoundComment, opts: { past?: boolean } = {}): HT
     head.append(tag);
   }
   head.append(el('span', 'at', rangeLabel(c.startLine, c.endLine)));
+  // Say that the wording changed. Not what it was: nothing reads a history yet, and the
+  // reader that would — an agent that acted on the old wording (#12) — does not exist.
+  if (c.updatedAt) {
+    const edited = el('span', 'edited', 'edited');
+    edited.title = `last changed ${c.updatedAt}`;
+    head.append(edited);
+  }
   const spacer = el('span', null, '');
   spacer.style.flex = '1';
   head.append(spacer);
@@ -436,12 +463,120 @@ function bubbleFor(c: Comment | RoundComment, opts: { past?: boolean } = {}): HT
   });
   head.append(btn);
 
-  box.append(head, el('div', 'bubble-body', escapeHtml(c.body)));
-  box.append(repliesFor(c, opts.past === true));
+  const past = opts.past === true;
+  const bodyEl = el('div', 'bubble-body', escapeHtml(c.body));
+
+  /**
+   * Swap the body for a textarea. The range and the anchor are not touched — they say
+   * which text this is about, and moving them would rewrite what the comment had always
+   * claimed. Only the wording is a mistake anyone needs to take back.
+   */
+  const startEdit = () => {
+    if (box.querySelector('.bubble-edit')) return;
+    const form = el('div', 'bubble-edit');
+    const ta = el('textarea', 'edit-input');
+    ta.value = c.body;
+    const save = el('button', 'primary', 'Save');
+    const cancel = el('button', null, 'Cancel');
+    const close = () => {
+      form.remove();
+      bodyEl.hidden = false;
+      layoutRail();
+    };
+    const submit = async () => {
+      const body = ta.value.trim();
+      if (!body || body === c.body) return close();
+      save.disabled = true;
+      try {
+        const res = await fetch(`/api/comments/${c.id}`, {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ body }),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        applyCommentChange(await decode(res, CommentsPayloadSchema), c.id, past);
+      } catch (err) {
+        // Keep what was typed. Discarding it leaves no way to get the words back.
+        save.disabled = false;
+        fail(form, `edit failed (${messageOf(err)})`);
+      }
+    };
+    save.addEventListener('click', (e) => {
+      e.stopPropagation();
+      void submit();
+    });
+    cancel.addEventListener('click', (e) => {
+      e.stopPropagation();
+      close();
+    });
+    ta.addEventListener('click', stopClick);
+    form.addEventListener('click', stopClick);
+    ta.addEventListener('input', layoutRail);
+    ta.addEventListener('keydown', (e) => {
+      // Same keys as writing one. Enter alone stays a newline.
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        void submit();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        close();
+      }
+    });
+
+    bodyEl.hidden = true;
+    form.append(ta, save, cancel);
+    bodyEl.after(form);
+    ta.focus();
+    layoutRail();
+  };
+
+  const editBtn = headButton('Edit', 'change the wording (the range stays)');
+  editBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    startEdit();
+  });
+
+  /**
+   * Two steps rather than a dialog or an undo. One click cannot lose a comment, and
+   * walking away from a button that says "Really?" is the undo.
+   */
+  const delBtn = headButton('Delete', 'withdraw this comment');
+  let armed = false;
+  const disarm = () => {
+    armed = false;
+    delBtn.textContent = 'Delete';
+    delBtn.classList.remove('armed');
+  };
+  delBtn.addEventListener('blur', disarm);
+  delBtn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    if (!armed) {
+      armed = true;
+      delBtn.textContent = 'Really?';
+      delBtn.classList.add('armed');
+      return;
+    }
+    delBtn.disabled = true;
+    try {
+      const res = await fetch(`/api/comments/${c.id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      applyCommentChange(await decode(res, CommentsPayloadSchema), c.id, past);
+    } catch (err) {
+      delBtn.disabled = false;
+      disarm();
+      fail(box, `delete failed (${messageOf(err)})`);
+    }
+  });
+  head.insertBefore(editBtn, btn);
+  head.insertBefore(delBtn, btn);
+
+  box.append(head, bodyEl);
+  box.append(repliesFor(c, past));
   // If only a mouse can expand the collapsed body, the keyboard cannot read past 12em
   box.tabIndex = 0;
   box.addEventListener('click', () => {
-    if (opts.past) void showRound((c as RoundComment).round, c.id);
+    if (past) void showRound((c as RoundComment).round, c.id);
     else setActive(c.id, 'doc');
   });
   box.addEventListener('focus', () => setActive(c.id));

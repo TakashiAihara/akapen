@@ -7,12 +7,15 @@ import { buildDoc } from '@akapen/core/blocks';
 import {
   addReply,
   carriedOver,
+  editComment,
   ensureRound,
+  isVisible,
   loadComments,
   makeComment,
   openRound,
   roundContent,
   saveComments,
+  setCommentDeleted,
   storeDir,
   updateComment,
   type Comment,
@@ -22,6 +25,7 @@ import {
   CreateCommentSchema,
   CreateReplySchema,
   DocQuerySchema,
+  EditCommentSchema,
   type ChangedEvent,
   type ChangedState,
   type DocPayload,
@@ -40,12 +44,22 @@ export type ServeOptions = {
 export function startServer(opts: ServeOptions) {
   const file = resolve(opts.file);
 
+  /**
+   * A round's comments as anyone should see them.
+   *
+   * Withdrawn ones are still in comments.json — deletion is logical — so the skipping
+   * happens here rather than in the storage read, which `updateComment` writes back
+   * through. History gets the same treatment: a comment withdrawn later is withdrawn
+   * in the round it was written in too.
+   */
+  const visibleComments = (n: number): Comment[] => loadComments(file, n).filter(isVisible);
+
   let review: Review = ensureRound(file, readFileSync(file, 'utf8'));
   // What we render is the current round's snapshot, not the live file. Freezing what
   // comments attach to removes, structurally, the path where positions conflict while
   // someone is still writing.
   let snapshot = roundContent(file, review.currentRound);
-  let comments: Comment[] = loadComments(file, review.currentRound);
+  let comments: Comment[] = visibleComments(review.currentRound);
   let changes = 0;
 
   const clients = new Set<(data: string) => void>();
@@ -100,7 +114,7 @@ export function startServer(opts: ServeOptions) {
     type: 'doc',
     history: true,
     doc: buildDoc(file, roundContent(file, n)),
-    comments: loadComments(file, n),
+    comments: visibleComments(n),
     round: { ...roundState(), viewing: n },
     carried: carriedOver(file),
     changed: changedState(),
@@ -161,7 +175,7 @@ export function startServer(opts: ServeOptions) {
       comment.resolved = !comment.resolved;
     });
     if (!updated) return c.text('not found', 404);
-    if (updated.round === review.currentRound) comments = loadComments(file, review.currentRound);
+    if (updated.round === review.currentRound) comments = visibleComments(review.currentRound);
     return c.json({ comment: updated, comments, carried: carriedOver(file) });
   });
 
@@ -178,8 +192,46 @@ export function startServer(opts: ServeOptions) {
   app.post('/api/comments/:id/replies', vValidator('json', CreateReplySchema), (c) => {
     const added = addReply(file, c.req.param('id'), c.req.valid('json').body, opts.author, 'human');
     if (!added) return c.text('not found', 404);
-    if (added.comment.round === review.currentRound) comments = loadComments(file, review.currentRound);
+    if (added.comment.round === review.currentRound) comments = visibleComments(review.currentRound);
     return c.json({ comment: added.comment, comments, carried: carriedOver(file) });
+  });
+
+  /**
+   * Change the body. Not the range, not the anchor — those say which text this is
+   * about, and moving them would rewrite what the comment had always claimed.
+   *
+   * Allowed on a closed round, like resolve and replies. The wording of a remark is on
+   * the conversation side of what a round freezes.
+   */
+  app.patch('/api/comments/:id', vValidator('json', EditCommentSchema), (c) => {
+    const updated = editComment(file, c.req.param('id'), c.req.valid('json').body);
+    if (!updated) return c.text('not found', 404);
+    if (updated.round === review.currentRound) comments = visibleComments(review.currentRound);
+    return c.json({ comment: updated, comments, carried: carriedOver(file) });
+  });
+
+  /**
+   * Withdraw a comment, on any round, and put it back with POST.
+   *
+   * Logical: the row stays in comments.json and only the places that show or hand over
+   * comments skip it. A comment can be withdrawn after its round closed, by which point
+   * it may already have reached an agent and been acted on — removing the row would
+   * leave that work unexplained. It also makes undo free, so the UI does not hold one.
+   *
+   * Not the same as resolving. Resolved says the point was dealt with; a typo was not.
+   */
+  app.delete('/api/comments/:id', (c) => {
+    const updated = setCommentDeleted(file, c.req.param('id'), true);
+    if (!updated) return c.text('not found', 404);
+    if (updated.round === review.currentRound) comments = visibleComments(review.currentRound);
+    return c.json({ comment: updated, comments, carried: carriedOver(file) });
+  });
+
+  app.post('/api/comments/:id/restore', (c) => {
+    const updated = setCommentDeleted(file, c.req.param('id'), false);
+    if (!updated) return c.text('not found', 404);
+    if (updated.round === review.currentRound) comments = visibleComments(review.currentRound);
+    return c.json({ comment: updated, comments, carried: carriedOver(file) });
   });
 
   // Only a person cuts a round. An agent's intermediate save never does.

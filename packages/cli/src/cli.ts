@@ -2,13 +2,14 @@
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { startServer } from '@akapen/server';
-import { loadReview, pendingComments } from '@akapen/core/store';
+import { loadReview, pendingComments, setCommentDeleted } from '@akapen/core/store';
 import { parseArgs, resolvePort, UsageError, type Args } from './args.ts';
 
 const USAGE = `akapen — markdown inline review (PoC)
 
-  akapen <file.md> [options]     start the review server
-  akapen comments <file.md>      print unresolved comments as JSON (for agents)
+  akapen <file.md> [options]        start the review server
+  akapen comments <file.md>         print unresolved comments as JSON (for agents)
+  akapen delete <file.md> <id>...   withdraw comments (any round; --restore puts them back)
 
 options:
   --host <addr>    listen address (default 127.0.0.1)
@@ -17,6 +18,7 @@ options:
   --keymap <file>  JSON overriding the keymap ({ "action": ["key"] })
   --author <name>  comment author (default $USER)
   --all            comments: include resolved ones
+  --restore        delete: put the comments back instead
 `;
 
 /** Anything typed wrong ends here: the reason, then how to type it. */
@@ -38,6 +40,34 @@ const positional = args.positional;
 if (positional.length === 0 || args.help) {
   console.log(USAGE);
   process.exit(0);
+}
+
+/**
+ * Withdraw comments without a server running.
+ *
+ * The store is a plain sidecar, so this reaches it the same way `comments` does rather
+ * than requiring something to be listening. Deletion is logical, which is what makes
+ * `--restore` a real operation and not a promise.
+ */
+if (positional[0] === 'delete') {
+  const file = positional[1];
+  if (!file || !existsSync(file)) fail(`no such file: ${file ?? '(missing)'}`);
+  const ids = positional.slice(2);
+  if (ids.length === 0) fail('delete needs at least one comment id');
+
+  const restore = args.restore;
+  const done: string[] = [];
+  const missing: string[] = [];
+  for (const id of ids) {
+    const updated = setCommentDeleted(file, id, !restore);
+    if (updated) done.push(id);
+    else missing.push(id);
+  }
+
+  // Report per id. A single "done" over a list would hide a typo in one of them.
+  for (const id of done) console.log(`${restore ? 'restored' : 'deleted'} ${id}`);
+  for (const id of missing) console.error(`akapen: no such comment: ${id}`);
+  process.exit(missing.length > 0 ? 1 : 0);
 }
 
 if (positional[0] === 'comments') {

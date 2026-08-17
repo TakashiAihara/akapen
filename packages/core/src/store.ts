@@ -202,10 +202,25 @@ export function roundNumbersOnDisk(filePath: string): number[] {
   return roundsOnDisk(filePath).map((r) => r.n);
 }
 
+/**
+ * Whether a comment is still standing.
+ *
+ * Deletion is logical, so the row is still in comments.json. Filtering belongs here, at
+ * the boundaries that show or hand over comments, and deliberately **not** inside
+ * `loadComments`: that is the storage read, and `updateComment` loads, patches and saves
+ * the whole file through it. Filtering there would drop every withdrawn comment on the
+ * next unrelated write.
+ */
+export function isVisible(c: Comment): boolean {
+  return !c.deletedAt;
+}
+
 /** Unresolved comments from earlier rounds: gone from the screen, not gone as feedback. */
 export function carriedOver(filePath: string): RoundComment[] {
   const review = loadReview(filePath);
-  return loadAllComments(filePath).filter((c) => c.round !== review.currentRound && !c.resolved);
+  return loadAllComments(filePath).filter(
+    (c) => c.round !== review.currentRound && !c.resolved && isVisible(c),
+  );
 }
 
 /**
@@ -218,7 +233,7 @@ export function carriedOver(filePath: string): RoundComment[] {
  */
 export function pendingComments(filePath: string, includeResolved = false): RoundComment[] {
   return loadAllComments(filePath)
-    .filter((c) => includeResolved || !c.resolved)
+    .filter((c) => isVisible(c) && (includeResolved || !c.resolved))
     .toSorted((a, b) => b.round - a.round || a.startLine - b.startLine);
 }
 
@@ -285,6 +300,41 @@ export function addReply(
   return comment ? { comment, reply } : null;
 }
 
+/**
+ * Change a comment's body, wherever it lives.
+ *
+ * The body only. The range and the anchor say which text this is about, and letting
+ * them move would turn "I meant the line below" into a comment that claims to have
+ * always been about something else.
+ *
+ * `updatedAt` records that it changed. Not the previous text: nothing reads a history
+ * yet, and the reader that would — an agent that acted on the old wording (#12) — does
+ * not exist. A history with no reader is a file that only grows.
+ */
+export function editComment(filePath: string, id: string, body: string): RoundComment | null {
+  return updateComment(filePath, id, (c) => {
+    c.body = body;
+    c.updatedAt = new Date().toISOString();
+  });
+}
+
+/**
+ * Withdraw a comment, or put it back.
+ *
+ * Logical, and it has to be. A comment can be withdrawn after its round has closed,
+ * which means it may already have reached an agent through `akapen comments` and been
+ * acted on. Removing the row would leave that work unexplained. It also makes undoing
+ * free, which is why the UI does not need to hold one.
+ *
+ * Resolving is not a substitute: that says the point was dealt with, and a typo or a
+ * double post was not.
+ */
+export function setCommentDeleted(filePath: string, id: string, deleted: boolean): RoundComment | null {
+  return updateComment(filePath, id, (c) => {
+    c.deletedAt = deleted ? new Date().toISOString() : null;
+  });
+}
+
 /** `source` must be the round's snapshot. Passing the live file makes the anchor disagree with the document. */
 export function makeComment(
   source: string,
@@ -304,5 +354,7 @@ export function makeComment(
     resolved: false,
     anchor: lines.slice(startLine - 1, endLine).join('\n'),
     replies: [],
+    updatedAt: null,
+    deletedAt: null,
   };
 }

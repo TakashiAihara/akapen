@@ -7,10 +7,11 @@
  * "true". The parser is a separate module so these can be run at all.
  */
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { ensureRound, makeComment, saveComments } from '@akapen/core/store';
 import { parseArgs, resolvePort, UsageError } from '../src/args.ts';
 
 describe('positional arguments', () => {
@@ -150,4 +151,65 @@ describe('the binary', () => {
       rmSync(sandbox, { recursive: true, force: true });
     }
   }, 30_000);
+});
+
+describe('the delete subcommand', () => {
+  const CLI = join(import.meta.dirname, '..', 'src', 'cli.ts');
+  const run = (args: string[], home: string) =>
+    spawnSync('bun', ['run', CLI, ...args], {
+      encoding: 'utf8',
+      env: { ...process.env, AKAPEN_HOME: home },
+      timeout: 20_000,
+      killSignal: 'SIGKILL',
+    });
+
+  it('withdraws a comment and takes it out of the agent handoff, without a server', () => {
+    // The store is a plain sidecar, so this has to work with nothing listening.
+    const sandbox = mkdtempSync(join(tmpdir(), 'akapen-cli-del-'));
+    const home = join(sandbox, 'home');
+    const note = join(sandbox, 'note.md');
+    writeFileSync(note, '# Heading\n\nA paragraph.\n');
+    try {
+      process.env['AKAPEN_HOME'] = home;
+      ensureRound(note, readFileSync(note, 'utf8'));
+      const c = makeComment(readFileSync(note, 'utf8'), 1, 1, 'typo', 't');
+      saveComments(note, 1, [c]);
+      delete process.env['AKAPEN_HOME'];
+
+      const listed = run(['comments', note], home);
+      expect(JSON.parse(listed.stdout)).toHaveLength(1);
+
+      const del = run(['delete', note, c.id], home);
+      expect(del.status).toBe(0);
+      expect(del.stdout).toContain(`deleted ${c.id}`);
+      expect(JSON.parse(run(['comments', note], home).stdout)).toHaveLength(0);
+      // Even with --all: withdrawn is not the same as resolved.
+      expect(JSON.parse(run(['comments', note, '--all'], home).stdout)).toHaveLength(0);
+
+      const back = run(['delete', note, c.id, '--restore'], home);
+      expect(back.status).toBe(0);
+      expect(back.stdout).toContain(`restored ${c.id}`);
+      expect(JSON.parse(run(['comments', note], home).stdout)).toHaveLength(1);
+    } finally {
+      delete process.env['AKAPEN_HOME'];
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it('names the ids it could not find and exits non-zero', () => {
+    const sandbox = mkdtempSync(join(tmpdir(), 'akapen-cli-del-'));
+    const note = join(sandbox, 'note.md');
+    writeFileSync(note, '# Heading\n');
+    try {
+      const res = run(['delete', note, 'c_nope'], join(sandbox, 'home'));
+      expect(res.status).toBe(1);
+      expect(res.stderr).toContain('no such comment: c_nope');
+
+      const noIds = run(['delete', note], join(sandbox, 'home'));
+      expect(noIds.status).toBe(1);
+      expect(noIds.stderr).toContain('delete needs at least one comment id');
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  }, 60_000);
 });

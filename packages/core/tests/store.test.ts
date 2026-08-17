@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   addReply,
   carriedOver,
+  editComment,
   ensureRound,
   loadAllComments,
   loadComments,
@@ -22,6 +23,7 @@ import {
   roundContent,
   roundNumbersOnDisk,
   saveComments,
+  setCommentDeleted,
   storeDir,
   updateComment,
   type Comment,
@@ -298,5 +300,83 @@ describe('replies', () => {
     openRound(work, EDITED);
     const carried = carriedOver(work).find((c) => c.id === first!.id);
     expect(carried?.replies?.[0]?.body).toBe('why it is still open');
+  });
+});
+
+describe('editing and withdrawing', () => {
+  it('changes the body and records that it changed, leaving the anchor alone', () => {
+    const [first] = seed();
+    const before = loadComments(work, 1)[0]!;
+    const updated = editComment(work, first!.id, 'clearer wording');
+    expect(updated?.body).toBe('clearer wording');
+    expect(updated?.updatedAt).not.toBeNull();
+    // The range and the anchor say which text this is about. Moving them would rewrite
+    // what the comment had always claimed.
+    expect(updated?.startLine).toBe(before.startLine);
+    expect(updated?.endLine).toBe(before.endLine);
+    expect(updated?.anchor).toBe(before.anchor);
+    expect(loadComments(work, 1)[0]?.body).toBe('clearer wording');
+  });
+
+  it('withdraws logically: the row stays, the views skip it', () => {
+    const [first] = seed();
+    setCommentDeleted(work, first!.id, true);
+    // Still on disk. An agent may already have read it and acted, and removing the row
+    // would leave that work unexplained.
+    expect(loadComments(work, 1).find((c) => c.id === first!.id)?.deletedAt).not.toBeNull();
+    expect(loadComments(work, 1)).toHaveLength(3);
+    // Gone from what is shown and from what is handed over.
+    expect(pendingComments(work).map((c) => c.id)).not.toContain(first!.id);
+    expect(pendingComments(work, true).map((c) => c.id)).not.toContain(first!.id);
+  });
+
+  it('puts one back', () => {
+    const [first] = seed();
+    setCommentDeleted(work, first!.id, true);
+    setCommentDeleted(work, first!.id, false);
+    expect(loadComments(work, 1).find((c) => c.id === first!.id)?.deletedAt).toBeNull();
+    expect(pendingComments(work).map((c) => c.id)).toContain(first!.id);
+  });
+
+  it('withdraws one from a round that has already closed', () => {
+    // The case the feature is for: a typo from an earlier round keeps reaching the agent
+    // through pendingComments, and resolving it would claim it was dealt with.
+    const [first] = seed();
+    openRound(work, EDITED);
+    expect(carriedOver(work).map((c) => c.id)).toContain(first!.id);
+
+    setCommentDeleted(work, first!.id, true);
+    expect(carriedOver(work).map((c) => c.id)).not.toContain(first!.id);
+    expect(pendingComments(work).map((c) => c.id)).not.toContain(first!.id);
+  });
+
+  it('keeps the tombstone when an unrelated write touches the same file', () => {
+    // The trap: loadComments is the storage read and updateComment saves the whole file
+    // back through it. Filtering there would drop every withdrawn comment on the next
+    // resolve of a neighbour.
+    const [first, second] = seed();
+    setCommentDeleted(work, first!.id, true);
+    updateComment(work, second!.id, (c) => {
+      c.resolved = true;
+    });
+    expect(loadComments(work, 1).find((c) => c.id === first!.id)?.deletedAt).not.toBeNull();
+  });
+
+  it('answers null for a comment that does not exist', () => {
+    seed();
+    expect(editComment(work, 'c_nope', 'x')).toBeNull();
+    expect(setCommentDeleted(work, 'c_nope', true)).toBeNull();
+  });
+
+  it('reads a comment written before these fields existed', () => {
+    ensureRound(work, SOURCE);
+    const legacy = makeComment(SOURCE, 6, 6, 'about the heading', 't');
+    delete (legacy as { updatedAt?: unknown }).updatedAt;
+    delete (legacy as { deletedAt?: unknown }).deletedAt;
+    saveComments(work, 1, [legacy]);
+
+    expect(pendingComments(work).map((c) => c.id)).toContain(legacy.id);
+    expect(setCommentDeleted(work, legacy.id, true)?.deletedAt).not.toBeNull();
+    expect(pendingComments(work).map((c) => c.id)).not.toContain(legacy.id);
   });
 });

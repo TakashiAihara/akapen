@@ -67,6 +67,7 @@ The examples below use `bun run packages/cli/src/cli.ts`; read that as `akapen` 
 | `--css <file>` | extra stylesheet, loaded after the defaults so it can override everything |
 | `--keymap <file>` | JSON overriding the keymap, merged over the defaults |
 | `--author <name>` | comment author (default `$USER`) |
+| `--restore` | `delete`: put the comments back instead |
 
 Use `--host 0.0.0.0` to run it on a remote machine and read it from a local browser. There is no authentication, so mind who can reach the address.
 
@@ -75,6 +76,13 @@ The handoff to an agent is a CLI command.
 ```bash
 bun run packages/cli/src/cli.ts comments <file.md>          # unresolved comments as JSON
 bun run packages/cli/src/cli.ts comments <file.md> --all    # include resolved ones
+```
+
+A comment can also be withdrawn from the command line, with nothing listening.
+
+```bash
+bun run packages/cli/src/cli.ts delete <file.md> c_b683c8            # withdraw
+bun run packages/cli/src/cli.ts delete <file.md> c_b683c8 --restore  # put it back
 ```
 
 ```json
@@ -108,6 +116,16 @@ bun run packages/cli/src/cli.ts comments <file.md> --all    # include resolved o
 **Unresolved comments from earlier rounds are included.** Since nothing carries over, round N's feedback does not appear on N+1's screen. Disappearing from the screen is what history is for; not reaching the agent would lose the feedback itself. Closing a round *means* handing work over.
 
 Current-round comments come first, ordered by line. Entries with `current_round: false` are feedback on the document as it was, so treat their line numbers as already shifted.
+
+### Taking a comment back
+
+A comment can be edited or withdrawn from the rail, from `PATCH` / `DELETE /api/comments/:id`, or from `akapen delete`. Any round, including one that has closed.
+
+Editing changes the wording only. The range and the anchor say which text the comment is about, and letting them move would turn "I meant the line below" into a comment that claims to have always been about something else. That the wording changed is shown; what it used to be is not kept, because nothing reads such a history yet.
+
+**Deletion is logical.** The entry stays in `comments.json` with a `deletedAt`, and only the places that show or hand over comments skip it. A comment can be withdrawn after its round has closed, by which point an agent may already have read it through `akapen comments` and acted on it — removing the record would leave that work unexplained. It also makes putting one back a real operation rather than a promise, which is why nothing has to hold an undo.
+
+Withdrawing is not resolving. Resolved says the point was dealt with; a typo or a double post was not.
 
 `replies` is the thread on that comment, oldest first, one level deep — a reply cannot be replied to. An agent's own replies are noise to it, but a person's answer to one is not: "could not fix, because X" met with "then do Y instead" makes Y new feedback, and it only arrives if the thread comes with the comment. `author_kind` says which side wrote it. Today the server stamps every reply `human`, since nothing authenticates a claim to be otherwise; the path by which an agent writes back is not built yet.
 
