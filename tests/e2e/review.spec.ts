@@ -296,6 +296,14 @@ test('keeps + shown from the text to the gutter, over the whole height of a tall
 
   // The row has to be taller than the + for the second half of this to mean anything
   expect(rowBox.height).toBeGreaterThan(addBox.height * 2);
+  // The strip is pulled clear of the text and costs it no width: the text starts where the
+  // row starts. Widening the gutter without paying it back in negative margin would push
+  // every line right instead — the whole document moves and nothing else here would notice.
+  const gutter = (await row.locator('.gutter').boundingBox())!;
+  expect(body.x).toBeCloseTo(rowBox.x, 1);
+  // It reaches the text and stops. Growing over it would take the first characters of every
+  // line away from the pointer, which is worse than the gap this replaces.
+  expect(gutter.x + gutter.width).toBeLessThanOrEqual(body.x);
   // The + is still drawn where it was: same 18px square, same 8px clear of the text,
   // top-aligned to the row. Widening the hit area must not move what is on screen.
   expect(addBox.width).toBe(18);
