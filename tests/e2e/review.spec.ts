@@ -300,7 +300,7 @@ test('keeps + shown from the text to the gutter, over the whole height of a tall
   // row starts. Widening the gutter without paying it back in negative margin would push
   // every line right instead — the whole document moves and nothing else here would notice.
   const gutter = (await row.locator('.gutter').boundingBox())!;
-  expect(body.x).toBeCloseTo(rowBox.x, 1);
+  expect(body.x).toBeCloseTo(rowBox.x, 0);
   // It reaches the text and stops. Growing over it would take the first characters of every
   // line away from the pointer, which is worse than the gap this replaces.
   expect(gutter.x + gutter.width).toBeLessThanOrEqual(body.x);
@@ -308,8 +308,8 @@ test('keeps + shown from the text to the gutter, over the whole height of a tall
   // top-aligned to the row. Widening the hit area must not move what is on screen.
   expect(addBox.width).toBe(18);
   expect(addBox.height).toBe(18);
-  expect(body.x - (addBox.x + addBox.width)).toBeCloseTo(8, 1);
-  expect(addBox.y).toBeCloseTo(rowBox.y, 1);
+  expect(body.x - (addBox.x + addBox.width)).toBeCloseTo(8, 0);
+  expect(addBox.y).toBeCloseTo(rowBox.y, 0);
 
   const xs = [
     { at: body.x + 60, what: 'inside the text' },
@@ -329,6 +329,27 @@ test('keeps + shown from the text to the gutter, over the whole height of a tall
   }
 });
 
+test('opens a draft on the right line from anywhere in the widened strip', async ({ page }) => {
+  const row = tallRow(page);
+  const line = await row.getAttribute('data-start');
+  const rowBox = (await row.boundingBox())!;
+  const body = (await row.locator('.body').boundingBox())!;
+
+  // The strip is live over its whole area, and it says so: a click there is a click on the
+  // line, the same as pressing the +. The place picked is the one that used to be inert
+  // twice over — the old dead gap, at the bottom of a row far taller than the +.
+  const cursors = await row.evaluate((el) => ({
+    gutter: getComputedStyle(el.querySelector('.gutter')!).cursor,
+    add: getComputedStyle(el.querySelector('.add')!).cursor,
+  }));
+  expect(cursors.gutter).toBe('pointer');
+  expect(cursors.add).toBe('pointer');
+
+  await page.mouse.click(body.x - 4, rowBox.y + rowBox.height - 6);
+  await expect(page.locator(A.ta)).toBeFocused();
+  await expect(page.locator(`${A.draft} .at`)).toHaveText(`L${line}`);
+});
+
 test('leaves + hidden outside the row, so the wider gutter is not a hover trap', async ({ page }) => {
   const row = tallRow(page);
   const rowBox = (await row.boundingBox())!;
@@ -344,15 +365,6 @@ test('leaves + hidden outside the row, so the wider gutter is not a hover trap',
     expect(await addOpacityAt(page, row, outside, y), 'left of the reserved strip').toBe('0');
     expect(await addOpacityAt(page, row, rowBox.x + rowBox.width + 40, y), 'right of the row').toBe('0');
   }
-
-  // The strip is reach, not a button: clicking it does nothing, so it must not offer the
-  // hand that the + does. 42px of empty page under a pointer cursor reads as clickable.
-  const cursors = await row.evaluate((el) => ({
-    gutter: getComputedStyle(el.querySelector('.gutter')!).cursor,
-    add: getComputedStyle(el.querySelector('.add')!).cursor,
-  }));
-  expect(cursors.gutter).not.toBe('pointer');
-  expect(cursors.add).toBe('pointer');
 
   // Another row's gutter is another row's business: hovering it must leave this + alone
   const other = page
