@@ -45,6 +45,15 @@ export function startServer(opts: ServeOptions) {
   // comments attach to removes, structurally, the path where positions conflict while
   // someone is still writing.
   let snapshot = roundContent(file, review.currentRound);
+  /**
+   * The blocks the screen is built from.
+   *
+   * Held rather than rebuilt per request because the snapshot is frozen for the whole
+   * round, and because this is what a comment's range is checked against: the browser
+   * can only offer what is in here, so validating against it leaves no room for the
+   * screen and the API to disagree about which lines can be pointed at (#101).
+   */
+  let doc = buildDoc(file, snapshot);
   let comments: Comment[] = loadComments(file, review.currentRound);
   let changes = 0;
 
@@ -86,7 +95,7 @@ export function startServer(opts: ServeOptions) {
 
   const docPayload = (): DocPayload => ({
     type: 'doc',
-    doc: buildDoc(file, snapshot),
+    doc,
     comments,
     round: roundState(),
     // Unresolved comments from earlier rounds: nothing carries over, so this is how they stay visible
@@ -133,14 +142,22 @@ export function startServer(opts: ServeOptions) {
 
   app.post('/api/comments', vValidator('json', CreateCommentSchema), (c) => {
     const { startLine, endLine, body } = c.req.valid('json');
-    // The schema only knows a line number is a positive integer. What the range points
-    // at depends on the snapshot, which the schema cannot see. The test is not "within
-    // the line count" — a trailing newline makes a last line that is not there, and a
-    // blank line is not addressable either. Both would store an anchor that is empty or
-    // whitespace, and an anchor that matches nothing is feedback nobody can find again.
-    const lines = snapshot.split('\n');
-    const selected = lines.slice(startLine - 1, endLine);
-    if (endLine < startLine || endLine > lines.length || !selected.some((l) => l.trim() !== '')) {
+    /**
+     * The schema only knows a line number is a positive integer. Whether the range
+     * points at anything depends on the document, which the schema cannot see.
+     *
+     * The test is the blocks, not the text. Reading the snapshot again here made the
+     * server answer, from the same file, a question the browser had already answered
+     * differently: a blank line inside a code block is a block of its own, is drawn,
+     * gets a `+`, and was refused for holding only whitespace (#101). Letting code
+     * blocks through as a special case would only move the disagreement somewhere
+     * else — the blocks are what the screen offers, so they are what decides.
+     *
+     * A trailing newline still makes a last "line" that is not there, and a blank line
+     * between two blocks still belongs to nothing. Neither is in `blocks`, so both are
+     * refused without a rule of their own.
+     */
+    if (endLine < startLine || !doc.blocks.some((b) => b.startLine <= endLine && b.endLine >= startLine)) {
       return c.text('line range does not point at any text', 400);
     }
     const comment = makeComment(snapshot, startLine, endLine, body, opts.author);
@@ -188,6 +205,7 @@ export function startServer(opts: ServeOptions) {
     if (live === null) return c.text('cannot read file', 500);
     review = openRound(file, live);
     snapshot = live;
+    doc = buildDoc(file, snapshot);
     comments = [];
     changes = 0;
     // A new round means a new document. Return it, and only the clicker's screen swaps.
