@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./addresses": "./src/addresses.ts",
     "./blocks": "./src/blocks.ts",
     "./store": "./src/store.ts"
   },
