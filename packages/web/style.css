@@ -160,11 +160,17 @@ body.viewing-history .add { display: none; }
 
 .gutter {
   flex: 0 0 auto;
-  width: 34px;
+  /* The strip up to the text belongs to the gutter, so the pointer never crosses a dead
+     gap on its way from the line it just read to the + */
+  width: 42px;
+  padding-right: 8px;
   margin-left: -42px;
+  margin-right: -8px;
+  /* A tall row (a heading, a wrapped paragraph) keeps the + reachable over its whole height */
+  align-self: stretch;
   display: flex;
   justify-content: flex-end;
-  align-items: center;
+  align-items: flex-start;
   gap: 4px;
   user-select: none;
   cursor: pointer;

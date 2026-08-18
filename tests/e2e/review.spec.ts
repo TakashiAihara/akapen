@@ -265,3 +265,84 @@ test('replies from the history view without swapping the round on screen', async
   await expect(page.locator('#historyBar')).toBeVisible();
   await expect(page.locator('#round')).toHaveText('R001');
 });
+
+/**
+ * Reaching the + is hover geometry, and hover geometry is only real in a browser.
+ *
+ * Two things used to break it (#89): the 8px flex gap between the gutter and the text
+ * belonged to neither element, so the + went out on the way to it, and the gutter kept
+ * the height of the + (18px) on rows that are far taller, so the lower half of a
+ * heading did not reach it at all.
+ */
+function tallRow(page: Page) {
+  // A heading: tall enough that an 18px gutter cannot cover it.
+  return page
+    .locator('.row')
+    .filter({ has: page.locator('h1') })
+    .first();
+}
+
+/** The opacity of a row's +, with the pointer parked at (x, y). */
+async function addOpacityAt(page: Page, row: ReturnType<typeof tallRow>, x: number, y: number) {
+  await page.mouse.move(x, y);
+  return await row.locator('.add').evaluate((e) => getComputedStyle(e).opacity);
+}
+
+test('keeps + shown from the text to the gutter, over the whole height of a tall row', async ({ page }) => {
+  const row = tallRow(page);
+  const rowBox = (await row.boundingBox())!;
+  const body = (await row.locator('.body').boundingBox())!;
+  const addBox = (await row.locator('.add').boundingBox())!;
+
+  // The row has to be taller than the + for the second half of this to mean anything
+  expect(rowBox.height).toBeGreaterThan(addBox.height * 2);
+  // The + is still drawn where it was: same 18px square, same 8px clear of the text,
+  // top-aligned to the row. Widening the hit area must not move what is on screen.
+  expect(addBox.width).toBe(18);
+  expect(addBox.height).toBe(18);
+  expect(body.x - (addBox.x + addBox.width)).toBeCloseTo(8, 1);
+  expect(addBox.y).toBeCloseTo(rowBox.y, 1);
+
+  const xs = [
+    { at: body.x + 60, what: 'inside the text' },
+    { at: body.x + 2, what: 'the left edge of the text' },
+    { at: body.x - 2, what: 'the gap, against the text' }, // the dead zone
+    { at: body.x - 6, what: 'the gap, against the gutter' }, // the dead zone
+    { at: addBox.x + 2, what: 'on the + itself' },
+  ];
+  const ys = [
+    { at: rowBox.y + 4, what: 'the top of the row' },
+    { at: body.y + body.height - 2, what: 'the bottom of the row' },
+  ];
+  for (const y of ys) {
+    for (const x of xs) {
+      expect(await addOpacityAt(page, row, x.at, y.at), `${x.what}, at ${y.what}`).toBe('1');
+    }
+  }
+});
+
+test('leaves + hidden outside the row, so the wider gutter is not a hover trap', async ({ page }) => {
+  const row = tallRow(page);
+  const rowBox = (await row.boundingBox())!;
+  const gutter = (await row.locator('.gutter').boundingBox())!;
+
+  // The gutter may only take the strip the page already reserves for it (.stage pads the
+  // text by 56px and the gutter is pulled 42px back into it). Measuring the strip from the
+  // gutter itself would prove nothing: it would follow a gutter that grew off to the left.
+  expect(rowBox.x - gutter.x).toBeLessThanOrEqual(42);
+  const outside = rowBox.x - 48; // left of the reserved strip, in the page's own margin
+
+  for (const y of [rowBox.y + 4, rowBox.y + rowBox.height - 4]) {
+    expect(await addOpacityAt(page, row, outside, y), 'left of the reserved strip').toBe('0');
+    expect(await addOpacityAt(page, row, rowBox.x + rowBox.width + 40, y), 'right of the row').toBe('0');
+  }
+
+  // Another row's gutter is another row's business: hovering it must leave this + alone
+  const other = page
+    .locator('.row')
+    .filter({ has: page.locator('h2') })
+    .first();
+  const otherBox = (await other.boundingBox())!;
+  expect(await addOpacityAt(page, row, gutter.x + 4, otherBox.y + 4), 'the gutter of another row').toBe('0');
+  expect(await addOpacityAt(page, row, otherBox.x + 40, otherBox.y + 4), 'the text of another row').toBe('0');
+});
