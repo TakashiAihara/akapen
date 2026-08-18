@@ -1004,6 +1004,19 @@ function setPeersOpen(open: boolean) {
 }
 
 /**
+ * Opening is asynchronous — the list is refreshed on the way — so anything that closes
+ * it has to cancel a request that is still in flight rather than let it land later.
+ * Without this, pressing Escape straight after `o` leaves the panel opening by itself
+ * once the earlier request answers, which is nothing the person asked for.
+ */
+let peersRequest = 0;
+
+function closePeers() {
+  peersRequest++;
+  setPeersOpen(false);
+}
+
+/**
  * Built from the address this page was opened on, not from the one the peer bound.
  * The browser is usually not on that host — akapen is started with `--host 0.0.0.0`
  * and read over the LAN — so `localhost` and `127.0.0.1` point at the reader's own
@@ -1058,12 +1071,15 @@ async function loadPeers(): Promise<void> {
 
 async function togglePeers(): Promise<void> {
   if (peersOpen()) {
-    setPeersOpen(false);
+    closePeers();
     return;
   }
+  const request = ++peersRequest;
   // Refreshed on the way open. An instance that stopped an hour ago must not be a row
   // that is still there to be clicked.
   await loadPeers();
+  // Closed, or pressed again, while this was in flight. The press that comes after wins.
+  if (request !== peersRequest) return;
   if (peers.length > 0) setPeersOpen(true);
 }
 
@@ -1077,7 +1093,7 @@ document.addEventListener('click', (e) => {
   if (!peersOpen()) return;
   const target = targetEl(e);
   if (target && (peersEl.contains(target) || peersToggleEl.contains(target))) return;
-  setPeersOpen(false);
+  closePeers();
 });
 
 // Instances start and stop while this page is open, and coming back to the tab is when
@@ -1108,11 +1124,13 @@ const ACTIONS: Record<string, () => boolean | void> = {
     return undefined;
   },
   'comment.cancel': () => {
-    // The switcher first: it is the thing most recently opened over everything else
-    if (peersOpen()) {
-      setPeersOpen(false);
-      return undefined;
-    }
+    // The switcher first: it is the thing most recently opened over everything else.
+    // Closing covers one that is still opening as well — letting that request land would
+    // reopen what this key press just dismissed. The key is only consumed when the panel
+    // was really open, so Escape goes on meaning "cancel the draft" the rest of the time.
+    const switcherWasOpen = peersOpen();
+    closePeers();
+    if (switcherWasOpen) return undefined;
     const btn = railEl.querySelector<HTMLButtonElement>('.bubble.draft button:not(.primary)');
     if (btn) btn.click();
     else if (document.body.classList.contains('rail-open')) railCloseEl.click();

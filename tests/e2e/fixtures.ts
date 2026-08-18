@@ -29,7 +29,10 @@ async function waitUntilServing(url: string): Promise<void> {
   const deadline = Date.now() + 20_000;
   for (;;) {
     try {
-      if ((await fetch(`${url}/api/doc`)).ok) return;
+      // Each attempt is given its own deadline. A server that accepts the connection and
+      // then never answers would otherwise hold this open past the loop's deadline, and
+      // "did not start" would arrive as a test timeout with nothing said about why.
+      if ((await fetch(`${url}/api/doc`, { signal: AbortSignal.timeout(2_000) })).ok) return;
     } catch {
       /* not up yet */
     }
@@ -48,7 +51,7 @@ export async function startPeer(
   home: string,
   name: string,
   extra: string[] = [],
-): Promise<{ port: number; stop: () => void }> {
+): Promise<{ port: number; stop: () => Promise<void> }> {
   const port = nextPort++;
   const sandbox = mkdtempSync(join(tmpdir(), 'akapen-e2e-peer-'));
   const file = join(sandbox, name);
@@ -59,15 +62,30 @@ export async function startPeer(
     ['run', 'packages/cli/src/cli.ts', file, '-p', String(port), ...extra],
     { env: { ...process.env, AKAPEN_HOME: home }, stdio: 'ignore' },
   );
-  await waitUntilServing(`http://127.0.0.1:${port}`);
 
-  return {
-    port,
-    stop: () => {
+  /**
+   * Waited for, not just signalled. The peer removes its registry entry as it shuts
+   * down, so a test that stops one and then asks what is running would otherwise be
+   * asking while it is still there — passing or failing on timing.
+   */
+  const stop = async () => {
+    if (proc.exitCode === null && proc.signalCode === null) {
+      const exited = new Promise<void>((done) => proc.once('exit', () => done()));
       proc.kill();
-      rmSync(sandbox, { recursive: true, force: true });
-    },
+      await exited;
+    }
+    rmSync(sandbox, { recursive: true, force: true });
   };
+
+  try {
+    await waitUntilServing(`http://127.0.0.1:${port}`);
+  } catch (err) {
+    // The caller never receives a handle when this throws, so nothing else can stop it
+    await stop();
+    throw err;
+  }
+
+  return { port, stop };
 }
 
 export const test = base.extend<{ akapen: Akapen }>({

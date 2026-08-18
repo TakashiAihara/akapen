@@ -82,6 +82,17 @@ function alive(pid: number): boolean {
   }
 }
 
+/**
+ * A host that means what it says once it is put in a URL.
+ *
+ * An entry is written by akapen, but it is read as a file on disk, and `host` and `port`
+ * go straight into the address the liveness check asks. A host carrying `/`, `@`, `?` or
+ * `#` moves what that URL points at, so a corrupted entry would aim the request at
+ * somewhere nobody asked for. IPv6 literals are written bracketed or bare, and both stay
+ * allowed — rejecting them would delete the entries of anyone who bound one.
+ */
+const isAddressable = (host: string): boolean => host !== '' && !/[/@?#\s\\]/.test(host);
+
 function isRecord(v: unknown): v is InstanceRecord {
   if (typeof v !== 'object' || v === null) return false;
   const r = v as InstanceRecord;
@@ -89,7 +100,12 @@ function isRecord(v: unknown): v is InstanceRecord {
     Number.isInteger(r.pid) &&
     r.pid > 0 &&
     typeof r.host === 'string' &&
+    isAddressable(r.host) &&
     Number.isInteger(r.port) &&
+    // The same range the contract states. A port outside it cannot be listening, so the
+    // entry is stale rather than merely odd, and it is deleted like any other stale one.
+    r.port > 0 &&
+    r.port <= 65_535 &&
     typeof r.file === 'string' &&
     typeof r.startedAt === 'string'
   );
@@ -145,7 +161,7 @@ function isStatus(v: unknown): v is StatusPayload {
  * interface answers there and nowhere else, and assuming loopback would report it dead.
  */
 function probeHost(host: string): string {
-  if (host === '' || host === '0.0.0.0') return '127.0.0.1';
+  if (host === '0.0.0.0') return '127.0.0.1';
   if (host === '::' || host === '[::]') return '[::1]';
   return host.includes(':') && !host.startsWith('[') ? `[${host}]` : host;
 }

@@ -171,6 +171,42 @@ describe('reading the registry', () => {
     expect(readdirSync(instancesDir())).toEqual([`${process.pid}.json`]);
   });
 
+  it('drops an entry whose address could not be reached anyway', () => {
+    // host and port go straight into the URL the liveness check asks. A port outside the
+    // range cannot be listening, and a host carrying a path or a userinfo separator moves
+    // what that URL points at, so both are stale entries rather than merely odd ones.
+    mkdirSync(instancesDir(), { recursive: true });
+    const bad = {
+      '10.json': { ...record({ pid: process.pid }), port: 0 },
+      '11.json': { ...record({ pid: process.pid }), port: 70_000 },
+      '12.json': { ...record({ pid: process.pid }), host: 'evil.example.com/x' },
+      '13.json': { ...record({ pid: process.pid }), host: 'evil.example.com@real' },
+      '14.json': { ...record({ pid: process.pid }), host: '' },
+    };
+    for (const [name, entry] of Object.entries(bad)) {
+      writeFileSync(join(instancesDir(), name), JSON.stringify(entry));
+    }
+
+    expect(readInstances()).toEqual([]);
+    expect(readdirSync(instancesDir())).toEqual([]);
+  });
+
+  it('keeps an entry for a host that only looks unusual', () => {
+    // Both spellings of an IPv6 literal. Rejecting them would delete the entry of anyone
+    // who bound one, which is the failure the check above exists to avoid causing.
+    mkdirSync(instancesDir(), { recursive: true });
+    writeFileSync(
+      join(instancesDir(), `${process.pid}.json`),
+      JSON.stringify(record({ host: '::1', port: 4300 })),
+    );
+    writeFileSync(
+      join(instancesDir(), `${process.ppid}.json`),
+      JSON.stringify(record({ pid: process.ppid, host: '[fe80::1]', port: 4301 })),
+    );
+
+    expect(readInstances().map((r) => r.host)).toEqual(['::1', '[fe80::1]']);
+  });
+
   it('is empty, not an error, before anything has registered', () => {
     expect(readInstances()).toEqual([]);
   });

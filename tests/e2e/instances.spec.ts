@@ -51,7 +51,30 @@ test('lists a peer and links to it through the address this page was opened on',
     await page.keyboard.press('Escape');
     await expect(page.locator(PANEL)).toBeHidden();
   } finally {
-    peer.stop();
+    await peer.stop();
+  }
+});
+
+test('does not open by itself when the list arrives after Escape', async ({ page, akapen }) => {
+  const peer = await startPeer(akapen.home, 'design.md', ['--host', '0.0.0.0']);
+  try {
+    await page.reload();
+    await expect(page.locator(TOGGLE)).toBeVisible();
+    // Held long enough for the two key presses to land while the request is in flight.
+    // A peer that has to be waited on for its answer does the same thing on a real host.
+    await page.route('**/api/instances', async (route) => {
+      await new Promise((r) => setTimeout(r, 600));
+      await route.continue();
+    });
+
+    await page.keyboard.press('o');
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(1_200);
+
+    // Escape dismissed it, so the answer landing afterwards has nobody asking for it
+    await expect(page.locator(PANEL)).toBeHidden();
+  } finally {
+    await peer.stop();
   }
 });
 
@@ -68,19 +91,24 @@ test('shows a peer bound to loopback, but does not link to it', async ({ page, a
     await expect(row.locator('a')).toHaveCount(0);
     await expect(row.locator('.peer-unreachable')).toHaveText('not reachable');
   } finally {
-    peer.stop();
+    await peer.stop();
   }
 });
 
 test('drops the row when the peer stops, and takes the button with it', async ({ page, akapen }) => {
   const peer = await startPeer(akapen.home, 'design.md', ['--host', '0.0.0.0']);
-  await page.reload();
-  await expect(page.locator(TOGGLE)).toBeVisible();
+  try {
+    await page.reload();
+    await expect(page.locator(TOGGLE)).toBeVisible();
 
-  peer.stop();
+    await peer.stop();
 
-  // Refreshed on the way open, so a review that ended is never a row left to click
-  await page.locator(TOGGLE).click();
-  await expect(page.locator(TOGGLE)).toBeHidden();
-  await expect(page.locator(PANEL)).toBeHidden();
+    // Refreshed on the way open, so a review that ended is never a row left to click
+    await page.locator(TOGGLE).click();
+    await expect(page.locator(TOGGLE)).toBeHidden();
+    await expect(page.locator(PANEL)).toBeHidden();
+  } finally {
+    // Stopping twice is fine, and an assertion above failing must not leave it running
+    await peer.stop();
+  }
 });
