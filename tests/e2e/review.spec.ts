@@ -345,7 +345,14 @@ test('opens a draft on the right line from anywhere in the widened strip', async
   expect(cursors.gutter).toBe('pointer');
   expect(cursors.add).toBe('pointer');
 
-  await page.mouse.click(body.x - 4, rowBox.y + rowBox.height - 6);
+  // Prove the point clicked is the strip and not the text: a click that drifted onto the
+  // body would be answered by the row, and this would read as the strip having worked.
+  const gutter = (await row.locator('.gutter').boundingBox())!;
+  const x = body.x - 4;
+  expect(gutter.x).toBeLessThanOrEqual(x);
+  expect(gutter.x + gutter.width).toBeGreaterThan(x);
+
+  await page.mouse.click(x, rowBox.y + rowBox.height - 6);
   await expect(page.locator(A.ta)).toBeFocused();
   await expect(page.locator(`${A.draft} .at`)).toHaveText(`L${line}`);
 });
