@@ -11,6 +11,9 @@
   --ak-bubble-gap: 8px;
   --ak-line-height: 1.65;
   --ak-block-gap: 2px;
+  /* The hand-off between the gutter and the text. The gutter pays it back in negative
+     margin to reach the text, so the two must move together or the dead gap comes back */
+  --ak-gutter-gap: 8px;
   --ak-para-gap: 6px;
   --ak-font: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", "Hiragino Sans", "Noto Sans JP", sans-serif;
   --ak-mono: "JetBrains Mono", "SFMono-Regular", Menlo, Consolas, monospace;
@@ -138,7 +141,7 @@ body.viewing-history .add { display: none; }
   position: relative;
   display: flex;
   align-items: flex-start;
-  gap: 8px;
+  gap: var(--ak-gutter-gap);
   padding: 0 0 var(--ak-block-gap) 0;
   scroll-margin-top: 60px;
 }
@@ -160,13 +163,21 @@ body.viewing-history .add { display: none; }
 
 .gutter {
   flex: 0 0 auto;
-  width: 34px;
+  /* The strip up to the text belongs to the gutter, so the pointer never crosses a dead
+     gap on its way from the line it just read to the + */
+  width: 42px;
+  padding-right: var(--ak-gutter-gap);
   margin-left: -42px;
+  margin-right: calc(var(--ak-gutter-gap) * -1);
+  /* A tall row (a heading, a wrapped paragraph) keeps the + reachable over its whole height */
+  align-self: stretch;
   display: flex;
   justify-content: flex-end;
-  align-items: center;
+  align-items: flex-start;
   gap: 4px;
   user-select: none;
+  /* The whole strip is live, not just the +: a click on it opens a draft on the line and a
+     drag down it picks a range, so the hand is what is actually on offer */
   cursor: pointer;
 }
 .lineno {
