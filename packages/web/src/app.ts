@@ -2,6 +2,7 @@ import * as v from 'valibot';
 import {
   CommentsPayloadSchema,
   DocPayloadSchema,
+  InstancesPayloadSchema,
   RoundsPayloadSchema,
   ServerEventSchema,
   type Block,
@@ -10,6 +11,7 @@ import {
   type CommentsPayload,
   type Doc,
   type DocPayload,
+  type InstancePeer,
   type RoundComment,
   type RoundState,
 } from '@akapen/shared';
@@ -41,6 +43,9 @@ const movedBarEl = must('movedBar');
 const movedTextEl = must('movedText');
 const loadCurrentBtn = must<HTMLButtonElement>('loadCurrent');
 const showLines = must<HTMLInputElement>('showLines');
+const peersToggleEl = must<HTMLButtonElement>('peersToggle');
+const peersEl = must('peers');
+const peersListEl = must('peersList');
 
 /**
  * A comment being written: its range and text, kept alive across re-renders.
@@ -979,6 +984,106 @@ function renderRoundControls() {
   }
 }
 
+/* ===== Other akapen on this host ===== */
+
+/**
+ * The other instances running beside this one.
+ *
+ * The list is built by our own server, which asks each of them in turn. The browser
+ * cannot: every instance is a different origin, so it would need CORS on an endpoint
+ * that has none, and one bound to 127.0.0.1 is not reachable from here at all while
+ * being perfectly reachable from the server sitting next to it.
+ */
+let peers: InstancePeer[] = [];
+
+const peersOpen = (): boolean => !peersEl.hidden;
+
+function setPeersOpen(open: boolean) {
+  peersEl.hidden = !open;
+  peersToggleEl.setAttribute('aria-expanded', String(open));
+}
+
+/**
+ * Built from the address this page was opened on, not from the one the peer bound.
+ * The browser is usually not on that host — akapen is started with `--host 0.0.0.0`
+ * and read over the LAN — so `localhost` and `127.0.0.1` point at the reader's own
+ * machine. A peer that took the default loopback bind gets no link at all; it is
+ * listed anyway, because where an unreachable review is running is worth knowing.
+ */
+function peerUrl(peer: InstancePeer): string {
+  return `${location.protocol}//${location.hostname}:${peer.port}/`;
+}
+
+function renderPeers() {
+  peersToggleEl.hidden = peers.length === 0;
+  peersToggleEl.textContent = `\u21c4 ${peers.length} ${peers.length === 1 ? 'other' : 'others'}`;
+  if (peers.length === 0) setPeersOpen(false);
+
+  peersListEl.textContent = '';
+  for (const peer of peers) {
+    const row = el('li', 'peer');
+    if (peer.reachable) {
+      const link = el('a', 'peer-file', escapeHtml(peer.file));
+      link.href = peerUrl(peer);
+      row.append(link);
+    } else {
+      row.append(el('span', 'peer-file', escapeHtml(peer.file)));
+    }
+    row.append(el('span', 'peer-round', `R${String(peer.round).padStart(3, '0')}`));
+    // Whether it is waiting on you is the reason to look at this list at all
+    const waiting = peer.unresolved > 0 ? ' waiting' : '';
+    row.append(el('span', `peer-unresolved${waiting}`, `${peer.unresolved} unresolved`));
+    if (!peer.reachable) {
+      const mark = el('span', 'peer-unreachable', 'not reachable');
+      mark.title = `bound to ${escapeHtml(peer.host)}, so only that host can open it`;
+      row.append(mark);
+    }
+    peersListEl.append(row);
+  }
+}
+
+async function loadPeers(): Promise<void> {
+  try {
+    const res = await fetch('/api/instances');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    peers = (await decode(res, InstancesPayloadSchema)).instances;
+  } catch {
+    // Nothing being read depends on this. A failed request costs the switcher and
+    // says so by the button disappearing, which is also what "none are running" looks
+    // like — the two are the same thing to someone trying to get to another review.
+    peers = [];
+  }
+  renderPeers();
+}
+
+async function togglePeers(): Promise<void> {
+  if (peersOpen()) {
+    setPeersOpen(false);
+    return;
+  }
+  // Refreshed on the way open. An instance that stopped an hour ago must not be a row
+  // that is still there to be clicked.
+  await loadPeers();
+  if (peers.length > 0) setPeersOpen(true);
+}
+
+peersToggleEl.addEventListener('click', (e) => {
+  // The document-wide handler below would otherwise close it in the same click
+  e.stopPropagation();
+  void togglePeers();
+});
+
+document.addEventListener('click', (e) => {
+  if (!peersOpen()) return;
+  const target = targetEl(e);
+  if (target && (peersEl.contains(target) || peersToggleEl.contains(target))) return;
+  setPeersOpen(false);
+});
+
+// Instances start and stop while this page is open, and coming back to the tab is when
+// that is most likely to have happened. One request, and only when the tab is looked at.
+window.addEventListener('focus', () => void loadPeers());
+
 /* ===== Keymap =====
  * The bindings live in web/keys.ts; this holds only the actions themselves.
  * They call the same functions the mouse path does (startDraft, setActive) so the
@@ -1003,6 +1108,11 @@ const ACTIONS: Record<string, () => boolean | void> = {
     return undefined;
   },
   'comment.cancel': () => {
+    // The switcher first: it is the thing most recently opened over everything else
+    if (peersOpen()) {
+      setPeersOpen(false);
+      return undefined;
+    }
     const btn = railEl.querySelector<HTMLButtonElement>('.bubble.draft button:not(.primary)');
     if (btn) btn.click();
     else if (document.body.classList.contains('rail-open')) railCloseEl.click();
@@ -1013,6 +1123,10 @@ const ACTIONS: Record<string, () => boolean | void> = {
   'lines.toggle': () => {
     showLines.checked = !showLines.checked;
     showLines.dispatchEvent(new Event('change'));
+  },
+  // The same path the button takes, so the two cannot diverge (W-2)
+  'instances.toggle': () => {
+    void togglePeers();
   },
 };
 
@@ -1044,6 +1158,9 @@ async function boot() {
     const res = await fetch('/api/doc');
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     applyPayload(await decode(res, DocPayloadSchema));
+    // Separate from the document: whether another review is running says nothing about
+    // this one, and waiting on that answer would hold up the first render.
+    void loadPeers();
   } catch (err) {
     // There is nothing on screen yet, so a silent return leaves a blank page with no
     // way to tell a slow load from a dead server.

@@ -267,3 +267,51 @@ export const RoundsPayloadSchema = v.object({
   rounds: v.array(RoundMetaSchema),
 });
 export type RoundsPayload = v.InferOutput<typeof RoundsPayloadSchema>;
+
+/* ===== Instances ===== */
+
+/**
+ * What an instance says about itself, and the request that proves it is alive.
+ *
+ * `file` is the basename, not the path it was started with. The list this feeds is
+ * shown over the LAN with nothing authenticating a reader (#10), and the layout of
+ * somebody's disk is not something to hand out for free. Keeping the path out of the
+ * payload means no caller can leak it by accident. Revisit when #10 lands.
+ */
+export const StatusPayloadSchema = v.object({
+  file: v.string(),
+  round: v.pipe(v.number(), v.integer(), v.minValue(1)),
+  /** Unresolved comments across every round: the same set `akapen comments` would emit. */
+  unresolved: v.pipe(v.number(), v.integer(), v.minValue(0)),
+});
+export type StatusPayload = v.InferOutput<typeof StatusPayloadSchema>;
+
+/**
+ * Another akapen on this host, as a row.
+ *
+ * Enough to recognise the document and see whether it is waiting on you, and no more.
+ */
+export const InstancePeerSchema = v.object({
+  pid: v.pipe(v.number(), v.integer(), v.minValue(1)),
+  /** The address it bound. Kept so a row can say why it cannot be linked to. */
+  host: v.string(),
+  port: v.pipe(v.number(), v.integer(), v.minValue(1)),
+  ...StatusPayloadSchema.entries,
+  /**
+   * Whether a link to it can work at all.
+   *
+   * The reader's browser is usually not on this host — akapen is started with
+   * `--host 0.0.0.0` and read over the LAN — so a peer that took the default
+   * `127.0.0.1` bind is unreachable from there however the link is built. Such a row
+   * is still worth showing: it is how you find out where the review you cannot reach
+   * actually is. It is shown without a link rather than with one that will time out.
+   */
+  reachable: v.boolean(),
+});
+export type InstancePeer = v.InferOutput<typeof InstancePeerSchema>;
+
+/** What /api/instances answers with. Never includes the instance that was asked. */
+export const InstancesPayloadSchema = v.object({
+  instances: v.array(InstancePeerSchema),
+});
+export type InstancesPayload = v.InferOutput<typeof InstancesPayloadSchema>;

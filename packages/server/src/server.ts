@@ -1,5 +1,5 @@
 import { readFileSync, watch, existsSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { basename, resolve } from 'node:path';
 import { Hono, type Context } from 'hono';
 import { vValidator } from '@hono/valibot-validator';
 import { ASSETS, mimeFor } from './assets.ts';
@@ -11,6 +11,7 @@ import {
   loadComments,
   makeComment,
   openRound,
+  pendingComments,
   roundContent,
   saveComments,
   storeDir,
@@ -18,6 +19,7 @@ import {
   type Comment,
   type Review,
 } from '@akapen/core/store';
+import { liveInstances, registerInstance, removeInstance } from '@akapen/core/instances';
 import {
   CreateCommentSchema,
   CreateReplySchema,
@@ -25,8 +27,10 @@ import {
   type ChangedEvent,
   type ChangedState,
   type DocPayload,
+  type InstancesPayload,
   type RoundEvent,
   type RoundState,
+  type StatusPayload,
 } from '@akapen/shared';
 
 export type ServeOptions = {
@@ -37,6 +41,11 @@ export type ServeOptions = {
   cssPath?: string;
   keymapPath?: string;
 };
+
+/** Addresses that only the host itself can reach. `::1` also arrives bracketed. */
+function isLoopback(host: string): boolean {
+  return host === '127.0.0.1' || host === 'localhost' || host === '::1' || host === '[::1]';
+}
 
 export function startServer(opts: ServeOptions) {
   const file = resolve(opts.file);
@@ -322,6 +331,50 @@ export function startServer(opts: ServeOptions) {
 
   app.get('/api/rounds', (c) => c.json({ current: review.currentRound, rounds: review.rounds }));
 
+  /**
+   * What this instance is showing. Small on purpose: it is answered on every liveness
+   * check another instance makes, and a row only needs enough to recognise a document
+   * and see whether it is waiting on someone.
+   *
+   * The basename, never the path. The switcher is read over the LAN with nothing
+   * authenticating a reader (#10), and directory layout is not something to hand out.
+   */
+  app.get('/api/status', (c) => {
+    const status: StatusPayload = {
+      file: basename(file),
+      round: review.currentRound,
+      // Across every round, matching `akapen comments`: closing a round hands the
+      // unresolved ones over, so they are still what the document is waiting on.
+      unresolved: pendingComments(file).length,
+    };
+    return c.json(status);
+  });
+
+  /**
+   * The other akapen running for this user, built here rather than in the browser.
+   *
+   * The browser cannot do it. Every instance is a different origin, so it would need
+   * CORS on an endpoint that has none, and one bound to `127.0.0.1` is not reachable
+   * from the reader's machine at all while being perfectly reachable from here.
+   */
+  app.get('/api/instances', async (c) => {
+    const live = await liveInstances({ excludePid: process.pid });
+    const payload: InstancesPayload = {
+      instances: live.map(({ record, status }) => ({
+        pid: record.pid,
+        host: record.host,
+        port: record.port,
+        file: status.file,
+        round: status.round,
+        unresolved: status.unresolved,
+        // A loopback bind answers here, next to it, and nowhere the reader's browser
+        // can reach. Saying so beats a link that times out.
+        reachable: !isLoopback(record.host),
+      })),
+    };
+    return c.json(payload);
+  });
+
   app.get('/events', () => {
     let send!: (data: string) => void;
     const stream = new ReadableStream({
@@ -394,6 +447,22 @@ export function startServer(opts: ServeOptions) {
     fetch: app.fetch,
   });
 
+  // Announced only once it is listening, and with the port the socket actually got —
+  // `-p 0` means the number in opts is 0, which nothing can be reached on.
+  //
+  // Bun leaves the port undefined for a server listening on a unix socket. This one
+  // never is, and an entry without a port is an entry nothing can be reached through,
+  // so there would be nothing to write.
+  if (server.port !== undefined) {
+    registerInstance({
+      pid: process.pid,
+      host: opts.host,
+      port: server.port,
+      file,
+      startedAt: new Date().toISOString(),
+    });
+  }
+
   /**
    * Shut everything this started, not just the socket.
    *
@@ -405,6 +474,9 @@ export function startServer(opts: ServeOptions) {
     if (timer) clearTimeout(timer);
     timer = null;
     watcher.close();
+    // Before the socket closes: an entry left pointing at a port nobody is listening on
+    // is what every reader then has to spend a timeout discovering.
+    removeInstance();
     await server.stop(true);
   };
 

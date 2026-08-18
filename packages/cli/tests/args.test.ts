@@ -22,6 +22,7 @@ describe('positional arguments', () => {
     const args = parseArgs(['note.md']);
     expect(args.help).toBe(false);
     expect(args.all).toBe(false);
+    expect(args.json).toBe(false);
   });
 });
 
@@ -74,6 +75,7 @@ describe('flags that take a value', () => {
 describe('flags that are on or off', () => {
   it('turns on when present', () => {
     expect(parseArgs(['comments', 'note.md', '--all']).all).toBe(true);
+    expect(parseArgs(['list', '--json']).json).toBe(true);
     expect(parseArgs(['--help']).help).toBe(true);
   });
 
