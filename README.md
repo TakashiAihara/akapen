@@ -123,6 +123,19 @@ PID     ADDRESS         ROUND  UNRESOLVED  FILE
 81235   127.0.0.1:4391  R001   0           /path/to/plan.md
 ```
 
+`0.0.0.0` names every interface and no machine, so it is not printed back. When the bound address is a wildcard, the startup block lists the machine's own non-loopback IPv4 addresses instead — the one carrying the default route first, the rest as `also`, because which one your browser can reach is knowledge akapen does not have.
+
+```text
+akapen  /home/me/notes/design.md
+  url     http://192.168.0.151:4300
+  also    http://172.17.0.1:4300
+  round   001
+  store   /home/me/.akapen/reviews/design-ab12cd34ef56
+  note    no authentication. mind who can reach this address.
+```
+
+A concrete `--host` is printed unchanged. Ordering by the default route reads `/proc/net/route`, so on a platform without it the addresses come out in whatever order the OS reports them.
+
 The handoff to an agent is a CLI command.
 
 ```bash

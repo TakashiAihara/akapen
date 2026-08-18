@@ -2,8 +2,9 @@
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { startServer } from '@akapen/server';
+import { urlsFor } from '@akapen/core/addresses';
 import { loadReview, pendingComments } from '@akapen/core/store';
-import { liveInstances, reachableHost } from '@akapen/core/instances';
+import { liveInstances } from '@akapen/core/instances';
 import { currentToken, resolveToken, rotateToken, secureHome, tokenIsPinned } from '@akapen/core/token';
 import { parseArgs, resolvePort, UsageError, type Args } from './args.ts';
 
@@ -228,22 +229,38 @@ for (const [signal, code] of [
   });
 }
 
-// The token is in the URL so that opening it is the whole of logging in. The redirect
-// takes it back out of the address bar, and the cookie left behind means every later
-// visit is the bare URL — so this line is also the one worth bookmarking.
-//
-// Encoded because a generated token is base64url but one handed in through `--token` or
-// `AKAPEN_TOKEN` is any string at all, and a `&` in it would print a URL that cannot be
-// used. The server reads the parameter decoded, so the two ends agree.
-// The bind address is not always somewhere a browser can go. `0.0.0.0` and `::` name
-// every interface rather than any one of them, and since the server refuses a `Host` it
-// does not serve, printing them now yields a 403 rather than just an odd-looking URL.
-// The same mapping the instance registry uses to reach a peer answers this too.
-const shown = reachableHost(host);
-const url = `http://${shown}:${server.port}${token === null ? '' : `/?token=${encodeURIComponent(token)}`}`;
+/**
+ * The addresses this server can be reached at, the likeliest one first.
+ *
+ * The bound address is not always somewhere a browser can go. `0.0.0.0` and `::` name
+ * every interface rather than any one of them, and since the server refuses a `Host` it
+ * does not serve, printing one back yields a 403 rather than merely an odd-looking URL.
+ *
+ * `server.port` is what the OS chose for `-p 0`; Bun only leaves it unset when serving
+ * on a unix socket, which nothing here does, so the requested port is the fallback.
+ */
+const [primary, ...alternates] = urlsFor(host, server.port ?? port);
+
+/**
+ * The token is in the URL so that opening it is the whole of logging in. The redirect
+ * takes it back out of the address bar, and the cookie left behind means every later
+ * visit is the bare URL — so this line is also the one worth bookmarking.
+ *
+ * Encoded because a generated token is base64url but one handed in through `--token` or
+ * `AKAPEN_TOKEN` is any string at all, and a `&` in it would print a URL that cannot be
+ * used. The server reads the parameter decoded, so the two ends agree.
+ *
+ * Every address gets it, not just the first: an `also` line is handed over for the same
+ * reason the first one is, and one without the token is a 401 for whoever receives it.
+ */
+const withToken = (base: string): string =>
+  token === null ? base : `${base}/?token=${encodeURIComponent(token)}`;
 
 console.log(`akapen  ${resolve(file)}`);
-console.log(`  url     ${url}`);
+console.log(`  url     ${withToken(primary)}`);
+// The same server, reached another way. Which one works is knowledge the reader has
+// and this process does not, so all of them are offered rather than one guessed at.
+for (const also of alternates) console.log(`  also    ${withToken(also)}`);
 console.log(`  round   ${String(round).padStart(3, '0')}`);
 console.log(`  store   ${storeDir}`);
 if (token === null) {
