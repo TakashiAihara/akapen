@@ -195,14 +195,59 @@ test('says the round moved when another screen cuts it, and keeps the draft', as
   await expect(page.locator(A.draft)).toContainText('round moved');
   await expect(page.locator(A.ta)).toHaveValue('written against the old round');
 
-  // Moving on is a click, and the same text then goes through.
+  // Moving on is a click. The text survives it; the range does not, because those line
+  // numbers were read from a document that is no longer on screen.
   await page.locator('#loadCurrent').click();
   await expect(page.locator('#round')).toHaveText('R002');
   await expect(page.locator('#movedBar')).toBeHidden();
   await expect(page.locator(A.ta)).toHaveValue('written against the old round');
+  await expect(page.locator(A.draft)).toContainText('pick the lines again');
+
+  await page.locator(`${A.draft} button.primary`).click();
+  await expect(page.locator(A.draft)).toHaveCount(1); // still refused, and still nothing sent
+  await expect(page.locator(A.rail)).toHaveCount(1); // the draft, not a stored comment
+
+  // Picking a range again carries the text over, and that goes through.
+  await openDraft(page, 2);
+  await expect(page.locator(A.ta)).toHaveValue('written against the old round');
   await page.locator(`${A.draft} button.primary`).click();
   await expect(page.locator(A.draft)).toHaveCount(0);
   await expect(page.locator(A.rail)).toHaveCount(1);
+});
+
+test('does not let a slow reply hide a round that moved while it was in flight', async ({ page, akapen }) => {
+  // The stream and the replies are separate channels with no order between them. A
+  // /api/doc answer that left before a newer round opened must not walk the number back
+  // and quietly hide the notice, leaving a screen that cannot comment and does not say so.
+  const other = await page.context().newPage();
+  await other.goto(akapen.url);
+  await expect(other.locator('.row').first()).toBeVisible();
+
+  akapen.append('\n## R002\n');
+  await other.locator('#nextRound').click();
+  await expect(other.locator('#round')).toHaveText('R002');
+  await expect(page.locator('#movedBar')).toBeVisible();
+
+  // Hold this screen's *answer* open while a third round is cut on the other one. The
+  // request has to go out now — delaying that would just fetch R003 and prove nothing.
+  await page.route('**/api/doc*', async (route) => {
+    const answer = await route.fetch();
+    const body = await answer.text();
+    await new Promise((r) => setTimeout(r, 2500));
+    await route.fulfill({ response: answer, body });
+  });
+  await page.locator('#loadCurrent').click();
+  await page.waitForTimeout(500); // long enough for that request to have been answered
+
+  akapen.append('\n## R003\n');
+  await other.locator('#nextRound').click();
+  await expect(other.locator('#round')).toHaveText('R003');
+
+  // The answer lands carrying R002, which is what this screen now shows — and the notice
+  // has to stay, because the server is on R003 and comments from here are still refused.
+  await expect(page.locator('#round')).toHaveText('R002');
+  await expect(page.locator('#movedBar')).toBeVisible();
+  await expect(page.locator('#movedBar')).toContainText('R003');
 });
 
 test('shows raw HTML from the markdown as text instead of running it', async ({ page }) => {

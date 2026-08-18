@@ -42,8 +42,14 @@ const movedTextEl = must('movedText');
 const loadCurrentBtn = must<HTMLButtonElement>('loadCurrent');
 const showLines = must<HTMLInputElement>('showLines');
 
-/** A comment being written: its range and text, kept alive across re-renders. */
-type Draft = { startLine: number; endLine: number; text: string };
+/**
+ * A comment being written: its range and text, kept alive across re-renders.
+ *
+ * `round` is the round those line numbers were read from. Once the screen has moved on,
+ * the same numbers point at different text, so the range has to be picked again — the
+ * text is what is worth keeping, not the anchor (#100).
+ */
+type Draft = { startLine: number; endLine: number; text: string; round: number | null };
 /** A selected range of lines. */
 type Range = { start: number; end: number };
 /** mermaid is loaded on demand from its own entry. We only initialise and run it. */
@@ -78,6 +84,17 @@ let mermaidLib: MermaidLib | null = null;
  * been reloaded, which is the window where every comment written here is refused (#100).
  */
 let serverRound: number | null = null;
+
+/**
+ * Round numbers only ever go up, so this only ever goes up.
+ *
+ * Two paths report it — a payload and the stream — and they are not ordered against each
+ * other. A reply that was in flight while a newer round opened would otherwise walk the
+ * number backwards, hide the notice, and leave the screen quietly unable to comment.
+ */
+function noteServerRound(n: number): void {
+  serverRound = Math.max(serverRound ?? 0, n);
+}
 
 /** dataset holds strings only. Reading and writing line numbers goes through here. */
 function setLine(node: HTMLElement, key: string, value: number): void {
@@ -192,12 +209,32 @@ function renderMoved() {
   movedBarEl.hidden = false;
 }
 
+/** True once the screen has moved to a round the draft's line numbers do not come from. */
+function draftIsStale(): boolean {
+  return draft?.round != null && state.round !== null && draft.round !== state.round.n;
+}
+
+const STALE_DRAFT = 'the round moved — pick the lines again (what is typed here is kept)';
+
+/**
+ * Say it on the bubble as soon as the document under it is replaced.
+ *
+ * Waiting for the person to press Comment would let them finish writing against lines
+ * that are not there any more. `startDraft` carries the text into the next selection,
+ * so picking a range again costs nothing.
+ */
+function noteStaleDraft() {
+  if (!draftIsStale()) return;
+  const box = anchoredEl.querySelector<HTMLElement>('.bubble.draft');
+  if (box) fail(box, STALE_DRAFT);
+}
+
 /** Ask which round the server is on. Used when a refusal arrives without the stream having said. */
 async function refreshServerRound() {
   try {
     const res = await fetch('/api/rounds');
     if (!res.ok) return;
-    serverRound = (await decode(res, RoundsPayloadSchema)).current;
+    noteServerRound((await decode(res, RoundsPayloadSchema)).current);
     renderMoved();
   } catch {
     // Nothing to do: the notice simply stays as it is, and the next payload corrects it.
@@ -552,6 +589,10 @@ function draftBubble(): HTMLElement {
     const body = ta.value.trim();
     if (!body) return close();
     if (submit.disabled) return; // hammering Ctrl+Enter must not post twice
+    // The range belongs to the round that was on screen when this was opened. Sending it
+    // against a newer one files the comment on whatever text now sits at those numbers —
+    // the same wrong-place landing this whole issue is about (#100).
+    if (draftIsStale()) return fail(box, STALE_DRAFT);
     submit.disabled = true;
     try {
       const res = await fetch('/api/comments', {
@@ -757,7 +798,7 @@ function startDraft(): void {
   if (state.history) return; // history is read-only: adding feedback to a past document breaks reproducibility
   const lo = Math.min(sel.start, sel.end);
   const hi = Math.max(sel.start, sel.end);
-  draft = { startLine: lo, endLine: hi, text: draft?.text ?? '' };
+  draft = { startLine: lo, endLine: hi, text: draft?.text ?? '', round: state.round?.n ?? null };
   // The document is untouched. Opening a draft happens inside the rail
   renderRail();
   layoutRail();
@@ -988,10 +1029,11 @@ function applyPayload(payload: DocPayload) {
   };
   // Every payload carries which round is current, history included. Reading it here is
   // what clears the notice once the screen has caught up.
-  serverRound = payload.round.n;
+  noteServerRound(payload.round.n);
   render();
   renderBanner(state.history ? null : payload.changed);
   renderMoved();
+  noteStaleDraft();
   window.scrollTo(0, y);
 }
 
@@ -1032,7 +1074,7 @@ sse.addEventListener('message', (e) => {
   if (parsed.output.type === 'round') {
     // Only the number. Swapping the document from here would rebuild a screen nobody
     // touched, which is the thing rounds are for avoiding.
-    serverRound = parsed.output.n;
+    noteServerRound(parsed.output.n);
     renderMoved();
     return;
   }
