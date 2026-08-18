@@ -156,8 +156,18 @@ export function startServer(opts: ServeOptions) {
      * A trailing newline still makes a last "line" that is not there, and a blank line
      * between two blocks still belongs to nothing. Neither is in `blocks`, so both are
      * refused without a rule of their own.
+     *
+     * Overlap, not coverage. A selection made in the gutter runs from one row to another
+     * and takes the blank lines between them with it, so demanding that every line in the
+     * range belong to a block would refuse ranges the screen offers. The end still has to
+     * be a line the document has, or a range starting on real text would drag in numbers
+     * past the end of the file and store them.
      */
-    if (endLine < startLine || !doc.blocks.some((b) => b.startLine <= endLine && b.endLine >= startLine)) {
+    if (
+      endLine < startLine ||
+      endLine > doc.lineCount ||
+      !doc.blocks.some((b) => b.startLine <= endLine && b.endLine >= startLine)
+    ) {
       return c.text('line range does not point at any text', 400);
     }
     const comment = makeComment(snapshot, startLine, endLine, body, opts.author);

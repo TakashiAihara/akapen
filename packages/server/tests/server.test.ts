@@ -269,6 +269,26 @@ describe('what a comment may point at', () => {
     expect((await comment(900, 900)).status).toBe(400);
   });
 
+  it('still refuses a range that starts on text and runs past the end', async () => {
+    // Overlapping one block is not enough on its own: the range would be stored with an
+    // end nothing in the document reaches, and the anchor would trail empty lines.
+    const { blocks, lineCount } = await doc();
+    const first = blocks[0]!;
+    expect((await comment(first.startLine, lineCount + 1)).status).toBe(400);
+    expect((await comment(first.startLine, 900)).status).toBe(400);
+  });
+
+  it('still accepts a range running from one block to another across the gap between them', async () => {
+    // The blank lines separating two blocks are inside any multi-row selection made in
+    // the gutter. Requiring every line in the range to belong to a block would refuse
+    // exactly what the screen offers, so overlap is the test, not coverage.
+    const { blocks } = await doc();
+    const gapped = blocks.find((b, i) => i > 0 && b.startLine > blocks[i - 1]!.endLine + 1);
+    expect(gapped).toBeDefined();
+    const before = blocks[blocks.indexOf(gapped!) - 1]!;
+    expect((await comment(before.startLine, gapped!.endLine)).ok).toBe(true);
+  });
+
   it('still refuses a range whose end is before its start', async () => {
     // Inverted *inside* one block, so the overlap test on its own still matches it.
     // Picking two separate blocks would pass with no ordering check at all.
