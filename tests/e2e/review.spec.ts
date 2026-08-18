@@ -171,6 +171,40 @@ test('freezes the document until a round is cut, and keeps the feedback after', 
   await expect(page.locator('#count')).toContainText('1 earlier');
 });
 
+test('says the round moved when another screen cuts it, and keeps the draft', async ({ page, akapen }) => {
+  // akapen is served on 0.0.0.0 and read from a phone and a laptop at once. The screen
+  // that did not click used to keep the old line numbers with nothing saying so, and
+  // every comment written on it came back refused (#100).
+  const other = await page.context().newPage();
+  await other.goto(akapen.url);
+  await expect(other.locator('.row').first()).toBeVisible();
+
+  akapen.append('\n## added while both screens were open\n');
+  await other.locator('#nextRound').click();
+  await expect(other.locator('#round')).toHaveText('R002');
+
+  // This screen is told, and nothing on it moves: the document, the reading position
+  // and anything half-typed are all still the person's to decide about.
+  await expect(page.locator('#movedBar')).toBeVisible();
+  await expect(page.locator('#round')).toHaveText('R001');
+  await expect(page.locator('#doc')).not.toContainText('added while both screens were open');
+
+  await openDraft(page);
+  await page.locator(A.ta).fill('written against the old round');
+  await page.locator(`${A.draft} button.primary`).click();
+  await expect(page.locator(A.draft)).toContainText('round moved');
+  await expect(page.locator(A.ta)).toHaveValue('written against the old round');
+
+  // Moving on is a click, and the same text then goes through.
+  await page.locator('#loadCurrent').click();
+  await expect(page.locator('#round')).toHaveText('R002');
+  await expect(page.locator('#movedBar')).toBeHidden();
+  await expect(page.locator(A.ta)).toHaveValue('written against the old round');
+  await page.locator(`${A.draft} button.primary`).click();
+  await expect(page.locator(A.draft)).toHaveCount(0);
+  await expect(page.locator(A.rail)).toHaveCount(1);
+});
+
 test('shows raw HTML from the markdown as text instead of running it', async ({ page }) => {
   // Look after both rendering and mermaid's async run have finished
   await page.waitForTimeout(500);

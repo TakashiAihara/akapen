@@ -1,8 +1,9 @@
 import * as v from 'valibot';
 import {
-  ChangedEventSchema,
   CommentsPayloadSchema,
   DocPayloadSchema,
+  RoundsPayloadSchema,
+  ServerEventSchema,
   type Block,
   type ChangedState,
   type Comment,
@@ -36,6 +37,9 @@ const roundEl = must('round');
 const bannerEl = must('banner');
 const bannerTextEl = must('bannerText');
 const nextRoundBtn = must<HTMLButtonElement>('nextRound');
+const movedBarEl = must('movedBar');
+const movedTextEl = must('movedText');
+const loadCurrentBtn = must<HTMLButtonElement>('loadCurrent');
 const showLines = must<HTMLInputElement>('showLines');
 
 /** A comment being written: its range and text, kept alive across re-renders. */
@@ -66,6 +70,14 @@ let focusLine: number | null = null; // the line the keyboard is on (its first l
 let draft: Draft | null = null;
 let active: string | null = null; // the selected bubble (a comment id, or 'draft')
 let mermaidLib: MermaidLib | null = null;
+/**
+ * The round the server is on, as last heard — from a payload or from the stream.
+ *
+ * Kept apart from `state.round`, which is the round this screen was built against.
+ * The two differ exactly while another screen has cut a round and this one has not
+ * been reloaded, which is the window where every comment written here is refused (#100).
+ */
+let serverRound: number | null = null;
 
 /** dataset holds strings only. Reading and writing line numbers goes through here. */
 function setLine(node: HTMLElement, key: string, value: number): void {
@@ -84,6 +96,17 @@ function targetEl(e: Event): HTMLElement | null {
 /** Errors arrive as unknown. Only the message is fit to show. */
 function messageOf(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * The server's own words, falling back to the status.
+ *
+ * A refusal now means more than one thing — the range points at nothing, the round
+ * moved, the file is mid-write — and "HTTP 409" tells the person none of them.
+ */
+async function failureOf(res: Response): Promise<Error> {
+  const text = await res.text().catch(() => '');
+  return new Error(text.trim() || `HTTP ${res.status}`);
 }
 
 /**
@@ -106,7 +129,9 @@ nextRoundBtn.addEventListener('click', async () => {
   nextRoundBtn.disabled = true;
   try {
     const res = await fetch('/api/rounds', { method: 'POST' });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    // A refused cut is not a failure to report and forget: the server says the file is
+    // being written or is empty right now, and clicking again once it settles works.
+    if (!res.ok) throw await failureOf(res);
     const payload = await decode(res, DocPayloadSchema);
     // A new round means a new document, so swapping it wholesale is fine — a person asked for it
     draft = null;
@@ -144,6 +169,42 @@ function renderBanner(changed: ChangedState | null | undefined) {
   bannerTextEl.textContent = n > 1 ? `⟳ the document changed ${n} times` : '⟳ the document changed';
   bannerEl.hidden = false;
 }
+
+/**
+ * Another screen cut a round while this one was reading.
+ *
+ * The document is not swapped here. Rounds exist so that what a comment attaches to
+ * moves when a person says so, and a screen rebuilt underneath somebody would take the
+ * reading position, the focus and anything half-typed with it. So it says what happened
+ * and leaves the click to them — but it does say it, because the alternative was every
+ * comment being refused with nothing on screen explaining why (#100).
+ */
+function renderMoved() {
+  const viewing = state.round?.n;
+  const behind = serverRound !== null && viewing !== undefined && serverRound !== viewing;
+  if (!behind || state.history) {
+    movedBarEl.hidden = true;
+    return;
+  }
+  movedTextEl.textContent =
+    `⟳ the round moved to R${String(serverRound).padStart(3, '0')} on another screen — ` +
+    `this one still shows R${String(viewing).padStart(3, '0')}, so a comment on it is refused`;
+  movedBarEl.hidden = false;
+}
+
+/** Ask which round the server is on. Used when a refusal arrives without the stream having said. */
+async function refreshServerRound() {
+  try {
+    const res = await fetch('/api/rounds');
+    if (!res.ok) return;
+    serverRound = (await decode(res, RoundsPayloadSchema)).current;
+    renderMoved();
+  } catch {
+    // Nothing to do: the notice simply stays as it is, and the next payload corrects it.
+  }
+}
+
+loadCurrentBtn.addEventListener('click', () => showCurrent());
 
 showLines.addEventListener('change', () => {
   document.body.classList.toggle('show-lines', showLines.checked);
@@ -496,9 +557,16 @@ function draftBubble(): HTMLElement {
       const res = await fetch('/api/comments', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ startLine, endLine, body }),
+        // Which round these line numbers belong to. Without it the server cannot tell a
+        // blank line from a document that moved, and both came back as the same refusal.
+        body: JSON.stringify({ startLine, endLine, body, round: state.round?.n }),
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) {
+        // 409 is the round having moved. The stream normally says so first; a dropped
+        // one would otherwise leave the refusal with nothing on screen explaining it.
+        if (res.status === 409) void refreshServerRound();
+        throw await failureOf(res);
+      }
       posted = await decode(res, CommentsPayloadSchema);
     } catch (err) {
       // Keep the draft. Discarding it leaves no way to get the typed text back
@@ -918,8 +986,12 @@ function applyPayload(payload: DocPayload) {
     carried: payload.carried ?? [],
     history: !!payload.history,
   };
+  // Every payload carries which round is current, history included. Reading it here is
+  // what clears the notice once the screen has caught up.
+  serverRound = payload.round.n;
   render();
   renderBanner(state.history ? null : payload.changed);
+  renderMoved();
   window.scrollTo(0, y);
 }
 
@@ -955,8 +1027,15 @@ sse.addEventListener('message', (e) => {
   } catch {
     return;
   }
-  const parsed = v.safeParse(ChangedEventSchema, data);
+  const parsed = v.safeParse(ServerEventSchema, data);
   if (!parsed.success) return;
+  if (parsed.output.type === 'round') {
+    // Only the number. Swapping the document from here would rebuild a screen nobody
+    // touched, which is the thing rounds are for avoiding.
+    serverRound = parsed.output.n;
+    renderMoved();
+    return;
+  }
   if (!state.history) renderBanner(parsed.output);
 });
 

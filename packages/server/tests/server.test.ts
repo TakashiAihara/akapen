@@ -16,7 +16,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { CommentsPayloadSchema, DocPayloadSchema } from '@akapen/shared';
+import { CommentsPayloadSchema, DocPayloadSchema, ServerEventSchema } from '@akapen/shared';
 import * as v from 'valibot';
 
 const SOURCE = ['---', 'title: t', '---', '', '# Heading', '', 'A paragraph.', ''].join('\n');
@@ -101,6 +101,52 @@ const post = (path: string, body?: unknown) =>
       ? {}
       : { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }),
   });
+
+/** Poll until a condition holds. Used for anything that arrives on the stream rather than as a reply. */
+async function until(cond: () => boolean, ms = 5_000): Promise<void> {
+  const deadline = Date.now() + ms;
+  while (!cond()) {
+    if (Date.now() > deadline) throw new Error('timed out waiting');
+    await new Promise((r) => setTimeout(r, 20));
+  }
+}
+
+/**
+ * Read /events as a second screen would.
+ *
+ * EventSource does not exist here, and the point of these tests is what a screen that
+ * did *not* make the request is told, so the frames are parsed rather than mocked.
+ */
+function listen(url: string) {
+  const seen: unknown[] = [];
+  const ctrl = new AbortController();
+  const done = (async () => {
+    try {
+      const res = await fetch(`${url}/events`, { signal: ctrl.signal });
+      const reader = res.body!.getReader();
+      const dec = new TextDecoder();
+      let buf = '';
+      for (;;) {
+        const chunk = await reader.read();
+        if (chunk.done) return;
+        buf += dec.decode(chunk.value, { stream: true });
+        let cut = buf.indexOf('\n\n');
+        while (cut !== -1) {
+          const line = buf
+            .slice(0, cut)
+            .split('\n')
+            .find((l) => l.startsWith('data: '));
+          buf = buf.slice(cut + 2);
+          if (line) seen.push(JSON.parse(line.slice(6)));
+          cut = buf.indexOf('\n\n');
+        }
+      }
+    } catch {
+      /* aborted, or the server went away with the test */
+    }
+  })();
+  return { seen, stop: async () => (ctrl.abort(), done) };
+}
 
 describe('the document', () => {
   it('answers with a payload that satisfies the contract', async () => {
@@ -318,6 +364,113 @@ describe('what a comment may point at', () => {
     const kept = carried.find((c) => c.id === created.comment.id);
     expect(kept).toBeDefined();
     expect(kept?.anchor).toBe('');
+  }, 30_000);
+});
+
+describe('a round moving under another screen', () => {
+  /**
+   * akapen is served on 0.0.0.0 and read from a phone and a laptop at once, so a round
+   * cut on one of them while the other is reading is ordinary, not exotic. The other
+   * screen keeps the previous round's line numbers, and every comment written on it
+   * used to come back as "line range does not point at any text" (#100).
+   */
+  it('refuses a comment carrying a round that is no longer current', async () => {
+    expect((await post('/api/comments', { startLine: 5, endLine: 5, body: 'x', round: 1 })).ok).toBe(true);
+    expect((await post('/api/rounds')).ok).toBe(true);
+
+    const res = await post('/api/comments', { startLine: 5, endLine: 5, body: 'x', round: 1 });
+    expect(res.status).toBe(409);
+    // Not the blank-line message: a person has to be able to tell "reload" from "that
+    // line has nothing on it", and 400 vs 409 is how the browser tells them apart too.
+    expect(await res.text()).toMatch(/round moved/);
+  });
+
+  it('still accepts a comment from a screen that is on the current round', async () => {
+    // Refusing every request that names a round would pass the test above.
+    expect((await post('/api/rounds')).ok).toBe(true);
+    expect((await post('/api/comments', { startLine: 5, endLine: 5, body: 'x', round: 2 })).ok).toBe(true);
+  });
+
+  it('still accepts a comment from a client that names no round', async () => {
+    // A tab loaded before this field existed, and `akapen` scripted from a shell.
+    expect((await post('/api/comments', { startLine: 5, endLine: 5, body: 'x' })).ok).toBe(true);
+  });
+
+  it('tells the streams that are open, not just the one that asked', async () => {
+    const other = listen(base);
+    try {
+      await until(() => other.seen.length > 0); // the greeting, so the stream is attached
+      expect((await post('/api/rounds')).ok).toBe(true);
+      await until(() =>
+        other.seen.some(
+          (e) => v.safeParse(ServerEventSchema, e).success && (e as { type: string }).type === 'round',
+        ),
+      );
+      const moved = other.seen.filter((e) => (e as { type: string }).type === 'round');
+      expect(v.parse(ServerEventSchema, moved.at(-1))).toEqual({ type: 'round', n: 2 });
+    } finally {
+      await other.stop();
+    }
+  }, 30_000);
+});
+
+/** Every frozen document the rounds under a store hold. A round is only useful if it has one. */
+function frozen(home: string): string[] {
+  return execSync(`find ${home} -name content.md`, { encoding: 'utf8' })
+    .split('\n')
+    .filter(Boolean)
+    .map((f) => readFileSync(f, 'utf8'));
+}
+
+describe('cutting a round while the file is being written', () => {
+  it('does not freeze a round on a file that is halfway through being replaced', async () => {
+    // An editing agent truncates and writes back. This is the gap in between.
+    writeFileSync(work, '');
+    const res = await post('/api/rounds');
+    expect(res.status).toBe(409);
+    expect(await res.text()).toMatch(/empty/);
+
+    // What makes this one unrecoverable is that putting the file back does not undo it:
+    // the round already holds the empty copy, and its snapshot is frozen.
+    writeFileSync(work, SOURCE);
+    const payload = v.parse(DocPayloadSchema, await (await fetch(`${base}/api/doc`)).json());
+    expect(payload.round.n).toBe(1);
+    expect(payload.doc.blocks.length).toBeGreaterThan(0);
+    expect(frozen(join(sandbox, 'home')).filter((c) => c === '')).toEqual([]);
+
+    // And the round can be cut normally once the write is over.
+    expect((await post('/api/rounds')).ok).toBe(true);
+  }, 30_000);
+
+  it('opens a round on a document that was empty to begin with', async () => {
+    // The other direction. A guard that refuses whenever the file is empty would pass
+    // the test above and leave a blank note — a legitimate thing to review — unusable.
+    const file = join(sandbox, 'empty.md');
+    writeFileSync(file, '');
+    const other = await start(file, join(sandbox, 'empty-home'));
+    try {
+      const res = await fetch(`${other.url}/api/rounds`, { method: 'POST' });
+      expect(res.ok).toBe(true);
+      expect(v.parse(DocPayloadSchema, await res.json()).round.n).toBe(2);
+    } finally {
+      other.stop();
+    }
+  }, 30_000);
+
+  it('refuses while the file is still moving, rather than freezing what it caught', async () => {
+    // Non-empty the whole time, so the empty guard cannot be what refuses this. Only
+    // reading twice and comparing can tell that the file has not settled.
+    let i = 0;
+    const writer = setInterval(() => writeFileSync(work, `# still writing ${i++}\n`), 10);
+    try {
+      const res = await post('/api/rounds');
+      expect(res.status).toBe(409);
+      expect(await res.text()).toMatch(/still being written/);
+    } finally {
+      clearInterval(writer);
+    }
+    writeFileSync(work, SOURCE);
+    expect((await post('/api/rounds')).ok).toBe(true);
   }, 30_000);
 });
 
