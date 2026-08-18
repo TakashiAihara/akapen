@@ -173,7 +173,8 @@ body.viewing-history .add { display: none; }
   align-items: flex-start;
   gap: 4px;
   user-select: none;
-  cursor: pointer;
+  /* No pointer here on purpose: the strip is reach, not a button. Nothing happens when
+     it is clicked, and a hand over 42px of empty page promises otherwise */
 }
 .lineno {
   display: none;

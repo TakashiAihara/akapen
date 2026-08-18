@@ -337,6 +337,15 @@ test('leaves + hidden outside the row, so the wider gutter is not a hover trap',
     expect(await addOpacityAt(page, row, rowBox.x + rowBox.width + 40, y), 'right of the row').toBe('0');
   }
 
+  // The strip is reach, not a button: clicking it does nothing, so it must not offer the
+  // hand that the + does. 42px of empty page under a pointer cursor reads as clickable.
+  const cursors = await row.evaluate((el) => ({
+    gutter: getComputedStyle(el.querySelector('.gutter')!).cursor,
+    add: getComputedStyle(el.querySelector('.add')!).cursor,
+  }));
+  expect(cursors.gutter).not.toBe('pointer');
+  expect(cursors.add).toBe('pointer');
+
   // Another row's gutter is another row's business: hovering it must leave this + alone
   const other = page
     .locator('.row')
