@@ -3,7 +3,8 @@ import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { startServer } from '@akapen/server';
 import { loadReview, pendingComments } from '@akapen/core/store';
-import { liveInstances } from '@akapen/core/instances';
+import { liveInstances, reachableHost } from '@akapen/core/instances';
+import { currentToken, resolveToken, rotateToken, secureHome, tokenIsPinned } from '@akapen/core/token';
 import { parseArgs, resolvePort, UsageError, type Args } from './args.ts';
 
 const USAGE = `akapen — markdown inline review (PoC)
@@ -11,6 +12,7 @@ const USAGE = `akapen — markdown inline review (PoC)
   akapen <file.md> [options]     start the review server
   akapen comments <file.md>      print unresolved comments as JSON (for agents)
   akapen list                    print the akapen running on this host
+  akapen token                   print this host's token (--rotate to replace it)
 
 options:
   --host <addr>    listen address (default 127.0.0.1)
@@ -18,8 +20,11 @@ options:
   --css <file>     extra stylesheet to load
   --keymap <file>  JSON overriding the keymap ({ "action": ["key"] })
   --author <name>  comment author (default $USER)
+  --token <s>      use this token instead of the stored one
+  --no-auth        serve with no token at all (only behind something that authenticates)
   --all            comments: include resolved ones
   --json           list: print as JSON (for agents)
+  --rotate         token: replace the stored token
 `;
 
 /** Anything typed wrong ends here: the reason, then how to type it. */
@@ -53,8 +58,27 @@ if (positional.length === 0 || args.help) {
  * Unlike the switcher, this prints the path in full. It is read on the host itself by
  * the person who started them, not handed to whoever can reach the LAN.
  */
+/**
+ * The token, for a script that has to present one.
+ *
+ * `akapen comments` reads the store off disk and needs nothing, but the reply and
+ * resolve endpoints are HTTP, and so is anything watching `/api/status`. Printing it
+ * from the command keeps the path out of scripts, which is the part that moves.
+ *
+ * `--rotate` is the only revocation there is. One secret is shared by every browser and
+ * every script on this host, so replacing it locks all of them out at once — that is
+ * what a shared secret costs, and there is nothing finer-grained to reach for.
+ */
+if (positional[0] === 'token') {
+  console.log(args.rotate ? rotateToken() : resolveToken());
+  process.exit(0);
+}
+
 if (positional[0] === 'list') {
-  const live = await liveInstances();
+  // `currentToken`, not `resolveToken`: listing is a read, and a read that generates and
+  // stores a secret as a side effect is a surprise. An instance running on a token this
+  // caller does not have simply does not answer, and reads as not running.
+  const live = await liveInstances({ token: currentToken() });
   if (args.json) {
     console.log(
       JSON.stringify(
@@ -160,10 +184,26 @@ try {
   fail(err.message);
 }
 
+/**
+ * Authentication is on at every bind address, loopback included.
+ *
+ * Deciding it from the bind address would make the rule depend on the one flag people
+ * forget they typed, and `127.0.0.1` is not the private thing it looks like anyway — a
+ * page in the reader's own browser can reach it. `--no-auth` is the way out, for when
+ * something in front is already doing this job.
+ */
+// Before anything is written into it, and whether or not a token is generated: the
+// reviews and the registry live in the same directory and are nobody else's business.
+secureHome();
+
+const token = args['no-auth'] ? null : resolveToken(args.token);
+
 const { server, stop, storeDir, round } = startServer({
   file,
   host,
   port,
+  token,
+  tokenPinned: tokenIsPinned(args.token),
   author: args.author ?? process.env['USER'] ?? 'user',
   // exactOptionalPropertyTypes: `?:` means "may be absent", not "may be undefined".
   // With no value given, drop the key entirely.
@@ -188,8 +228,24 @@ for (const [signal, code] of [
   });
 }
 
+// The token is in the URL so that opening it is the whole of logging in. The redirect
+// takes it back out of the address bar, and the cookie left behind means every later
+// visit is the bare URL — so this line is also the one worth bookmarking.
+//
+// Encoded because a generated token is base64url but one handed in through `--token` or
+// `AKAPEN_TOKEN` is any string at all, and a `&` in it would print a URL that cannot be
+// used. The server reads the parameter decoded, so the two ends agree.
+// The bind address is not always somewhere a browser can go. `0.0.0.0` and `::` name
+// every interface rather than any one of them, and since the server refuses a `Host` it
+// does not serve, printing them now yields a 403 rather than just an odd-looking URL.
+// The same mapping the instance registry uses to reach a peer answers this too.
+const shown = reachableHost(host);
+const url = `http://${shown}:${server.port}${token === null ? '' : `/?token=${encodeURIComponent(token)}`}`;
+
 console.log(`akapen  ${resolve(file)}`);
-console.log(`  url     http://${host}:${server.port}`);
+console.log(`  url     ${url}`);
 console.log(`  round   ${String(round).padStart(3, '0')}`);
 console.log(`  store   ${storeDir}`);
-if (host !== '127.0.0.1') console.log(`  note    no authentication. mind who can reach this address.`);
+if (token === null) {
+  console.log(`  note    --no-auth: anyone who can reach this address can read and write.`);
+}

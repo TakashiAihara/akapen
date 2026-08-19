@@ -4,7 +4,7 @@ A tool for leaving inline feedback on rendered markdown, and handing that feedba
 
 Comments are never written into the markdown file. They live in a sidecar under `~/.akapen/reviews/`. When the markdown itself is the deliverable, as it is in a vault, this removes by design the path by which review notes end up in a commit.
 
-Still a proof of concept. It works, but authentication, multiple files and automatic agent integration are not in it.
+Still a proof of concept. It works, but multiple files and automatic agent integration are not in it.
 
 ## Why it exists
 
@@ -67,8 +67,48 @@ The examples below use `bun run packages/cli/src/cli.ts`; read that as `akapen` 
 | `--css <file>` | extra stylesheet, loaded after the defaults so it can override everything |
 | `--keymap <file>` | JSON overriding the keymap, merged over the defaults |
 | `--author <name>` | comment author (default `$USER`) |
+| `--token <s>` | use this token instead of the stored one (`AKAPEN_TOKEN` does the same without appearing in `ps`) |
+| `--no-auth` | serve with no token at all, for running behind something that authenticates |
 
-Use `--host 0.0.0.0` to run it on a remote machine and read it from a local browser. There is no authentication, so mind who can reach the address.
+Use `--host 0.0.0.0` to run it on a remote machine and read it from a local browser. The printed URL says `127.0.0.1`, because a wildcard bind is not an address anything connects to; replace it with the machine's LAN address to reach it from elsewhere. An address, not a name: akapen serves literal addresses and `localhost` only, because a name is the one thing another machine on the network can claim and rebind.
+
+### Authentication
+
+Every request needs a token, at every bind address. The URL akapen prints carries it:
+
+```text
+akapen  /home/you/notes/design.md
+  url     http://0.0.0.0:4300/?token=Cu1fE0h07o__JPQQYfF_5zDjTxU6A2X8NriPndNrSHc
+```
+
+Opening that once is the whole of logging in. akapen answers with a cookie and a redirect that takes the token back out of the address bar, so every later visit is the bare `http://host:4300` — and the URL above, kept as a bookmark, still works when the cookie is gone or you are on another browser. Opening the bookmark again redirects again: the token comes out of the address bar every time, not only on the first visit.
+
+The token is one per host, kept in `~/.akapen/token` (mode `0600`), and it does not expire. `--token` and `AKAPEN_TOKEN` override it for one run, in that order, and neither is written to the store. One per host rather than one per instance is deliberate: cookies are not isolated by port ([RFC 6265 §8.5](https://www.rfc-editor.org/rfc/rfc6265#section-8.5)), so opening any one of the akapen running on a machine authenticates the browser for all of them, including ones started later.
+
+For curl and agents there is a header, and no cookie is set for it:
+
+```bash
+curl -H "Authorization: Bearer $(akapen token)" http://127.0.0.1:4300/api/comments
+```
+
+| Command | Meaning |
+|---|---|
+| `akapen token` | print this host's token |
+| `akapen token --rotate` | replace it — every browser and every script holding the old one is locked out |
+
+It is a shared secret, not a key: nothing is signed or encrypted, holding it is the whole of the authorisation, and it travels on every request. There is no TLS, so it crosses the wire in the clear — on a network where that matters, put akapen behind something that terminates TLS. Keep the token on while you do: TLS encrypts the traffic, it does not decide who may connect, and `--no-auth` behind a proxy that only terminates TLS hands the review to everyone who can reach the proxy. Rotation is the only revocation there is; a single secret cannot lock out one client and keep another. Rotating takes effect on servers that are already running — except one started with `--token` or `AKAPEN_TOKEN`, which keeps the token it was handed for as long as it runs.
+
+`--no-auth` turns the credential off completely, so it is only for a front that authenticates on akapen's behalf — Tailscale Serve, or a proxy asking for a login. It also needs nothing else to be able to reach the port. Bind it to loopback and point the proxy there:
+
+```bash
+akapen note.md --host 127.0.0.1 -p 4300 --no-auth
+```
+
+A proxy does not protect a port that is still listening on the LAN beside it, and the `Host` check is not a credential — a client connecting directly can send whichever name it likes.
+
+Writes have to come from akapen's own page. `SameSite` is about the site and a site does not include the port, so anything served from another port on this host — a dev server, another person's process — is same-site, and the browser attaches akapen's cookie to requests it makes here. Unsafe methods therefore require `Sec-Fetch-Site: same-origin`, or no such header at all, which is what curl and agents send.
+
+Separately from the token, akapen refuses any request whose `Host` header is not a name it actually serves. That is not the same job. A page you visit can point its own hostname at `127.0.0.1` after loading — DNS rebinding — and the browser will then treat akapen as that page's origin and attach the cookie itself, so the token proves nothing. The `Host` header is the part of the request a script cannot choose, which is why it is the one checked. It is why loopback alone was never a defence, and it stays on under `--no-auth`.
 
 Several akapen on one host can find each other, so `-p 0` — let the OS pick a port — is a reasonable way to start one.
 
@@ -148,7 +188,7 @@ There is one invariant: every non-blank source line belongs to exactly one block
 
 It is escaped and shown as text (`markdown-it` runs with `html: false`).
 
-What akapen renders is markdown under review, and it does not always come from you. With `html: true` the document goes straight into `innerHTML`, so opening a file runs arbitrary JS on akapen's origin — which serves an unauthenticated `/api/comments` and an `/api/doc` that returns the absolute path.
+What akapen renders is markdown under review, and it does not always come from you. With `html: true` the document goes straight into `innerHTML`, so opening a file runs arbitrary JS on akapen's origin — where the browser is already authenticated, and where `/api/doc` returns the absolute path.
 
 Leaving a hole for non-markdown to slip into a markdown reader buys less than closing it.
 
@@ -264,7 +304,9 @@ The list is built by the server, at `GET /api/instances`. The browser cannot bui
 
 A link is built from the address the page was opened on, `location.hostname`, not from what the peer bound. The browser is usually not on this host — akapen is started with `--host 0.0.0.0` and read over the LAN — so `localhost` and `127.0.0.1` point at the reader's own machine. Which leaves the default bind as a case to handle rather than ignore: a peer on `127.0.0.1` cannot be opened from that browser however the link is built, so its row is listed and marked unreachable instead of carrying a link that will time out. Where a review you cannot reach is running is still worth knowing.
 
-A row shows the basename, the round and the unresolved count. **Not the path**: with no authentication yet, this list is on the LAN, and directory layout is not something to hand out for free. `akapen list` does print it in full — that is read on the host, by whoever started them.
+A row shows the basename, the round and the unresolved count. **Not the path**: directory layout is not something to hand out, and the token says a reader may see the review rather than everything about the machine holding it. `akapen list` does print it in full — that is read on the host, by whoever started them.
+
+Instances find each other by asking, and the request carries the same token, so a peer started with a different one reads as not running.
 
 Only instances sharing an `AKAPEN_HOME` see each other, and only on one host. Reaching across hosts is a different thing and is not built.
 
@@ -282,6 +324,7 @@ The markdown file is never touched.
     002/comments.json
 ~/.akapen/instances/
   <pid>.json           # one running akapen: pid, address, file, start time
+~/.akapen/token        # the shared secret, mode 0600
 ```
 
 `AKAPEN_HOME` replaces `~/.akapen` (the tests use it to avoid touching the real store).
@@ -314,7 +357,6 @@ Across all 152 notes in a vault, no line was dropped or duplicated (24164 blocks
 
 ## Not done yet
 
-- Authentication. `--host 0.0.0.0` puts it on the LAN with none.
 - Reviewing several files. One file per process today; the others on the host are listed and linked to, not held by one process.
 - Automating the agent handoff. `comments` has to be called; there is no equivalent of crit's `agent_cmd`.
 - Replies and threads. One comment is one thread.

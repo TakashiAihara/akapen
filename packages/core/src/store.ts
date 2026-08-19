@@ -51,13 +51,15 @@ function reviewFile(filePath: string): string {
   return join(storeDir(filePath), 'review.json');
 }
 
-export function writeAtomic(target: string, data: string): void {
+export function writeAtomic(target: string, data: string, opts: { mode?: number } = {}): void {
   // Give the temp file a unique name. With a fixed name two processes truncate the
   // same file, so what rename commits is garbage even though rename itself is atomic
   // (opening the same markdown twice shares one store).
   const tmp = `${target}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`;
   try {
-    writeFileSync(tmp, data);
+    // The mode belongs to the create, not to a chmod afterwards: a secret written
+    // world-readable and tightened a moment later has already been readable.
+    writeFileSync(tmp, data, opts.mode === undefined ? undefined : { mode: opts.mode });
     renameSync(tmp, target);
   } catch (e) {
     try {

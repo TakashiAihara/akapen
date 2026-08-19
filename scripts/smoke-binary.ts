@@ -72,18 +72,26 @@ ok(
 );
 
 const port = 4771;
+/**
+ * The binary is authenticated like any other akapen, so the smoke run has to present a
+ * credential or every request below is a 401 and "the server comes up" never becomes
+ * true. Handed in rather than read back out of the store, so this script never depends
+ * on where the token was written.
+ */
+const TOKEN = 'smoke-token';
 const server = Bun.spawn([bin, note, '-p', String(port)], {
   cwd: sandbox,
-  env: { ...process.env, AKAPEN_HOME: join(sandbox, 'home') },
+  env: { ...process.env, AKAPEN_HOME: join(sandbox, 'home'), AKAPEN_TOKEN: TOKEN },
   stdout: 'pipe',
   stderr: 'pipe',
 });
 
 const base = `http://127.0.0.1:${port}`;
+const AUTH = { authorization: `Bearer ${TOKEN}` };
 let up = false;
 for (let i = 0; i < 60; i++) {
   try {
-    if ((await fetch(`${base}/api/doc`)).ok) {
+    if ((await fetch(`${base}/api/doc`, { headers: AUTH })).ok) {
       up = true;
       break;
     }
@@ -96,7 +104,7 @@ ok('the server comes up', up);
 
 if (up) {
   for (const name of Object.keys(ASSETS)) {
-    const res = await fetch(`${base}/${name === 'index.html' ? '' : name}`);
+    const res = await fetch(`${base}/${name === 'index.html' ? '' : name}`, { headers: AUTH });
     const body = await res.arrayBuffer();
     ok(
       `embedded asset is served: ${name}`,
@@ -104,12 +112,17 @@ if (up) {
       `${res.status} ${body.byteLength}B`,
     );
   }
-  const missing = await fetch(`${base}/nope.txt`);
+  const missing = await fetch(`${base}/nope.txt`, { headers: AUTH });
   ok('an unknown path is 404', missing.status === 404);
+
+  // The credential is part of what ships, so the binary is checked for it too: a build
+  // that served without one would pass every assertion above.
+  const bare = await fetch(`${base}/api/doc`);
+  ok('the binary refuses a request with no token', bare.status === 401, `got ${bare.status}`);
 
   const posted = await fetch(`${base}/api/comments`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { ...AUTH, 'content-type': 'application/json' },
     body: JSON.stringify({ startLine: 2, endLine: 2, body: 'smoke' }),
   });
   ok('a comment can be saved', posted.ok);

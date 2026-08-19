@@ -11,7 +11,7 @@
  * server embeds its assets through import attributes, which is a Bun feature vitest's
  * transform does not implement; and this is the same path the shipped binary takes.
  */
-import { execSync, spawn, spawnSync, type ChildProcess } from 'node:child_process';
+import { execFileSync, execSync, spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import {
   existsSync,
   mkdirSync,
@@ -19,8 +19,10 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from 'node:fs';
+import { connect } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -34,6 +36,29 @@ import {
 import * as v from 'valibot';
 
 const SOURCE = ['---', 'title: t', '---', '', '# Heading', '', 'A paragraph.', ''].join('\n');
+
+/**
+ * The token every server in this file is started with.
+ *
+ * Fixed rather than read back from the store, so a request can be made deliberately
+ * wrong (`WRONG_TOKEN`) without first having to learn what right looks like.
+ */
+const TOKEN = 'test-token-for-the-server-suite';
+const WRONG_TOKEN = 'not-the-token';
+
+/**
+ * `fetch`, with the credential attached.
+ *
+ * Authentication is on at every bind address, so every request in this file needs one,
+ * and threading a header through twenty-nine call sites would bury what each test is
+ * actually about. Shadowing the global here is the whole change; `globalThis.fetch` is
+ * still reachable, and the authentication tests below use it to send nothing at all.
+ */
+const fetch = (input: string | URL, init?: RequestInit): Promise<Response> =>
+  globalThis.fetch(input, {
+    ...init,
+    headers: { ...(init?.headers as Record<string, string> | undefined), authorization: `Bearer ${TOKEN}` },
+  });
 
 /** Resolved from this file, not from the working directory, so the runner's cwd is free to move. */
 const CLI = join(import.meta.dirname, '..', '..', 'cli', 'src', 'cli.ts');
@@ -52,9 +77,17 @@ type Server = {
  * Start akapen on a port the OS picks and read the port back off its own output.
  * Choosing a number here would collide with a server someone left running.
  */
-async function start(file: string, home: string, extra: string[] = []): Promise<Server> {
+async function start(
+  file: string,
+  home: string,
+  extra: string[] = [],
+  opts: { token?: string | null } = {},
+): Promise<Server> {
+  // `null` leaves AKAPEN_TOKEN out, so the server generates and stores one — the path
+  // the everyday case takes, and the only way to test what it writes.
+  const token = opts.token === undefined ? TOKEN : opts.token;
   const proc: ChildProcess = spawn('bun', ['run', CLI, file, '-p', '0', ...extra], {
-    env: { ...process.env, AKAPEN_HOME: home },
+    env: { ...process.env, AKAPEN_HOME: home, ...(token === null ? {} : { AKAPEN_TOKEN: token }) },
     // stderr is piped, not dropped: when startup fails, the reason is only on stderr,
     // and a discarded one turns every failure into a bare timeout.
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -789,7 +822,7 @@ describe('the other instances on this host', () => {
 describe('listing the instances from the terminal', () => {
   const run = (extra: string[] = []) =>
     spawnSync('bun', ['run', CLI, 'list', ...extra], {
-      env: { ...process.env, AKAPEN_HOME: join(sandbox, 'home') },
+      env: { ...process.env, AKAPEN_HOME: join(sandbox, 'home'), AKAPEN_TOKEN: TOKEN },
       encoding: 'utf8',
     });
 
@@ -830,5 +863,388 @@ describe('listing the instances from the terminal', () => {
         }).stdout,
       ),
     ).toEqual([]);
+  });
+});
+
+/**
+ * The credential, at the boundary where a stranger on the LAN becomes a reader.
+ *
+ * Every request here goes through `globalThis.fetch`, not the shadowed `fetch` above,
+ * because what is being tested is what happens when nothing is presented — or the wrong
+ * thing is.
+ */
+/**
+ * A GET with a `Host` header of our choosing, written straight onto the socket.
+ *
+ * `fetch` cannot do it. Host is a forbidden header name, so the runtime drops what is
+ * asked for and sends the real authority instead — which means a Host test written with
+ * `fetch` passes whatever the server does, and proves nothing. The rebinding case only
+ * exists for requests that lie about the header, so the request is spelled out here.
+ */
+function rawGet(port: number, path: string, host: string, extra: string[] = []): Promise<number> {
+  return new Promise((done, fail) => {
+    const socket = connect(port, '127.0.0.1', () => {
+      socket.write(
+        [`GET ${path} HTTP/1.1`, `Host: ${host}`, ...extra, 'Connection: close', '', ''].join('\r\n'),
+      );
+    });
+    let buf = '';
+    // Destroyed on the way out of both failure paths. Rejecting alone leaves the socket
+    // open, and an open socket holds the event loop: the run would report the failure and
+    // then hang instead of ending.
+    socket.setTimeout(5_000, () => {
+      socket.destroy();
+      fail(new Error('no answer'));
+    });
+    socket.on('data', (chunk: Buffer) => {
+      buf += chunk.toString();
+    });
+    socket.on('end', () => {
+      const status = /^HTTP\/1\.[01] (\d{3})/.exec(buf);
+      if (status) done(Number(status[1]));
+      else fail(new Error(`no status line in: ${buf.slice(0, 120)}`));
+    });
+    socket.on('error', (err) => {
+      socket.destroy();
+      fail(err);
+    });
+  });
+}
+
+describe('authentication', () => {
+  const bare = (path: string, init?: RequestInit) => globalThis.fetch(`${base}${path}`, init);
+
+  it('refuses a request with no credential', async () => {
+    const res = await bare('/api/doc');
+    expect(res.status).toBe(401);
+    // The body has to say how to get back in, or the only way out is to find the
+    // terminal the server was started from.
+    expect(await res.text()).toContain('akapen token');
+  });
+
+  it('refuses the wrong token, whichever way it is presented', async () => {
+    expect((await bare(`/api/doc?token=${WRONG_TOKEN}`)).status).toBe(401);
+    expect((await bare('/api/doc', { headers: { authorization: `Bearer ${WRONG_TOKEN}` } })).status).toBe(
+      401,
+    );
+  });
+
+  it('accepts a bearer token and hands out no cookie for it', async () => {
+    const res = await bare('/api/doc', { headers: { authorization: `Bearer ${TOKEN}` } });
+    expect(res.status).toBe(200);
+    // curl and agents keep no jar. Setting one would be a credential handed to a client
+    // that never asked for it and cannot use it.
+    expect(res.headers.get('set-cookie')).toBeNull();
+  });
+
+  it('exchanges a token in the query for a cookie and takes it out of the URL', async () => {
+    const res = await bare(`/?token=${TOKEN}`, { redirect: 'manual' });
+    expect(res.status).toBe(302);
+
+    const location = res.headers.get('location') ?? '';
+    // The whole point of the redirect: the address bar, the history entry and anything
+    // reading the URL afterwards no longer hold the secret.
+    expect(location).not.toContain(TOKEN);
+    expect(location).not.toContain('token');
+    // Relative, so a Host we do not serve can never be echoed back as somewhere to go.
+    expect(location.startsWith('/')).toBe(true);
+
+    const cookie = res.headers.get('set-cookie') ?? '';
+    expect(cookie).toContain('akapen_token=');
+    expect(cookie).toContain('HttpOnly');
+    expect(cookie).toContain('SameSite=Lax');
+    // Plain HTTP: a Secure cookie would never be stored, so the redirect would loop.
+    expect(cookie).not.toContain('Secure');
+  });
+
+  it('takes the token back out of the URL on every visit, not only the first', async () => {
+    /**
+     * The bookmark keeps its `?token=` on purpose, so it is opened again and again by a
+     * browser that already has the cookie. Answering on the cookie and stopping there
+     * would put the secret back in the address bar and in a new history entry each time
+     * — the redirect would only ever have worked once, on the very first visit.
+     */
+    const cookie = `akapen_token=${TOKEN}`;
+    const res = await bare(`/?token=${TOKEN}`, { headers: { cookie }, redirect: 'manual' });
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toBe('/');
+  });
+
+  it('never redirects to somewhere that is not this server', async () => {
+    /**
+     * `//evil.example/x` is a scheme-relative URL, not a path: a browser sent there
+     * leaves for `evil.example`. A request for `GET //evil.example/x?token=...` produces
+     * exactly that pathname, so echoing it back turned this redirect into an open one.
+     * The token is stripped by then, so nothing leaks — the reader just lands somewhere
+     * chosen by whoever sent them the link.
+     */
+    const cookie = `akapen_token=${TOKEN}`;
+    for (const path of ['//evil.example/x', '///evil.example/x', '////a']) {
+      const res = await bare(`${path}?token=${TOKEN}`, { headers: { cookie }, redirect: 'manual' });
+      const location = res.headers.get('location') ?? '';
+      // One leading slash is a path on this server, which is all a redirect here should
+      // ever be. Two is an authority, and the name after it is where the browser goes.
+      // The name surviving as a path segment is not a leak — `/evil.example/x` is just a
+      // path akapen does not serve.
+      expect(location.startsWith('/'), `${path} -> ${location}`).toBe(true);
+      expect(location.startsWith('//'), `${path} -> ${location}`).toBe(false);
+    }
+  });
+
+  it('strips a stale token without storing it, when the cookie is still good', async () => {
+    // A bookmark from before a rotation, opened by a browser whose cookie still works.
+    // It gets in on the cookie, and the dead value is taken out of the URL rather than
+    // written over the credential that is working.
+    const cookie = `akapen_token=${TOKEN}`;
+    const res = await bare(`/?token=${WRONG_TOKEN}`, { headers: { cookie }, redirect: 'manual' });
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toBe('/');
+    expect(res.headers.get('set-cookie')).toBeNull();
+  });
+
+  it('keeps a token in the query working as a credential on a write', async () => {
+    // Redirecting a POST would lose its body, so a query token on one is read as a
+    // credential rather than as something somebody is about to bookmark.
+    const res = await bare(`/api/comments?token=${TOKEN}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ startLine: 5, endLine: 5, body: 'posted with a query token' }),
+    });
+    expect(res.status).toBe(200);
+  });
+
+  it('lets the cookie alone carry the whole surface, SSE included', async () => {
+    const cookie = `akapen_token=${TOKEN}`;
+    expect((await bare('/api/doc', { headers: { cookie } })).status).toBe(200);
+    expect((await bare('/api/comments', { headers: { cookie } })).status).toBe(200);
+
+    // EventSource cannot set headers, so the cookie is the only credential SSE will ever
+    // have. If this ever needs one, live updates are gone.
+    const ctrl = new AbortController();
+    const res = await globalThis.fetch(`${base}/events`, {
+      headers: { cookie },
+      signal: ctrl.signal,
+    });
+    expect(res.status).toBe(200);
+    ctrl.abort();
+  });
+
+  it('accepts the scheme however it is capitalised, and says which one it wanted', async () => {
+    // RFC 7235 §2.1: the scheme is case-insensitive, so a client sending `bearer` is
+    // right and a 401 in reply would be ours to explain.
+    for (const scheme of ['Bearer', 'bearer', 'BEARER']) {
+      expect(
+        (await bare('/api/doc', { headers: { authorization: `${scheme} ${TOKEN}` } })).status,
+        scheme,
+      ).toBe(200);
+    }
+    // RFC 7235 §3.1: a 401 names the scheme that would have worked.
+    expect((await bare('/api/doc')).headers.get('www-authenticate')).toBe('Bearer');
+  });
+
+  it('gives the cookie a life longer than the browser window', async () => {
+    // A session cookie would mean logging in again after every browser restart, which is
+    // the whole thing this flow exists to remove. The token behind it does not expire, so
+    // an expiry here would be asking again rather than protecting anything.
+    const res = await bare(`/?token=${TOKEN}`, { redirect: 'manual' });
+    expect(res.headers.get('set-cookie')).toMatch(/Max-Age=\d{6,}/i);
+  });
+
+  it('sets the referrer policy on every answer, including the ones it refuses', async () => {
+    // The token rides in a URL, and the two answers that would miss it are exactly the
+    // ones built outside the JSON handlers: the host refusal, and the SSE stream.
+    expect((await bare('/api/doc')).headers.get('referrer-policy')).toBe('no-referrer');
+
+    const ctrl = new AbortController();
+    const events = await globalThis.fetch(`${base}/events`, {
+      headers: { cookie: `akapen_token=${TOKEN}` },
+      signal: ctrl.signal,
+    });
+    expect(events.headers.get('referrer-policy')).toBe('no-referrer');
+    ctrl.abort();
+  });
+
+  it('refuses a write that came from another page, cookie and all', async () => {
+    /**
+     * The cross-port case, which the cookie cannot tell apart on its own.
+     *
+     * Cookies are not isolated by port and neither is `SameSite`, so a page on another
+     * port of this host is the same *site* and the browser attaches akapen's cookie to
+     * its requests. `POST` with no body needs no preflight, so nothing else is in the
+     * way: without this check a page on `localhost:8080` cuts a round here.
+     */
+    const cookie = `akapen_token=${TOKEN}`;
+    const from = (site: string) =>
+      bare('/api/rounds', { method: 'POST', headers: { cookie, 'sec-fetch-site': site } });
+
+    expect((await from('cross-site')).status).toBe(403);
+    expect((await from('same-site')).status).toBe(403);
+
+    // Reads are left alone: without CORS headers the answer cannot be read back, and a
+    // GET changes nothing whether it can be or not.
+    expect((await bare('/api/doc', { headers: { cookie, 'sec-fetch-site': 'cross-site' } })).status).toBe(
+      200,
+    );
+  });
+
+  it("lets akapen's own page write, and lets a client that is not a browser write", async () => {
+    const cookie = `akapen_token=${TOKEN}`;
+    // What the browser sends for akapen's own fetch.
+    expect(
+      (
+        await bare('/api/comments', {
+          method: 'POST',
+          headers: { cookie, 'sec-fetch-site': 'same-origin', 'content-type': 'application/json' },
+          body: JSON.stringify({ startLine: 5, endLine: 5, body: 'from the page itself' }),
+        })
+      ).status,
+    ).toBe(200);
+
+    // curl and agents send no Sec-Fetch-* at all, and carry a bearer token instead.
+    expect(
+      (
+        await bare('/api/comments', {
+          method: 'POST',
+          headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ startLine: 5, endLine: 5, body: 'from an agent' }),
+        })
+      ).status,
+    ).toBe(200);
+  });
+
+  it('serves a name spelled with the root dot', async () => {
+    // `localhost.` is `localhost` with the root of the DNS tree written out. Clients do
+    // send it, and a 403 there is a refusal with nothing wrong on the other end.
+    const port = Number(server!.port);
+    expect(await rawGet(port, '/api/doc', `localhost.:${port}`, [`Authorization: Bearer ${TOKEN}`])).toBe(
+      200,
+    );
+  });
+
+  it('refuses a Host it does not serve, even holding a valid token', async () => {
+    // DNS rebinding: the browser believes akapen is the attacker's origin and attaches
+    // the cookie itself, so the token proves nothing here. The Host is the only part of
+    // the request a page cannot choose.
+    const port = Number(server!.port);
+    const bearer = `Authorization: Bearer ${TOKEN}`;
+    expect(await rawGet(port, '/api/doc', 'attacker.example', [bearer])).toBe(403);
+    // A port on the end changes nothing: it is the name that is checked, and cookies are
+    // not isolated by port anyway (RFC 6265 §8.5).
+    expect(await rawGet(port, '/api/doc', `attacker.example:${port}`, [bearer])).toBe(403);
+  });
+
+  it('serves the names this host really answers to', async () => {
+    const port = Number(server!.port);
+    const bearer = `Authorization: Bearer ${TOKEN}`;
+    for (const host of ['localhost', `localhost:${port}`, '127.0.0.1', `127.0.0.1:${port}`]) {
+      expect(await rawGet(port, '/api/doc', host, [bearer]), host).toBe(200);
+    }
+  });
+
+  it('serves nothing without a credential when the token is only in the store', async () => {
+    // No AKAPEN_TOKEN in the environment: the server generates one and writes it, so the
+    // reader has to have been told. This is the everyday case.
+    const home = join(sandbox, 'generated-home');
+    const note = join(sandbox, 'generated.md');
+    writeFileSync(note, SOURCE);
+    const other = await start(note, home, [], { token: null });
+    try {
+      expect((await globalThis.fetch(`${other.url}/api/doc`)).status).toBe(401);
+      const stored = readFileSync(join(home, 'token'), 'utf8').trim();
+      expect(stored.length).toBeGreaterThan(20);
+      expect(
+        (
+          await globalThis.fetch(`${other.url}/api/doc`, {
+            headers: { authorization: `Bearer ${stored}` },
+          })
+        ).status,
+      ).toBe(200);
+      // The one file that must not be readable by anyone else on the host.
+      expect(statSync(join(home, 'token')).mode & 0o777).toBe(0o600);
+    } finally {
+      other.stop();
+      await other.stopped;
+    }
+  });
+
+  it('stops accepting the old token once the stored one is rotated', async () => {
+    /**
+     * Rotation is the only revocation there is, so it has to reach the servers that are
+     * already running. Reading the token once at startup would leave every open cookie
+     * and every script holding the old one working until each instance was restarted —
+     * revoking nothing, at the moment somebody had decided to revoke.
+     *
+     * Started without AKAPEN_TOKEN, because a token handed in is pinned on purpose.
+     */
+    const home = join(sandbox, 'rotating-home');
+    const note = join(sandbox, 'rotating.md');
+    writeFileSync(note, SOURCE);
+    const running = await start(note, home, [], { token: null });
+    try {
+      const before = readFileSync(join(home, 'token'), 'utf8').trim();
+      const bearer = (t: string) =>
+        globalThis.fetch(`${running.url}/api/doc`, { headers: { authorization: `Bearer ${t}` } });
+      expect((await bearer(before)).status).toBe(200);
+
+      // execFileSync, not execSync: CLI is a path built from this file's own location,
+      // and a checkout under a directory with a space in it would otherwise arrive as
+      // two arguments.
+      const after = execFileSync('bun', ['run', CLI, 'token', '--rotate'], {
+        env: { ...process.env, AKAPEN_HOME: home },
+        encoding: 'utf8',
+      }).trim();
+      expect(after).not.toBe(before);
+
+      // The server re-reads on an interval rather than per request, so give it one.
+      await new Promise((r) => setTimeout(r, 1_200));
+
+      expect((await bearer(after)).status).toBe(200);
+      expect((await bearer(before)).status).toBe(401);
+    } finally {
+      running.stop();
+      await running.stopped;
+    }
+  });
+
+  it('keeps a token it was handed, whatever the store says afterwards', async () => {
+    // The other half of the rule: `--token` and `AKAPEN_TOKEN` belong to whoever passed
+    // them, and a rotation on this host is not theirs to be told about.
+    const home = join(sandbox, 'pinned-home');
+    const note = join(sandbox, 'pinned.md');
+    writeFileSync(note, SOURCE);
+    const running = await start(note, home, [], { token: 'pinned-for-this-run' });
+    try {
+      execFileSync('bun', ['run', CLI, 'token', '--rotate'], {
+        env: { ...process.env, AKAPEN_HOME: home },
+        encoding: 'utf8',
+      });
+      await new Promise((r) => setTimeout(r, 1_200));
+      expect(
+        (
+          await globalThis.fetch(`${running.url}/api/doc`, {
+            headers: { authorization: 'Bearer pinned-for-this-run' },
+          })
+        ).status,
+      ).toBe(200);
+    } finally {
+      running.stop();
+      await running.stopped;
+    }
+  });
+
+  it('serves without a credential only when asked to', async () => {
+    const open = join(sandbox, 'open.md');
+    writeFileSync(open, SOURCE);
+    const served = await start(open, join(sandbox, 'open-home'), ['--no-auth']);
+    try {
+      expect((await globalThis.fetch(`${served.url}/api/doc`)).status).toBe(200);
+      // The Host check is not part of the credential and stays on regardless: it answers
+      // a different question, and `--no-auth` is about who may connect, not about which
+      // origin a browser thinks it is talking to.
+      expect(await rawGet(Number(served.port), '/api/doc', 'attacker.example')).toBe(403);
+    } finally {
+      served.stop();
+      await served.stopped;
+    }
   });
 });

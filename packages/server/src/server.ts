@@ -1,9 +1,12 @@
 import { readFileSync, watch, existsSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import { Hono, type Context } from 'hono';
+import { getCookie, setCookie } from 'hono/cookie';
 import { vValidator } from '@hono/valibot-validator';
 import { ASSETS, mimeFor } from './assets.ts';
 import { buildDoc } from '@akapen/core/blocks';
+import { allowedHostnames, hostnameOf } from '@akapen/core/hosts';
+import { readToken, tokensMatch } from '@akapen/core/token';
 import {
   addReply,
   carriedOver,
@@ -40,12 +43,36 @@ export type ServeOptions = {
   author: string;
   cssPath?: string;
   keymapPath?: string;
+  /**
+   * The shared secret every request must present, or null for `--no-auth`.
+   *
+   * Null exists for the case where something in front already authenticates — Tailscale
+   * Serve, or a proxy — and is not the default at any bind address. Loopback is not the
+   * exception it looks like: a page in the reader's own browser can reach `127.0.0.1`,
+   * which is what `allowedHostnames` below is about.
+   */
+  token: string | null;
+  /**
+   * Whether that secret is fixed for the life of the process.
+   *
+   * True for one handed in with `--token` or `AKAPEN_TOKEN`, which belongs to whoever
+   * handed it in. False for one read from the store, where `akapen token --rotate` has
+   * to take effect on the servers that are already running — otherwise the only
+   * revocation there is revokes nothing until every instance is restarted.
+   */
+  tokenPinned: boolean;
 };
 
 /** Addresses that only the host itself can reach. `::1` also arrives bracketed. */
 function isLoopback(host: string): boolean {
   return host === '127.0.0.1' || host === 'localhost' || host === '::1' || host === '[::1]';
 }
+
+/** The cookie the browser is handed once, so nothing after the first visit carries a token. */
+const COOKIE = 'akapen_token';
+
+/** Methods that only read. A cross-origin one of these cannot be read back without CORS. */
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
 export function startServer(opts: ServeOptions) {
   const file = resolve(opts.file);
@@ -185,6 +212,183 @@ export function startServer(opts: ServeOptions) {
   });
 
   const app = new Hono();
+
+  const token = opts.token;
+
+  /**
+   * The secret to check against right now.
+   *
+   * Re-read rather than captured, so that rotating the stored token locks out the
+   * cookies and scripts holding the old one without waiting for a restart. Cached for a
+   * moment because this is on the path of every request, including each asset.
+   *
+   * A store that has become unreadable falls back to the startup value rather than
+   * locking everyone out: losing the file should not end a review in progress.
+   */
+  let secretAt = 0;
+  let secret = token;
+  const currentSecret = (): string | null => {
+    if (token === null || opts.tokenPinned) return token;
+    const now = Date.now();
+    if (now - secretAt >= 1_000) {
+      secretAt = now;
+      secret = readToken() ?? token;
+    }
+    return secret;
+  };
+
+  /**
+   * The names we answer to, rebuilt when one is not recognised.
+   *
+   * Under a wildcard bind the set is the machine's own addresses, and those change
+   * underneath a running process: joining a VPN or moving to another network gives it an
+   * address it did not have at startup, and every request to that address would be a 403
+   * with nothing wrong. Rebuilding only on a miss keeps the syscall off the common path,
+   * and the interval keeps a stream of unknown Hosts from turning into a stream of them.
+   */
+  let allowed = allowedHostnames(opts.host);
+  let rebuiltAt = 0;
+  const serves = (name: string): boolean => {
+    if (allowed.has(name)) return true;
+    const now = Date.now();
+    if (now - rebuiltAt < 1_000) return false;
+    rebuiltAt = now;
+    allowed = allowedHostnames(opts.host);
+    return allowed.has(name);
+  };
+
+  /**
+   * Everything below this is behind it, assets and SSE included.
+   *
+   * Three ways in, one secret. The cookie is the steady state; the query is the first
+   * visit and the bookmark; the bearer header is curl and an agent, which get no cookie
+   * because they keep no jar.
+   *
+   * The redirect after the query is what makes it seamless: the token leaves the address
+   * bar and the history entry, and the browser holds it from then on, so every later
+   * visit is the bare URL. The bookmark keeps its copy, which is how a cleared cookie or
+   * a second browser recovers without anyone going to look for a URL.
+   */
+  /**
+   * Set on the way out, so it reaches every answer.
+   *
+   * Setting it before `next()` misses both ends: the host refusal returns above it, and
+   * `/events` builds its own `Response`, which nothing set on the context is merged into.
+   * The token rides in a URL, so this is worth being true of everything rather than of
+   * the handlers that happen to use `c.json`.
+   */
+  app.use('*', async (c, next) => {
+    await next();
+    c.res.headers.set('referrer-policy', 'no-referrer');
+  });
+
+  app.use('*', async (c, next) => {
+    /**
+     * HTTP/1.1 requires a Host, and the name check below is the whole rebinding defence,
+     * so an absent one is refused rather than waved through as "not a foreign name".
+     *
+     * Unreachable as things stand: Bun answers a Host-less HTTP/1.1 request with a 500
+     * before any of this runs, which is why there is no test for it — one would pass
+     * with the branch removed and would be pinning nothing. It is here so that the rule
+     * is the rule, rather than something the runtime happens to be enforcing for us.
+     */
+    const host = c.req.header('host');
+    if (host === undefined || !serves(hostnameOf(host))) {
+      return c.text('host not served here', 403);
+    }
+
+    /**
+     * A write has to come from akapen's own page.
+     *
+     * The cookie is not enough on its own, because cookies are not isolated by port and
+     * neither is `SameSite`: anything served from another port on this host is the same
+     * *site*, so the browser attaches the cookie to its requests here. A `POST` with no
+     * body is a CORS-simple request, so no preflight stands in the way either — a page
+     * on `localhost:8080` could cut a round on `localhost:4300` and the reader would
+     * find their document had moved under them. It could not read the answer, since
+     * nothing here sends CORS headers, but the damage is in the doing.
+     *
+     * `Sec-Fetch-Site` is what closes it, rather than comparing `Origin` with `Host`:
+     * the browser works it out from what it sees, so a TLS-terminating proxy in front —
+     * the arrangement `--no-auth` exists for — still reads as `same-origin`, where
+     * comparing the two headers would refuse every write.
+     *
+     * Absent means a client that is not a browser, which is curl and agents, and they
+     * carry a bearer token instead. Browsers older than the header are not covered.
+     */
+    if (!SAFE_METHODS.has(c.req.method)) {
+      const site = c.req.header('sec-fetch-site');
+      if (site !== undefined && site !== 'same-origin' && site !== 'none') {
+        return c.text('a write has to come from akapen itself', 403);
+      }
+    }
+    const active = currentSecret();
+    if (active === null) return next();
+
+    const cookie = getCookie(c, COOKIE);
+    const cookieOk = cookie !== undefined && tokensMatch(cookie, active);
+
+    const url = new URL(c.req.url);
+    const presented = url.searchParams.get('token');
+    const queryOk = presented !== null && tokensMatch(presented, active);
+
+    /**
+     * A token in the URL is taken back out of it, on every visit and not only the first.
+     *
+     * Checking the cookie first and answering there would leave the bookmark — which
+     * keeps its `?token=` on purpose — putting the secret back in the address bar and in
+     * a fresh history entry every time it is opened, once the browser already had a
+     * cookie. The whole point of the redirect is that the URL somebody copies out of the
+     * bar is not the credential, and it only held on the very first visit.
+     *
+     * The cookie is only written when the query itself was right. A bookmark holding a
+     * rotated-away token, opened by a browser whose cookie is still good, is redirected
+     * without that stale value being stored.
+     *
+     * Only for methods that read. Redirecting a POST loses its body, and a `?token=` on
+     * one is a credential rather than something a person is about to bookmark.
+     */
+    if (presented !== null && (cookieOk || queryOk) && SAFE_METHODS.has(c.req.method)) {
+      if (queryOk) {
+        setCookie(c, COOKIE, active, {
+          httpOnly: true,
+          sameSite: 'Lax',
+          path: '/',
+          // Without this it is a session cookie, and "every visit after is the bare URL"
+          // would last until the browser is closed. The token does not expire, so an
+          // expiry here would not be protecting anything — only asking again.
+          maxAge: 60 * 60 * 24 * 365,
+          // No `secure`: the transport is plain HTTP, and a Secure cookie sent over it
+          // is simply never stored, turning the whole flow into a redirect loop.
+        });
+      }
+      url.searchParams.delete('token');
+      /**
+       * Relative, and to a path that cannot be read as an authority.
+       *
+       * `//evil.example/x` is a scheme-relative URL, not a path: a browser sent there
+       * leaves for `evil.example`. A request for `GET //evil.example/x?token=...` gives
+       * exactly that pathname, so echoing it back turns this redirect into an open
+       * one — the token is stripped by then, so nothing leaks, but the reader lands
+       * somewhere chosen by whoever sent them the link.
+       */
+      const path = url.pathname.replace(/^\/+/, '/');
+      return c.redirect(`${path}${url.search}`, 302);
+    }
+
+    if (cookieOk || queryOk) return next();
+
+    // The scheme is case-insensitive (RFC 7235 §2.1), and a client sending `bearer`
+    // is right while a 401 telling it otherwise is not.
+    const auth = c.req.header('authorization') ?? '';
+    const bearer = /^bearer /i.test(auth) ? auth.slice('bearer '.length) : null;
+    if (bearer !== null && tokensMatch(bearer, active)) return next();
+
+    return c.text('unauthenticated. open the URL akapen printed, or run `akapen token`', 401, {
+      // What a 401 owes the client: which scheme would have worked (RFC 7235 §3.1).
+      'www-authenticate': 'Bearer',
+    });
+  });
 
   app.get('/api/doc', vValidator('query', DocQuerySchema), (c) => {
     const want = c.req.valid('query').round ?? review.currentRound;
@@ -358,7 +562,7 @@ export function startServer(opts: ServeOptions) {
    * from the reader's machine at all while being perfectly reachable from here.
    */
   app.get('/api/instances', async (c) => {
-    const live = await liveInstances({ excludePid: process.pid });
+    const live = await liveInstances({ excludePid: process.pid, token: currentSecret() });
     const payload: InstancesPayload = {
       instances: live.map(({ record, status }) => ({
         pid: record.pid,

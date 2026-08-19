@@ -14,10 +14,24 @@ import { test as base } from '@playwright/test';
 
 const FIXTURE_MD = join(import.meta.dirname, 'fixture.md');
 
+/**
+ * The token every server in the E2E run is started with.
+ *
+ * Fixed, so the fixture can put it in the browser's jar before the first navigation.
+ * The browser then behaves exactly as it does after a real first visit — cookie only,
+ * nothing in any URL — which is the state every test here is about.
+ */
+export const TOKEN = 'test-token-for-the-e2e-run';
+
+/** For requests made outside the browser, which keep no jar. */
+export const AUTH = { authorization: `Bearer ${TOKEN}` };
+
 let nextPort = 4400;
 
 export type Akapen = {
   url: string;
+  /** The credential this instance was started with, for a test that presents it itself. */
+  token: string;
   /** The live file, for imitating an agent's edit. */
   file: string;
   /** The registry this instance registered in. Sharing it is what makes peers visible. */
@@ -32,7 +46,7 @@ async function waitUntilServing(url: string): Promise<void> {
       // Each attempt is given its own deadline. A server that accepts the connection and
       // then never answers would otherwise hold this open past the loop's deadline, and
       // "did not start" would arrive as a test timeout with nothing said about why.
-      if ((await fetch(`${url}/api/doc`, { signal: AbortSignal.timeout(2_000) })).ok) return;
+      if ((await fetch(`${url}/api/doc`, { headers: AUTH, signal: AbortSignal.timeout(2_000) })).ok) return;
     } catch {
       /* not up yet */
     }
@@ -60,7 +74,7 @@ export async function startPeer(
   const proc: ChildProcess = spawn(
     'bun',
     ['run', 'packages/cli/src/cli.ts', file, '-p', String(port), ...extra],
-    { env: { ...process.env, AKAPEN_HOME: home }, stdio: 'ignore' },
+    { env: { ...process.env, AKAPEN_HOME: home, AKAPEN_TOKEN: TOKEN }, stdio: 'ignore' },
   );
 
   /**
@@ -89,10 +103,7 @@ export async function startPeer(
 }
 
 export const test = base.extend<{ akapen: Akapen }>({
-  // Playwright requires a destructuring pattern as the first argument; a named one
-  // fails with "First argument must use the object destructuring pattern".
-  // oxlint-disable-next-line no-empty-pattern
-  akapen: async ({}, use) => {
+  akapen: async ({ context }, use) => {
     const port = nextPort++;
     const sandbox = mkdtempSync(join(tmpdir(), 'akapen-e2e-'));
     const file = join(sandbox, 'note.md');
@@ -100,22 +111,41 @@ export const test = base.extend<{ akapen: Akapen }>({
 
     const home = join(sandbox, 'home');
     const proc: ChildProcess = spawn('bun', ['run', 'packages/cli/src/cli.ts', file, '-p', String(port)], {
-      env: { ...process.env, AKAPEN_HOME: home },
+      env: { ...process.env, AKAPEN_HOME: home, AKAPEN_TOKEN: TOKEN },
       stdio: 'ignore',
     });
 
     const url = `http://127.0.0.1:${port}`;
-    await waitUntilServing(url);
 
-    await use({
-      url,
-      file,
-      home,
-      append: (text: string) => writeFileSync(file, readFileSync(file, 'utf8') + text),
-    });
+    // From here on the process exists, so every exit has to go through the same cleanup.
+    // A server that never comes up, or a cookie that will not seed, would otherwise leave
+    // a bun process holding the port and a sandbox on disk for the rest of the run.
+    try {
+      await waitUntilServing(url);
 
-    proc.kill();
-    rmSync(sandbox, { recursive: true, force: true });
+      // What a browser holds after one visit to the printed URL. Seeding it here rather
+      // than navigating to `?token=` first keeps every test's opening navigation the real
+      // one — the bare URL, which is what both a bookmark and a reload are.
+      await context.addCookies([{ name: 'akapen_token', value: TOKEN, url }]);
+
+      await use({
+        url,
+        token: TOKEN,
+        file,
+        home,
+        append: (text: string) => writeFileSync(file, readFileSync(file, 'utf8') + text),
+      });
+    } finally {
+      // Waited for, not just signalled — the same as `startPeer`. Removing the sandbox
+      // while the server is still shutting down leaves it writing into a directory that
+      // is going away, and leaves the port held into the next test.
+      if (proc.exitCode === null && proc.signalCode === null) {
+        const exited = new Promise<void>((done) => proc.once('exit', () => done()));
+        proc.kill();
+        await exited;
+      }
+      rmSync(sandbox, { recursive: true, force: true });
+    }
   },
 });
 

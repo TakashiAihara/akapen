@@ -5,8 +5,10 @@
   "type": "module",
   "exports": {
     "./blocks": "./src/blocks.ts",
+    "./hosts": "./src/hosts.ts",
     "./instances": "./src/instances.ts",
-    "./store": "./src/store.ts"
+    "./store": "./src/store.ts",
+    "./token": "./src/token.ts"
   },
   "dependencies": {
     "@akapen/shared": "workspace:*",

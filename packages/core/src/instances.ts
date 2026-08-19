@@ -154,13 +154,18 @@ function isStatus(v: unknown): v is StatusPayload {
 }
 
 /**
- * Where to reach an instance from this host.
+ * Where to reach an instance from this host, as a URL authority.
  *
  * A wildcard bind is not an address anything can connect to, so it becomes loopback.
  * Anything else is the address it is actually listening on — a bind to one LAN
  * interface answers there and nowhere else, and assuming loopback would report it dead.
+ *
+ * Exported because the startup line needs the same answer. `http://0.0.0.0:4300` is not
+ * somewhere a browser can go, and since the server refuses a `Host` it does not serve,
+ * it is now a 403 rather than merely unhelpful. Printing a URL that is reachable from
+ * somewhere other than this host is #87, and is a different question.
  */
-function probeHost(host: string): string {
+export function reachableHost(host: string): string {
   if (host === '0.0.0.0') return '127.0.0.1';
   if (host === '::' || host === '[::]') return '[::1]';
   return host.includes(':') && !host.startsWith('[') ? `[${host}]` : host;
@@ -173,10 +178,22 @@ function probeHost(host: string): string {
  * exists; only an answer says it is the akapen that wrote the entry. A silent one is
  * left in the directory rather than deleted — its pid is alive, so it may simply be busy.
  */
-async function askStatus(record: InstanceRecord, timeoutMs: number): Promise<StatusPayload | null> {
+async function askStatus(
+  record: InstanceRecord,
+  timeoutMs: number,
+  token: string | null,
+): Promise<StatusPayload | null> {
   try {
-    const res = await fetch(`http://${probeHost(record.host)}:${record.port}/api/status`, {
+    // The peer is behind the same authentication this one is (#10), so a probe with no
+    // credential is answered 401 and the peer reads as dead. The token is per host, so
+    // the one this caller holds is the one the peer wants.
+    //
+    // Passed in rather than read off disk here: a process started with `--token` or
+    // `AKAPEN_TOKEN` is running on a token that was never written, and reading the file
+    // would send the wrong one — or none — while the caller had the right one all along.
+    const res = await fetch(`http://${reachableHost(record.host)}:${record.port}/api/status`, {
       signal: AbortSignal.timeout(timeoutMs),
+      ...(token === null ? {} : { headers: { authorization: `Bearer ${token}` } }),
     });
     if (!res.ok) return null;
     const parsed: unknown = await res.json();
@@ -191,17 +208,19 @@ async function askStatus(record: InstanceRecord, timeoutMs: number): Promise<Sta
  *
  * @param opts.excludePid  the caller's own pid, when the caller is one of them
  * @param opts.timeoutMs   a peer on the same host answers immediately or not at all
+ * @param opts.token       the credential to probe with; null only where none is in use
  */
 export async function liveInstances(
-  opts: { excludePid?: number; timeoutMs?: number } = {},
+  opts: { excludePid?: number; timeoutMs?: number; token?: string | null } = {},
 ): Promise<LiveInstance[]> {
   const timeoutMs = opts.timeoutMs ?? 500;
+  const token = opts.token ?? null;
   const records = readInstances().filter((r) => r.pid !== opts.excludePid);
   // Asked all at once: one instance that is slow to answer must not add its timeout to
   // the wait for every instance after it.
   const probed = await Promise.all(
     records.map(async (record) => {
-      const status = await askStatus(record, timeoutMs);
+      const status = await askStatus(record, timeoutMs, token);
       return status ? { record, status } : null;
     }),
   );
