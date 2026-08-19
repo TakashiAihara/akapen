@@ -24,7 +24,7 @@ jobs:
       # explicit ref, binaries whose contents do not match the tag end up in the release
       # and become impossible to tell apart later. A missing tag fails here, so no
       # release is created for a tag that does not exist.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.inputs.tag || github.ref }}
       - uses: oven-sh/setup-bun@v2
@@ -47,7 +47,7 @@ jobs:
       - name: check the built binary runs (only the one this runner can execute)
         run: ./dist/akapen-linux-x64 --help
 
-      - uses: actions/attest-build-provenance@v2
+      - uses: actions/attest-build-provenance@v4
         with:
           subject-path: 'dist/akapen-*'
 
