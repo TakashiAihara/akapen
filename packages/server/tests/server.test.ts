@@ -165,6 +165,162 @@ describe('creating a comment', () => {
   });
 });
 
+/**
+ * A document holding one of every block kind, including the ones that used to be
+ * refused: a blank line inside a fence and inside an indented code block. Both are
+ * drawn, both get a `+`, and both were answered with 400 (#101).
+ */
+const PROBE = [
+  '---',
+  'title: probe',
+  '---',
+  '',
+  '# probe',
+  '',
+  'alpha の段落',
+  '',
+  '```bash',
+  'echo one',
+  '',
+  'echo two',
+  '```',
+  '',
+  '> 引用の 1 行目',
+  '>',
+  '> 引用の 2 行目',
+  '',
+  '| a | b |',
+  '| --- | --- |',
+  '| 1 | 2 |',
+  '',
+  '    インデントされたコードブロック',
+  '',
+  '    その 2 行目',
+  '',
+  '- リスト項目',
+  '',
+  '```mermaid',
+  'graph LR',
+  '  a --> b',
+  '```',
+  '',
+  '---',
+  '',
+].join('\n');
+
+describe('what a comment may point at', () => {
+  let probe: Server;
+  let probeUrl: string;
+
+  beforeEach(async () => {
+    const file = join(sandbox, 'probe.md');
+    writeFileSync(file, PROBE);
+    probe = await start(file, join(sandbox, 'probe-home'));
+    probeUrl = probe.url;
+  }, 30_000);
+
+  afterEach(() => probe?.stop());
+
+  const doc = async () => v.parse(DocPayloadSchema, await (await fetch(`${probeUrl}/api/doc`)).json()).doc;
+
+  const comment = (startLine: number, endLine: number) =>
+    fetch(`${probeUrl}/api/comments`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ startLine, endLine, body: 'x' }),
+    });
+
+  /**
+   * Not a list of cases. The screen can only offer what /api/doc returned, so asking
+   * every block is the whole question — and it keeps catching kinds nobody thought to
+   * enumerate, which is how the blank line inside a fence was missed in the first place.
+   */
+  it('accepts every block the document offers', async () => {
+    const { blocks } = await doc();
+    const refused: string[] = [];
+    for (const b of blocks) {
+      const res = await comment(b.startLine, b.endLine);
+      if (!res.ok) refused.push(`L${b.startLine}-${b.endLine} ${b.kind} ${JSON.stringify(b.text)}`);
+    }
+    expect(refused).toEqual([]);
+  });
+
+  it('really does contain the blank code lines this is about', async () => {
+    // Without this the test above passes on a fixture that drifted away from the case.
+    const blank = (await doc()).blocks.filter((b) => b.kind === 'code' && !b.text.trim());
+    expect(blank.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('still refuses a line that belongs to no block', async () => {
+    // The blank lines *between* blocks are not on the screen and never were. Passing
+    // the test above by accepting everything has to fail here.
+    const { blocks, lineCount } = await doc();
+    const covered = new Set<number>();
+    for (const b of blocks) for (let ln = b.startLine; ln <= b.endLine; ln++) covered.add(ln);
+    const orphans = [];
+    for (let ln = 1; ln <= lineCount; ln++) if (!covered.has(ln)) orphans.push(ln);
+    expect(orphans.length).toBeGreaterThan(0);
+    for (const ln of orphans) expect((await comment(ln, ln)).status).toBe(400);
+  });
+
+  it('still refuses a line past the end of the document', async () => {
+    const { lineCount } = await doc();
+    expect((await comment(lineCount + 1, lineCount + 1)).status).toBe(400);
+    expect((await comment(900, 900)).status).toBe(400);
+  });
+
+  it('still refuses a range that starts on text and runs past the end', async () => {
+    // Overlapping one block is not enough on its own: the range would be stored with an
+    // end nothing in the document reaches, and the anchor would trail empty lines.
+    const { blocks, lineCount } = await doc();
+    const first = blocks[0]!;
+    expect((await comment(first.startLine, lineCount + 1)).status).toBe(400);
+    expect((await comment(first.startLine, 900)).status).toBe(400);
+  });
+
+  it('still accepts a range running from one block to another across the gap between them', async () => {
+    // The blank lines separating two blocks are inside any multi-row selection made in
+    // the gutter. Requiring every line in the range to belong to a block would refuse
+    // exactly what the screen offers, so overlap is the test, not coverage.
+    const { blocks } = await doc();
+    const gapped = blocks.find((b, i) => i > 0 && b.startLine > blocks[i - 1]!.endLine + 1);
+    expect(gapped).toBeDefined();
+    const before = blocks[blocks.indexOf(gapped!) - 1]!;
+    expect((await comment(before.startLine, gapped!.endLine)).ok).toBe(true);
+  });
+
+  it('still refuses a range whose end is before its start', async () => {
+    // Inverted *inside* one block, so the overlap test on its own still matches it.
+    // Picking two separate blocks would pass with no ordering check at all.
+    const spanning = (await doc()).blocks.find((b) => b.endLine > b.startLine);
+    expect(spanning).toBeDefined();
+    expect((await comment(spanning!.endLine, spanning!.startLine)).status).toBe(400);
+    expect((await comment(7, 5)).status).toBe(400);
+  });
+
+  /**
+   * A comment on a blank line anchors to an empty string, and the anchor is what
+   * carries a comment across rounds — so this one is visible in `carried` but there is
+   * no text for an agent to find it by. That is a known gap, left open on purpose:
+   * refusing the comment instead is worse, because then it cannot be written at all
+   * (#101). This test is here so the gap is recorded rather than assumed away.
+   */
+  it('carries a blank-line comment over with an anchor that locates nothing', async () => {
+    const blank = (await doc()).blocks.find((b) => b.kind === 'code' && !b.text.trim())!;
+    const created = v.parse(
+      CommentsPayloadSchema,
+      await (await comment(blank.startLine, blank.endLine)).json(),
+    );
+    expect(created.comment.anchor).toBe('');
+
+    await fetch(`${probeUrl}/api/rounds`, { method: 'POST' });
+    const carried = v.parse(DocPayloadSchema, await (await fetch(`${probeUrl}/api/doc`)).json()).carried;
+    const kept = carried.find((c) => c.id === created.comment.id);
+    expect(kept).toBeDefined();
+    expect(kept?.anchor).toBe('');
+  }, 30_000);
+});
+
 describe('resolving', () => {
   it('toggles a comment, and answers 404 for one that does not exist', async () => {
     const created = v.parse(
