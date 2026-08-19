@@ -103,4 +103,3 @@ jobs:
           name: playwright-trace
           path: test-results/
           retention-days: 7
-
