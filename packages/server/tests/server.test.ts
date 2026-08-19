@@ -11,12 +11,26 @@
  * server embeds its assets through import attributes, which is a Bun feature vitest's
  * transform does not implement; and this is the same path the shipped binary takes.
  */
-import { execSync, spawn, type ChildProcess } from 'node:child_process';
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { execSync, spawn, spawnSync, type ChildProcess } from 'node:child_process';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { CommentsPayloadSchema, DocPayloadSchema, ServerEventSchema } from '@akapen/shared';
+import {
+  CommentsPayloadSchema,
+  DocPayloadSchema,
+  InstancesPayloadSchema,
+  ServerEventSchema,
+  StatusPayloadSchema,
+} from '@akapen/shared';
 import * as v from 'valibot';
 
 const SOURCE = ['---', 'title: t', '---', '', '# Heading', '', 'A paragraph.', ''].join('\n');
@@ -24,7 +38,15 @@ const SOURCE = ['---', 'title: t', '---', '', '# Heading', '', 'A paragraph.', '
 /** Resolved from this file, not from the working directory, so the runner's cwd is free to move. */
 const CLI = join(import.meta.dirname, '..', '..', 'cli', 'src', 'cli.ts');
 
-type Server = { url: string; stop: () => void };
+type Server = {
+  url: string;
+  port: string;
+  /** The registry entry is named after this, and stopping it has to take the entry with it. */
+  pid: number;
+  stop: () => void;
+  /** Resolves once the process is gone, so shutdown can be asserted rather than assumed. */
+  stopped: Promise<void>;
+};
 
 /**
  * Start akapen on a port the OS picks and read the port back off its own output.
@@ -61,7 +83,13 @@ async function start(file: string, home: string, extra: string[] = []): Promise<
       });
     });
 
-    return { url: `http://127.0.0.1:${port}`, stop };
+    return {
+      url: `http://127.0.0.1:${port}`,
+      port,
+      pid: proc.pid!,
+      stop,
+      stopped: new Promise<void>((done) => proc.on('exit', () => done())),
+    };
   } catch (err) {
     // Nothing else can reach this process: the caller never receives a handle, and the
     // hook fails before `server` is assigned, so afterEach has nothing to stop. Without
@@ -69,6 +97,22 @@ async function start(file: string, home: string, extra: string[] = []): Promise<
     stop();
     throw err;
   }
+}
+
+/**
+ * A pid nothing is using, for imitating an instance that crashed. Walking down from a
+ * high number rather than picking one: a fixed number is a live process on somebody's
+ * machine, and EPERM means one is there and owned by someone else.
+ */
+function deadPid(): number {
+  for (let pid = 99_999; pid > 1; pid--) {
+    try {
+      process.kill(pid, 0);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ESRCH') return pid;
+    }
+  }
+  throw new Error('every pid up to 99999 is in use');
 }
 
 let sandbox: string;
@@ -93,6 +137,10 @@ afterEach(() => {
   server = null;
   rmSync(sandbox, { recursive: true, force: true });
 });
+
+/** The instances one server can see, checked against the contract rather than cast. */
+const peers = async (from: string) =>
+  v.parse(InstancesPayloadSchema, await (await fetch(`${from}/api/instances`)).json()).instances;
 
 const post = (path: string, body?: unknown) =>
   fetch(`${base}${path}`, {
@@ -616,4 +664,171 @@ describe('replying', () => {
     const payload = v.parse(DocPayloadSchema, await (await fetch(`${server.url}/api/doc`)).json());
     expect(payload.comments.find((c) => c.id === parent.id)?.replies).toEqual([]);
   }, 30_000);
+});
+
+/**
+ * Finding the other akapen on this host.
+ *
+ * Every instance drops a file naming itself under AKAPEN_HOME, and a reader proves each
+ * one is alive by asking it. Both halves fail quietly when they break: a stale entry is
+ * a row that goes nowhere, and an entry that outlives its process makes every reader pay
+ * a timeout to discover it. The tests share one home, since that is the boundary of what
+ * an instance can see.
+ */
+describe('the other instances on this host', () => {
+  const home = () => join(sandbox, 'home');
+  const instancesDir = () => join(home(), 'instances');
+
+  /** A second akapen, with its own file so the two rows can be told apart. */
+  const startPeer = (name: string, extra: string[] = []) => {
+    const file = join(sandbox, name);
+    writeFileSync(file, SOURCE);
+    return start(file, home(), extra);
+  };
+
+  it('reports what it is showing, by basename', async () => {
+    const before = v.parse(StatusPayloadSchema, await (await fetch(`${base}/api/status`)).json());
+    expect(before).toEqual({ file: 'note.md', round: 1, unresolved: 0 });
+
+    await post('/api/comments', { startLine: 5, endLine: 5, body: 'x' });
+
+    const after = v.parse(StatusPayloadSchema, await (await fetch(`${base}/api/status`)).json());
+    expect(after.unresolved).toBe(1);
+    // The path is not in the payload at all. The switcher is read over the LAN with
+    // nothing authenticating a reader, and directory layout is not something to hand out.
+    expect(JSON.stringify(after)).not.toContain(sandbox);
+  });
+
+  it('lists the other instance, and never itself', async () => {
+    const peer = await startPeer('design.md');
+    try {
+      const ours = await peers(base);
+      expect(ours).toHaveLength(1);
+      expect(ours[0]).toMatchObject({ pid: peer.pid, file: 'design.md', round: 1, unresolved: 0 });
+      expect(ours[0]!.port).toBe(Number(peer.port));
+
+      // Both directions: the registry is shared, so seeing each other is one mechanism,
+      // but excluding yourself is decided by each server separately.
+      const theirs = await peers(peer.url);
+      expect(theirs.map((p) => p.file)).toEqual(['note.md']);
+    } finally {
+      peer.stop();
+    }
+  });
+
+  it('carries the round and the unresolved count from the instance itself', async () => {
+    const peer = await startPeer('design.md');
+    try {
+      await fetch(`${peer.url}/api/comments`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ startLine: 5, endLine: 5, body: 'about the heading' }),
+      });
+      await fetch(`${peer.url}/api/rounds`, { method: 'POST' });
+
+      // Round 2, and the unresolved comment from round 1 still counts: closing a round
+      // hands it over rather than settling it.
+      expect((await peers(base))[0]).toMatchObject({ round: 2, unresolved: 1 });
+    } finally {
+      peer.stop();
+    }
+  });
+
+  it('marks a loopback bind as unreachable instead of linking to it', async () => {
+    const loopback = await startPeer('design.md');
+    const lan = await startPeer('plan.md', ['--host', '0.0.0.0']);
+    try {
+      const rows = await peers(base);
+      const byFile = Object.fromEntries(rows.map((p) => [p.file, p]));
+      // The reader's browser is usually not on this host, so a peer that took the
+      // default bind cannot be opened from there however the link is built.
+      expect(byFile['design.md']).toMatchObject({ host: '127.0.0.1', reachable: false });
+      expect(byFile['plan.md']).toMatchObject({ host: '0.0.0.0', reachable: true });
+    } finally {
+      loopback.stop();
+      lan.stop();
+    }
+  });
+
+  it('drops an entry left behind by a crash, and deletes it', async () => {
+    // A crashed instance leaves its entry: no stop() ran, so nothing removed it. The pid
+    // is gone, which is what tells the difference.
+    const crashed = deadPid();
+    mkdirSync(instancesDir(), { recursive: true });
+    const entry = join(instancesDir(), `${crashed}.json`);
+    writeFileSync(
+      entry,
+      JSON.stringify({
+        pid: crashed,
+        host: '127.0.0.1',
+        port: 4300,
+        file: join(sandbox, 'gone.md'),
+        startedAt: new Date().toISOString(),
+      }),
+    );
+
+    expect(await peers(base)).toEqual([]);
+    expect(existsSync(entry)).toBe(false);
+  });
+
+  it('takes its entry with it when it stops', async () => {
+    const peer = await startPeer('design.md');
+    expect(existsSync(join(instancesDir(), `${peer.pid}.json`))).toBe(true);
+
+    // The normal way this ends is a signal. Leaving the entry would cost every reader
+    // after it a timeout on a port nobody is listening on.
+    peer.stop();
+    await peer.stopped;
+
+    expect(existsSync(join(instancesDir(), `${peer.pid}.json`))).toBe(false);
+    expect(await peers(base)).toEqual([]);
+  });
+});
+
+/** `akapen list` reads the same registry the switcher does, from where you lost the port. */
+describe('listing the instances from the terminal', () => {
+  const run = (extra: string[] = []) =>
+    spawnSync('bun', ['run', CLI, 'list', ...extra], {
+      env: { ...process.env, AKAPEN_HOME: join(sandbox, 'home') },
+      encoding: 'utf8',
+    });
+
+  it('prints the running instance as JSON, with the path in full', () => {
+    const listed: unknown = JSON.parse(run(['--json']).stdout);
+    expect(listed).toEqual([
+      {
+        pid: expect.any(Number),
+        host: '127.0.0.1',
+        port: Number(server!.port),
+        // The terminal is on the host and belongs to whoever started them, unlike the
+        // switcher, so here the path is the useful part.
+        file: work,
+        round: 1,
+        unresolved: 0,
+        started_at: expect.any(String),
+      },
+    ]);
+  });
+
+  it('prints a table with the file in it', () => {
+    const out = run().stdout;
+    expect(out).toContain('R001');
+    expect(out).toContain(work);
+  });
+
+  it('says so when nothing is running', () => {
+    const empty = spawnSync('bun', ['run', CLI, 'list'], {
+      env: { ...process.env, AKAPEN_HOME: join(sandbox, 'nothing-here') },
+      encoding: 'utf8',
+    });
+    expect(empty.stdout.trim()).toBe('no akapen is running');
+    expect(
+      JSON.parse(
+        spawnSync('bun', ['run', CLI, 'list', '--json'], {
+          env: { ...process.env, AKAPEN_HOME: join(sandbox, 'nothing-here') },
+          encoding: 'utf8',
+        }).stdout,
+      ),
+    ).toEqual([]);
+  });
 });

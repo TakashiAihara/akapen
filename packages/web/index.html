@@ -14,9 +14,16 @@
   <span class="file" id="filePath"></span>
   <span class="round" id="round"></span>
   <select class="round-pick" id="roundPick" aria-label="Round to display"></select>
+  <!-- Shown only while another akapen on this host is answering -->
+  <button type="button" class="peers-toggle" id="peersToggle" hidden aria-expanded="false" aria-controls="peers"></button>
   <span class="spacer"></span>
   <label class="toggle"><input type="checkbox" id="showLines"> Line numbers</label>
   <span class="count" id="count"></span>
+  <!-- The other reviews running beside this one. Inside the header so it follows it while scrolling -->
+  <div class="peers" id="peers" hidden>
+    <div class="peers-title">other akapen on this host</div>
+    <ul class="peers-list" id="peersList"></ul>
+  </div>
 </header>
 <!-- The document is the current round's frozen snapshot. A live change is only announced here; moving on takes a click -->
 <div class="banner" id="banner" hidden>

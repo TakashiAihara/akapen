@@ -17,7 +17,7 @@ export class UsageError extends Error {}
 const VALUE_FLAGS = ['host', 'port', 'css', 'keymap', 'author'] as const;
 
 /** Flags that are on or off. Given a value, they fail — `--all=false` reads as "off". */
-const BOOLEAN_FLAGS = ['help', 'all'] as const;
+const BOOLEAN_FLAGS = ['help', 'all', 'json'] as const;
 
 type ValueFlag = (typeof VALUE_FLAGS)[number];
 type BooleanFlag = (typeof BOOLEAN_FLAGS)[number];
@@ -48,7 +48,7 @@ const missing = (value: string | undefined): boolean =>
  * which is the failure this file exists to remove.
  */
 export function parseArgs(argv: string[]): Args {
-  const args: Args = { positional: [], help: false, all: false };
+  const args: Args = { positional: [], help: false, all: false, json: false };
 
   for (let i = 0; i < argv.length; i++) {
     const token = argv[i]!;

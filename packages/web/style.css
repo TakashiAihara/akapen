@@ -122,6 +122,60 @@ body {
 /* The document on screen is not the one the server has. Same weight as the changed banner: nothing is lost, but nothing can be written either */
 .banner.moved { color: var(--ak-warn); background: var(--ak-accent-subtle); }
 
+/*
+ * The switcher: the other akapen on this host.
+ *
+ * Anchored to the header, which is sticky, so it stays under its button while the
+ * document scrolls. Absolute rather than in flow: opening it must not push the
+ * document down and move the line someone was reading.
+ */
+.peers-toggle {
+  font: inherit;
+  font-size: 12px;
+  /* A long file path squeezes the header. Wrapping turns the pill into a blob */
+  flex: none;
+  white-space: nowrap;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--ak-border);
+  background: var(--ak-bg);
+  color: var(--ak-fg-muted);
+  cursor: pointer;
+}
+.peers-toggle[hidden] { display: none; }
+.peers-toggle:hover { border-color: var(--ak-accent); color: var(--ak-accent); }
+
+.peers {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 11;
+  padding: 8px 16px 10px;
+  background: var(--ak-bg);
+  border-bottom: 1px solid var(--ak-border);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.12);
+}
+.peers[hidden] { display: none; }
+.peers-title { color: var(--ak-fg-muted); font-size: 12px; margin-bottom: 4px; }
+.peers-list { list-style: none; margin: 0; padding: 0; }
+.peer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 12px;
+  padding: 3px 0;
+}
+.peer-file { font-family: var(--ak-mono); }
+a.peer-file { color: var(--ak-accent); text-decoration: none; }
+a.peer-file:hover { text-decoration: underline; }
+.peer-round { font-family: var(--ak-mono); color: var(--ak-fg-muted); }
+.peer-unresolved { color: var(--ak-fg-muted); }
+.peer-unresolved.waiting { color: var(--ak-warn); }
+/* Listed, but with no link: it answers here and nowhere the reader's browser can reach */
+.peer-unreachable { color: var(--ak-fg-muted); font-style: italic; }
+
+
 /* Earlier unresolved comments. No anchor in this round, so they stack in normal flow */
 .rail-carried { margin-top: var(--ak-bubble-gap); border-top: 1px dashed var(--ak-border); padding-top: 10px; }
 .rail-carried[hidden] { display: none; }

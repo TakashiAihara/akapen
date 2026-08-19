@@ -31,8 +31,16 @@ export type Review = {
 export function storeDir(filePath: string): string {
   const abs = resolve(filePath);
   const hash = createHash('sha1').update(abs).digest('hex').slice(0, 12);
-  const root = process.env['AKAPEN_HOME'] ?? join(homedir(), '.akapen');
-  return join(root, 'reviews', `${basename(abs).replace(/\.md$/, '')}-${hash}`);
+  return join(akapenHome(), 'reviews', `${basename(abs).replace(/\.md$/, '')}-${hash}`);
+}
+
+/**
+ * Everything akapen writes for this user. `AKAPEN_HOME` replaces it, which is how the
+ * tests keep away from the real store, and it is also the boundary of what an instance
+ * can see of the others: sharing this directory is what makes them visible to each other.
+ */
+export function akapenHome(): string {
+  return process.env['AKAPEN_HOME'] ?? join(homedir(), '.akapen');
 }
 
 export function roundDir(filePath: string, n: number): string {
@@ -43,7 +51,7 @@ function reviewFile(filePath: string): string {
   return join(storeDir(filePath), 'review.json');
 }
 
-function writeAtomic(target: string, data: string): void {
+export function writeAtomic(target: string, data: string): void {
   // Give the temp file a unique name. With a fixed name two processes truncate the
   // same file, so what rename commits is garbage even though rename itself is atomic
   // (opening the same markdown twice shares one store).

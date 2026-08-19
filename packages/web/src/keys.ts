@@ -23,6 +23,8 @@ export const DEFAULT_KEYMAP: Keymap = {
   'comment.submit': ['ctrl+enter', 'meta+enter'],
   'comment.cancel': ['escape'],
   'lines.toggle': ['l'],
+  // o for "others": the akapen running beside this one
+  'instances.toggle': ['o'],
 };
 
 // Arrow keys are not bound by default. Taking them breaks page scrolling, which

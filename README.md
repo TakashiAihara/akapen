@@ -70,6 +70,19 @@ The examples below use `bun run packages/cli/src/cli.ts`; read that as `akapen` 
 
 Use `--host 0.0.0.0` to run it on a remote machine and read it from a local browser. There is no authentication, so mind who can reach the address.
 
+Several akapen on one host can find each other, so `-p 0` — let the OS pick a port — is a reasonable way to start one.
+
+```bash
+bun run packages/cli/src/cli.ts list          # the akapen running on this host
+bun run packages/cli/src/cli.ts list --json   # the same, for agents
+```
+
+```text
+PID     ADDRESS         ROUND  UNRESOLVED  FILE
+81234   0.0.0.0:4300    R002   3           /path/to/design.md
+81235   127.0.0.1:4391  R001   0           /path/to/plan.md
+```
+
 The handoff to an agent is a CLI command.
 
 ```bash
@@ -149,8 +162,9 @@ While skimming you are scrolling, so a hover-based path is needed. While writing
 | `shift+j` / `shift+k` | grow the selection (same as a mouse drag) | `row.extendNext` / `row.extendPrev` |
 | `c` | comment on the selection | `comment.start` |
 | `Ctrl+Enter` | send | `comment.submit` |
-| `Esc` | cancel (draft, then rail, then selection) | `comment.cancel` |
+| `Esc` | cancel (switcher, then draft, then rail, then selection) | `comment.cancel` |
 | `l` | toggle line numbers | `lines.toggle` |
+| `o` | the other akapen on this host | `instances.toggle` |
 
 The assignment is provisional and will be revisited as a whole. It is defined in one place: `packages/web/src/keys.ts`.
 
@@ -182,7 +196,7 @@ One binary, five packages. The split is about which direction knowledge is allow
 | `@akapen/core` | line mapping and the comment store. Knows nothing about HTTP |
 | `@akapen/server` | Hono routes over `Bun.serve`, plus the embedded assets |
 | `@akapen/web` | the browser side, bundled by `bun build` |
-| `@akapen/cli` | argument parsing and the `comments` subcommand |
+| `@akapen/cli` | argument parsing and the `comments` and `list` subcommands |
 
 Everything points at `shared`, and nothing points back. `server` embeds `web`'s build output, which is the one edge that runs the other way; it stays acyclic because `web` never reaches for the server. A typed client generated from the routes (Hono's `hc`, tRPC) would close that loop — the browser would import the server to learn the shapes — and clients only get added over time. Putting the contract in `shared` keeps every client one hop from the same definition.
 
@@ -240,6 +254,20 @@ A screen replaced by a payload arriving from the server destroys the reading pos
 
 The trade-off: what the agent fixed does not appear until the next round begins. Use mdserve alongside when you want to watch it change. crit makes the same call.
 
+### The other akapen on this host
+
+One akapen is one file and one process, and the port it took exists in exactly one place: the startup line of whoever started it. Once that has scrolled away, the review is running and unreachable. A header button lists the others and links to them; `o` opens the same list, and it is not there at all while nothing else is running.
+
+Every instance drops a file naming itself under `AKAPEN_HOME`, holding identity only: pid, address, file, start time. The round number and the unresolved count change on every comment, and a registry that has to be rewritten that often is a registry that will be wrong — so those are asked of the instance itself, over `GET /api/status`, which is also the request that proves it is alive. A crash leaves an entry behind and pids are reused, so an entry existing is not evidence of anything on its own. Entries naming a process that is gone are deleted as they are read, and the directory heals itself.
+
+The list is built by the server, at `GET /api/instances`. The browser cannot build it: every instance is a different origin, so it would need CORS on an endpoint that has none, and one bound to `127.0.0.1` is not reachable from the reader's machine at all while being perfectly reachable from the server sitting next to it.
+
+A link is built from the address the page was opened on, `location.hostname`, not from what the peer bound. The browser is usually not on this host — akapen is started with `--host 0.0.0.0` and read over the LAN — so `localhost` and `127.0.0.1` point at the reader's own machine. Which leaves the default bind as a case to handle rather than ignore: a peer on `127.0.0.1` cannot be opened from that browser however the link is built, so its row is listed and marked unreachable instead of carrying a link that will time out. Where a review you cannot reach is running is still worth knowing.
+
+A row shows the basename, the round and the unresolved count. **Not the path**: with no authentication yet, this list is on the LAN, and directory layout is not something to hand out for free. `akapen list` does print it in full — that is read on the host, by whoever started them.
+
+Only instances sharing an `AKAPEN_HOME` see each other, and only on one host. Reaching across hosts is a different thing and is not built.
+
 ### Where comments are stored
 
 The markdown file is never touched.
@@ -252,6 +280,8 @@ The markdown file is never touched.
     001/comments.json  # comments anchored to lines in 001
     002/content.md
     002/comments.json
+~/.akapen/instances/
+  <pid>.json           # one running akapen: pid, address, file, start time
 ```
 
 `AKAPEN_HOME` replaces `~/.akapen` (the tests use it to avoid touching the real store).
@@ -285,7 +315,7 @@ Across all 152 notes in a vault, no line was dropped or duplicated (24164 blocks
 ## Not done yet
 
 - Authentication. `--host 0.0.0.0` puts it on the LAN with none.
-- Reviewing several files. One file per process today.
+- Reviewing several files. One file per process today; the others on the host are listed and linked to, not held by one process.
 - Automating the agent handoff. `comments` has to be called; there is no equivalent of crit's `agent_cmd`.
 - Replies and threads. One comment is one thread.
 
