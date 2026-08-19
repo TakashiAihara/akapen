@@ -193,7 +193,7 @@ Order: after W-1 and W-3. It cannot be pinned down before those shapes settle.
 
 ### Decision: run on each host. Do not centralise the files
 
-Development runs in parallel across several hosts, so the original idea was to put markserv or mdserve on pi and centralise every document. akapen does not do this.
+Development runs in parallel across several hosts, so the original idea was to put markserv or mdserve on one shared host and centralise every document. akapen does not do this.
 
 A review is a loop of person → file → agent, and it only works when all three are on the same host.
 
@@ -206,14 +206,14 @@ On top of that, the vault is a git repository with a clone on each host, so cent
 The shape taken:
 
 - akapen runs on each host. Port 4300 everywhere.
-- Names come from Technitium (`akapen.d1.local` and so on), so only the hostname changes and no port needs remembering.
-- pi holds only a page of links. akapen gains no hub feature; that would be scope it should not carry.
+- Names come from internal DNS (`akapen.<host>.local` and so on), so only the hostname changes and no port needs remembering.
+- One shared host holds only a page of links. akapen gains no hub feature; that would be scope it should not carry.
 
 ### W-9 An entry point that hides which host (later, not started)
 
 The wish not to think about which host remains. One way to soften it without moving files is a hub that centralises metadata only.
 
-- Each host's akapen registers its reviews in progress (file name, round, unresolved count) with a hub on pi.
+- Each host's akapen registers its reviews in progress (file name, round, unresolved count) with a hub on one shared host.
 - The hub lists them and links through to the host's own URL.
 - Neither files nor comments move, so none of the three problems above appear.
 
@@ -235,6 +235,6 @@ Order to be decided once the list is complete.
 Kept so the same argument is not had twice.
 
 - A markdown source pane on the left (three panes) — withdrawn: unnecessary unless editing is the premise. Line numbers stay off the document and toggle with `l`.
-- Centralise every document on pi and review there — rejected because a review cannot work that way (see "Handling multiple hosts"). Centralising purely for reading is technically possible, but the working tree is invisible, so reading on each host is more accurate.
+- Centralise every document on one shared host and review there — rejected because a review cannot work that way (see "Handling multiple hosts"). Centralising purely for reading is technically possible, but the working tree is invisible, so reading on each host is more accurate.
 - Start a new agent for every comment — fixing without context produces patchwork. An existing session watches instead (W-8).
 - Strengthen re-anchoring (similarity matching, position relative to headings) — made unnecessary by adopting rounds.
