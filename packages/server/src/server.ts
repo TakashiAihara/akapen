@@ -1,6 +1,6 @@
 import { readFileSync, watch, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { vValidator } from '@hono/valibot-validator';
 import { ASSETS, mimeFor } from './assets.ts';
 import { buildDoc } from '@akapen/core/blocks';
@@ -266,8 +266,36 @@ export function startServer(opts: ServeOptions) {
     return c.json({ comment: added.comment, comments, carried: carriedOver(file) });
   });
 
+  /**
+   * One cut at a time.
+   *
+   * Waiting for the file to settle handed control back mid-request, which the earlier
+   * synchronous handler never did. Two screens both showing the banner and both pressing
+   * the button — the situation this whole change is about — then landed inside that
+   * window together, and each opened a round of its own: the second one identical to the
+   * first, the first one closed before a single comment could be written on it, and the
+   * screen that opened it already behind.
+   *
+   * The second one is refused rather than queued. Queuing it just opens that spare round
+   * a moment later; refusing says the truth, which is that the round it asked for exists
+   * already. It arrives on that screen as the `round` event, same as any other.
+   */
+  let cutting = false;
+
   // Only a person cuts a round. An agent's intermediate save never does.
   app.post('/api/rounds', async (c) => {
+    if (cutting) return c.text('a round is already being opened; it will arrive on its own', 409);
+    cutting = true;
+    try {
+      return await cutRound(c);
+    } finally {
+      // Every exit releases it. One that did not would leave the document permanently
+      // stuck on the round it was on, with nothing on screen saying why.
+      cutting = false;
+    }
+  });
+
+  const cutRound = async (c: Context) => {
     const read = await readSettled();
     if (!read.ok) {
       if (read.reason === 'unreadable') return c.text('cannot read file', 500);
@@ -290,7 +318,7 @@ export function startServer(opts: ServeOptions) {
     notify(roundEvent());
     // A new round means a new document. Return it, and only the clicker's screen swaps.
     return c.json(docPayload());
-  });
+  };
 
   app.get('/api/rounds', (c) => c.json({ current: review.currentRound, rounds: review.rounds }));
 

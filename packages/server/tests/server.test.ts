@@ -443,6 +443,29 @@ describe('cutting a round while the file is being written', () => {
     expect((await post('/api/rounds')).ok).toBe(true);
   }, 30_000);
 
+  it('opens one round when two screens cut at the same moment, not one each', async () => {
+    // Both screens show the banner, so both people press the button. Waiting for the file
+    // to settle hands control back mid-request, and without a guard each request opened a
+    // round: two identical documents, the first closed before anything could be written
+    // on it, and the screen that opened it already behind.
+    writeFileSync(work, `${SOURCE}\nsomething the agent added\n`);
+    const [a, b] = await Promise.all([post('/api/rounds'), post('/api/rounds')]);
+    const results = [a.status, b.status].toSorted();
+    expect(results).toEqual([200, 409]);
+    expect(frozen(join(sandbox, 'home'))).toHaveLength(2); // the first round, and one new one
+    expect(v.parse(DocPayloadSchema, await (await fetch(`${base}/api/doc`)).json()).round.n).toBe(2);
+  }, 30_000);
+
+  it('still cuts a second round when the two are not at the same moment', async () => {
+    // Refusing every second request would pass the test above and make the button work
+    // once per process.
+    writeFileSync(work, `${SOURCE}\nfirst edit\n`);
+    expect((await post('/api/rounds')).status).toBe(200);
+    writeFileSync(work, `${SOURCE}\nsecond edit\n`);
+    expect((await post('/api/rounds')).status).toBe(200);
+    expect(v.parse(DocPayloadSchema, await (await fetch(`${base}/api/doc`)).json()).round.n).toBe(3);
+  }, 30_000);
+
   it('opens a round on a document that was empty to begin with', async () => {
     // The other direction. A guard that refuses whenever the file is empty would pass
     // the test above and leave a blank note — a legitimate thing to review — unusable.
