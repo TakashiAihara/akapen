@@ -48,7 +48,9 @@ describe('dependabot', () => {
   });
 
   test('the workflows are watched by the github-actions ecosystem', () => {
-    const workflows = readdirSync(repoRoot + '.github/workflows').filter((f) => f.endsWith('.yml'));
+    // Actions reads both spellings, so a repository that only ever wrote .yaml would look
+    // empty here and fail for the wrong reason.
+    const workflows = readdirSync(repoRoot + '.github/workflows').filter((f) => /\.ya?ml$/.test(f));
 
     expect(workflows.length).toBeGreaterThan(0);
     expect(ecosystems).toContain('github-actions');
