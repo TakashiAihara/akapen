@@ -83,8 +83,15 @@ jobs:
       # cache does not carry, so they have to be installed on a hit as well; the browsers
       # come from the cache when it has them. Neither step is conditional on the hit: a
       # cache is an optimisation, and CI has to be correct when it misses.
+      # apt reaches Ubuntu's mirrors, which are the least reliable thing this job touches:
+      # on 32273362486 the Azure mirror Ign'd every index, apt fell back to
+      # archive.ubuntu.com, and the run sat on one InRelease file for 92 minutes. Nothing
+      # bounded it. A stall should cost a step, not an afternoon.
       - run: bunx playwright install-deps chromium
+        timeout-minutes: 5
+
       - run: bunx playwright install chromium
+        timeout-minutes: 5
 
       # Regressions only a real browser catches: focus, IME, ranges, re-rendering.
       # The storage-layer tests detected none of them.
