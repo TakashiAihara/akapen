@@ -47,7 +47,7 @@ apart. Use the qualified form; the bare word is the one that causes the confusio
 | top bar | the bar across the top of the screen: name, file path, round badge, count, controls | `.topbar` |
 | banner | the line saying the live file has changed since the snapshot | `#banner`, `ChangedState` |
 | history bar | the line saying an earlier round is being viewed, which is read-only for the document | `#historyBar` |
-| round badge / round selector | the current round, and the picker for earlier ones | `#round`, `#roundPick` |
+| round badge / round selector | the round on screen — the current one, or an earlier one while viewing history — and the picker, which tags the current round | `#round`, `#roundPick` |
 | count | how many comments are open, of how many, plus how many are carried | `#count` |
 
 Row states, which stack:
@@ -78,7 +78,7 @@ Row states, which stack:
 | Term | What it is | Where it exists |
 |---|---|---|
 | round | a frozen snapshot of the file contents. Comments attach to lines inside it | `rounds/NNN/content.md` |
-| current round | the round being written to. The only one that accepts new comments | `Review.currentRound`, `RoundState.n` |
+| current round | the round being written to. The only one that takes a new comment; replying to a comment and resolving one work in any round | `Review.currentRound`, `RoundState.n` |
 | viewing a round | reading an earlier round's snapshot and comments. Read-only for the document, not for comment status | `RoundState.viewing`, `#historyBar` |
 | cutting a round | freezing the live file as the next round. Only a person does this; an agent's save never does | the "End this round" control, `#nextRound`, `openRound` |
 | carried over | unresolved comments from earlier rounds. Nothing carries into a new round; they are shown apart so that gone from the screen does not read as dealt with | `carriedOver`, `#railCarried` |
