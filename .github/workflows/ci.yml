@@ -5,6 +5,11 @@ on:
     branches: [main]
   pull_request:
 
+# The repository default is read, but a default is a setting someone can change, and a
+# fork carries its own. Nothing here writes; say so where the workflow is read.
+permissions:
+  contents: read
+
 jobs:
   # Every action is pinned to a commit, not a tag. A tag is mutable, so whoever can move
   # it can run their code inside this workflow with the repository's token. The version
