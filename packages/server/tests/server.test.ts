@@ -11,7 +11,7 @@
  * server embeds its assets through import attributes, which is a Bun feature vitest's
  * transform does not implement; and this is the same path the shipped binary takes.
  */
-import { execSync, spawn, spawnSync, type ChildProcess } from 'node:child_process';
+import { execFileSync, execSync, spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import {
   existsSync,
   mkdirSync,
@@ -1121,7 +1121,10 @@ describe('authentication', () => {
         globalThis.fetch(`${running.url}/api/doc`, { headers: { authorization: `Bearer ${t}` } });
       expect((await bearer(before)).status).toBe(200);
 
-      const after = execSync(`bun run ${CLI} token --rotate`, {
+      // execFileSync, not execSync: CLI is a path built from this file's own location,
+      // and a checkout under a directory with a space in it would otherwise arrive as
+      // two arguments.
+      const after = execFileSync('bun', ['run', CLI, 'token', '--rotate'], {
         env: { ...process.env, AKAPEN_HOME: home },
         encoding: 'utf8',
       }).trim();
@@ -1146,7 +1149,7 @@ describe('authentication', () => {
     writeFileSync(note, SOURCE);
     const running = await start(note, home, [], { token: 'pinned-for-this-run' });
     try {
-      execSync(`bun run ${CLI} token --rotate`, {
+      execFileSync('bun', ['run', CLI, 'token', '--rotate'], {
         env: { ...process.env, AKAPEN_HOME: home },
         encoding: 'utf8',
       });
