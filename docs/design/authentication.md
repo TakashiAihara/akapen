@@ -35,11 +35,13 @@ A shared secret, presented three ways, checked in one middleware ahead of every 
 flowchart TD
     REQ["request"] --> HOST{"Host header<br>is one we serve"}
     HOST -- "no" --> F403["403"]
-    HOST -- "yes" --> COOKIE{"cookie<br>akapen_token matches"}
-    COOKIE -- "yes" --> PASS["serve"]
-    COOKIE -- "no" --> QUERY{"query<br>token matches"}
-    QUERY -- "yes" --> SET["set the cookie"] --> REDIR["302 to the same URL<br>without the query"]
-    QUERY -- "no" --> BEARER{"Authorization<br>Bearer matches"}
+    HOST -- "yes" --> KNOWN{"cookie or query<br>token matches"}
+    KNOWN -- "no" --> BEARER{"Authorization<br>Bearer matches"}
+    KNOWN -- "yes" --> INURL{"?token= present,<br>and the method reads"}
+    INURL -- "no" --> PASS["serve"]
+    INURL -- "yes" --> RIGHT{"the query token<br>was the right one"}
+    RIGHT -- "yes" --> SET["set the cookie"] --> REDIR["302 to the same path<br>without the query"]
+    RIGHT -- "no" --> REDIR
     BEARER -- "yes" --> PASS
     BEARER -- "no" --> F401["401"]
 ```

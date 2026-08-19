@@ -1,11 +1,11 @@
 import { readFileSync, watch, existsSync } from 'node:fs';
-import { hostname, networkInterfaces } from 'node:os';
 import { basename, resolve } from 'node:path';
 import { Hono, type Context } from 'hono';
 import { getCookie, setCookie } from 'hono/cookie';
 import { vValidator } from '@hono/valibot-validator';
 import { ASSETS, mimeFor } from './assets.ts';
 import { buildDoc } from '@akapen/core/blocks';
+import { allowedHostnames, hostnameOf } from '@akapen/core/hosts';
 import { readToken, tokensMatch } from '@akapen/core/token';
 import {
   addReply,
@@ -70,65 +70,6 @@ function isLoopback(host: string): boolean {
 
 /** The cookie the browser is handed once, so nothing after the first visit carries a token. */
 const COOKIE = 'akapen_token';
-
-/**
- * The hostnames this instance answers to.
- *
- * A token says who on the network may connect. It says nothing about the attack that
- * makes "it only listens on loopback" untrue: a page the reader visits can point its own
- * hostname at `127.0.0.1` after loading — DNS rebinding — and the browser then treats
- * akapen as that page's origin, attaches the cookie itself and lets the page read the
- * answer. Being `HttpOnly` changes nothing; the browser is the one holding it.
- *
- * What the attacker cannot do is choose the `Host` header — it is forbidden to scripts —
- * so refusing every name akapen is not actually serving closes the whole class.
- *
- * A wildcard bind answers on every interface, so every local address is a real name for
- * it. The machine's own hostname is included because reaching it that way is normal
- * (`http://mcdev:4300`), and an attacker who can put that name in a browser's address
- * bar already controls this network's DNS.
- */
-function allowedHostnames(bind: string): Set<string> {
-  const names = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
-  const wildcard = bind === '0.0.0.0' || bind === '::' || bind === '[::]';
-  if (wildcard) {
-    for (const list of Object.values(networkInterfaces())) {
-      for (const ni of list ?? []) {
-        names.add(ni.address.toLowerCase());
-        if (ni.family === 'IPv6') names.add(`[${ni.address.toLowerCase()}]`);
-      }
-    }
-  } else {
-    names.add(bind.toLowerCase());
-  }
-  const self = hostname().toLowerCase();
-  names.add(self);
-  // `mcdev` and `mcdev.local` are the same machine, and which one gets typed is the
-  // resolver's business, not ours.
-  const short = self.split('.')[0];
-  if (short) names.add(short);
-  return names;
-}
-
-/**
- * The name out of a `Host` header, without the port.
- *
- * The port is deliberately not checked. Cookies are not isolated by port anyway
- * (RFC 6265 §8.5), so a per-port rule would suggest a separation that does not exist.
- */
-function hostnameOf(header: string): string {
-  const value = header.trim().toLowerCase();
-  if (value.startsWith('[')) {
-    const close = value.indexOf(']');
-    return close === -1 ? value : value.slice(0, close + 1);
-  }
-  const colon = value.lastIndexOf(':');
-  const name = colon === -1 ? value : value.slice(0, colon);
-  // `localhost.` is the same name as `localhost` — the trailing dot is the root of the
-  // DNS tree spelled out. Some clients send it, and refusing them would be a 403 with
-  // nothing wrong on the other end.
-  return name.endsWith('.') ? name.slice(0, -1) : name;
-}
 
 /** Methods that only read. A cross-origin one of these cannot be read back without CORS. */
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
@@ -422,9 +363,17 @@ export function startServer(opts: ServeOptions) {
         });
       }
       url.searchParams.delete('token');
-      // Relative on purpose. Redirecting to the URL we were given would echo an
-      // attacker-chosen host back at the browser as a location it should follow.
-      return c.redirect(`${url.pathname}${url.search}`, 302);
+      /**
+       * Relative, and to a path that cannot be read as an authority.
+       *
+       * `//evil.example/x` is a scheme-relative URL, not a path: a browser sent there
+       * leaves for `evil.example`. A request for `GET //evil.example/x?token=...` gives
+       * exactly that pathname, so echoing it back turns this redirect into an open
+       * one — the token is stripped by then, so nothing leaks, but the reader lands
+       * somewhere chosen by whoever sent them the link.
+       */
+      const path = url.pathname.replace(/^\/+/, '/');
+      return c.redirect(`${path}${url.search}`, 302);
     }
 
     if (cookieOk || queryOk) return next();

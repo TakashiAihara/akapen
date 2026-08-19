@@ -889,7 +889,13 @@ function rawGet(port: number, path: string, host: string, extra: string[] = []):
       );
     });
     let buf = '';
-    socket.setTimeout(5_000, () => fail(new Error('no answer')));
+    // Destroyed on the way out of both failure paths. Rejecting alone leaves the socket
+    // open, and an open socket holds the event loop: the run would report the failure and
+    // then hang instead of ending.
+    socket.setTimeout(5_000, () => {
+      socket.destroy();
+      fail(new Error('no answer'));
+    });
     socket.on('data', (chunk: Buffer) => {
       buf += chunk.toString();
     });
@@ -898,7 +904,10 @@ function rawGet(port: number, path: string, host: string, extra: string[] = []):
       if (status) done(Number(status[1]));
       else fail(new Error(`no status line in: ${buf.slice(0, 120)}`));
     });
-    socket.on('error', fail);
+    socket.on('error', (err) => {
+      socket.destroy();
+      fail(err);
+    });
   });
 }
 
@@ -959,6 +968,27 @@ describe('authentication', () => {
     const res = await bare(`/?token=${TOKEN}`, { headers: { cookie }, redirect: 'manual' });
     expect(res.status).toBe(302);
     expect(res.headers.get('location')).toBe('/');
+  });
+
+  it('never redirects to somewhere that is not this server', async () => {
+    /**
+     * `//evil.example/x` is a scheme-relative URL, not a path: a browser sent there
+     * leaves for `evil.example`. A request for `GET //evil.example/x?token=...` produces
+     * exactly that pathname, so echoing it back turned this redirect into an open one.
+     * The token is stripped by then, so nothing leaks — the reader just lands somewhere
+     * chosen by whoever sent them the link.
+     */
+    const cookie = `akapen_token=${TOKEN}`;
+    for (const path of ['//evil.example/x', '///evil.example/x', '////a']) {
+      const res = await bare(`${path}?token=${TOKEN}`, { headers: { cookie }, redirect: 'manual' });
+      const location = res.headers.get('location') ?? '';
+      // One leading slash is a path on this server, which is all a redirect here should
+      // ever be. Two is an authority, and the name after it is where the browser goes.
+      // The name surviving as a path segment is not a leak — `/evil.example/x` is just a
+      // path akapen does not serve.
+      expect(location.startsWith('/'), `${path} -> ${location}`).toBe(true);
+      expect(location.startsWith('//'), `${path} -> ${location}`).toBe(false);
+    }
   });
 
   it('strips a stale token without storing it, when the cookie is still good', async () => {

@@ -67,7 +67,7 @@ The examples below use `bun run packages/cli/src/cli.ts`; read that as `akapen` 
 | `--css <file>` | extra stylesheet, loaded after the defaults so it can override everything |
 | `--keymap <file>` | JSON overriding the keymap, merged over the defaults |
 | `--author <name>` | comment author (default `$USER`) |
-| `--token <s>` | use this token instead of the stored one |
+| `--token <s>` | use this token instead of the stored one (`AKAPEN_TOKEN` does the same without appearing in `ps`) |
 | `--no-auth` | serve with no token at all, for running behind something that authenticates |
 
 Use `--host 0.0.0.0` to run it on a remote machine and read it from a local browser. The printed URL says `127.0.0.1`, because a wildcard bind is not an address anything connects to; replace it with the machine's LAN address or its name to reach it from elsewhere.
@@ -83,7 +83,7 @@ akapen  /home/you/notes/design.md
 
 Opening that once is the whole of logging in. akapen answers with a cookie and a redirect that takes the token back out of the address bar, so every later visit is the bare `http://host:4300` — and the URL above, kept as a bookmark, still works when the cookie is gone or you are on another browser. Opening the bookmark again redirects again: the token comes out of the address bar every time, not only on the first visit.
 
-The token is one per host, kept in `~/.akapen/token` (mode `0600`), and it does not expire. One per host rather than one per instance is deliberate: cookies are not isolated by port ([RFC 6265 §8.5](https://www.rfc-editor.org/rfc/rfc6265#section-8.5)), so opening any one of the akapen running on a machine authenticates the browser for all of them, including ones started later.
+The token is one per host, kept in `~/.akapen/token` (mode `0600`), and it does not expire. `--token` and `AKAPEN_TOKEN` override it for one run, in that order, and neither is written to the store. One per host rather than one per instance is deliberate: cookies are not isolated by port ([RFC 6265 §8.5](https://www.rfc-editor.org/rfc/rfc6265#section-8.5)), so opening any one of the akapen running on a machine authenticates the browser for all of them, including ones started later.
 
 For curl and agents there is a header, and no cookie is set for it:
 
@@ -96,7 +96,7 @@ curl -H "Authorization: Bearer $(akapen token)" http://127.0.0.1:4300/api/commen
 | `akapen token` | print this host's token |
 | `akapen token --rotate` | replace it — every browser and every script holding the old one is locked out |
 
-It is a shared secret, not a key: nothing is signed or encrypted, holding it is the whole of the authorisation, and it travels on every request. There is no TLS, so it crosses the wire in the clear — on a network where that matters, put akapen behind something that terminates TLS and run it with `--no-auth`. Rotation is the only revocation there is; a single secret cannot lock out one client and keep another. Rotating takes effect on servers that are already running.
+It is a shared secret, not a key: nothing is signed or encrypted, holding it is the whole of the authorisation, and it travels on every request. There is no TLS, so it crosses the wire in the clear — on a network where that matters, put akapen behind something that terminates TLS and run it with `--no-auth`. Rotation is the only revocation there is; a single secret cannot lock out one client and keep another. Rotating takes effect on servers that are already running — except one started with `--token` or `AKAPEN_TOKEN`, which keeps the token it was handed for as long as it runs.
 
 `--no-auth` turns the credential off completely, so it is only safe when nothing can reach the port except the thing in front. Bind it to loopback and point the proxy there:
 
