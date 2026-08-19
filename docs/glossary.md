@@ -13,7 +13,7 @@ apart. Use the qualified form; the bare word is the one that causes the confusio
 
 | Word | One thing | The other thing | Rule |
 |---|---|---|---|
-| anchor | `Comment.anchor` — the snapshot text a comment was written against, used to find the place again after the file moves on | the row a bubble lines up with (`#railAnchored`, `.rail-anchored`) | Say "anchor text" and "anchor row". Never bare "anchor". |
+| anchor | `Comment.anchor` — the snapshot text a comment was written against, used to find the place again after the file moves on | the row a bubble lines up with. Nothing in the DOM marks a row as the anchor row: `layoutRail` matches a bubble's `data-line` against the rows' `data-start`/`data-end` and positions the bubble from the row it lands in | Say "anchor text" and "anchor row". Never bare "anchor". |
 | line | a 1-based number into a snapshot (`startLine`, `endLine`) | what a reader sees as one line of text | "Line" is a number into the snapshot. What is on screen is a row. A wrapped paragraph is one row over many visual lines. |
 | block / row | `Block` — a parsed unit of the document, with `startLine`, `endLine` and a `kind` | `.row` — the element that renders one block | Block is the model, row is the element. One block is one row. |
 | comment | a piece of review feedback (`Comment`, `.bubble`) | an HTML comment inside the markdown (`<!-- … -->`), which akapen shows as text | "Comment" alone is review feedback. For the other, say "an HTML comment in the document". |
@@ -22,6 +22,7 @@ apart. Use the qualified form; the bare word is the one that causes the confusio
 | round | a frozen snapshot of the file (`rounds/NNN/`) | the badge showing `R001` (`#round`) and the picker beside it (`#roundPick`) | "Round" is the snapshot. The screen parts are the "round badge" and the "round selector". |
 | draft | a comment being written and not yet sent (`.bubble.draft`, `startDraft`) | a GitHub pull request that is not ready for review | Inside the product, a draft is an unsent comment. The other belongs to how the repository is worked on, not to akapen. |
 | document / file / snapshot | the live file — what is on disk right now | the snapshot — the round's frozen copy (`rounds/NNN/content.md`) | What is on screen is the snapshot, never the live file. `Doc` is the parsed form of the snapshot (`/api/doc`); `#doc` is the element it is rendered into. |
+| doc / document | `Doc` — the parsed snapshot handed to the browser (`/api/doc`) | the document — the rendered snapshot on screen (`#doc`), and, loosely, the markdown being reviewed | `Doc` is the payload, the document is what is read. Do not shorten "document" to "doc" in prose. |
 | review | `Review` — the contents of `review.json`: round metadata and the current round number | the activity of reading and leaving feedback | Say "review.json" or "the review store" (`~/.akapen/reviews/`) for the data. |
 | inline review | feedback attached to a place in the document, which is what akapen is for | comments written inline into the markdown file, which akapen never does | The comments are inline with respect to the reading, not to the file. The file is never touched. |
 
@@ -98,7 +99,7 @@ Row states, which stack:
 | Term | What it is | Where it exists |
 |---|---|---|
 | author | a name, and nothing more. Anything can be put in it | `Comment.author`, `--author` |
-| author kind | whether a person or an agent wrote it. The server stamps it; what a client claims is ignored | `AuthorKind` (`human` \| `agent`) |
+| author kind | whether a person or an agent wrote a reply. It is on `Reply` only; a comment has no such field. The server stamps it and ignores what a client claims, and today it stamps every reply `human` — nothing authenticates a claim to be otherwise and the path by which an agent writes back is not built yet | `AuthorKind` (`human` \| `agent`), `Reply.authorKind` |
 | agent | the program the feedback is being handed to. It reads comments as JSON and matches them by anchor text | `akapen comments <file.md>` |
 | resolved | a comment that has been dealt with. Status applies to earlier rounds too, or feedback could never be closed | `Comment.resolved`, `--all` |
 
@@ -113,7 +114,7 @@ Row states, which stack:
 
 | Instead of | Say |
 |---|---|
-| strip, band, 帯 | the gutter |
+| strip, band (and 帯, since the confusion this came from happened in Japanese) | the gutter |
 | sidebar | the rail |
 | line, for something on screen | row |
 | inline comment, for what is stored | a comment on a row. Nothing is written into the file |
