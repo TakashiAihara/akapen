@@ -104,28 +104,3 @@ jobs:
           path: test-results/
           retention-days: 7
 
-  # TEMPORARY (remove before review): measures what --with-deps is actually buying.
-  # The runner image README lists one font package (fonts-noto-color-emoji), and the e2e
-  # fixture is Japanese with geometry assertions over it, so "the libraries are already
-  # there" is not on its own enough to drop the flag.
-  deps-probe:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-        with:
-          bun-version: latest
-      - run: bun install --frozen-lockfile
-      - run: bun run build:web
-
-      - name: fonts on the bare runner
-        run: |
-          echo "ja fonts: $(fc-list :lang=ja | wc -l)"
-          fc-list :lang=ja | head -20
-          echo "total fonts: $(fc-list | wc -l)"
-
-      - name: browsers only, no --with-deps
-        run: bunx playwright install chromium
-
-      - name: e2e without the deps
-        run: bun run test:e2e
