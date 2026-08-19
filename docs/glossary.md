@@ -14,14 +14,14 @@ apart. Use the qualified form; the bare word is the one that causes the confusio
 | Word | One thing | The other thing | Rule |
 |---|---|---|---|
 | anchor | `Comment.anchor` — the snapshot text a comment was written against, used to find the place again after the file moves on | the row a bubble lines up with (`#railAnchored`, `.rail-anchored`) | Say "anchor text" and "anchor row". Never bare "anchor". |
-| line | a 1-based number into a snapshot (`startLine`, `endLine`, `lineCount`) | what a reader sees as one line of text | "Line" is a number into the snapshot. What is on screen is a row. A wrapped paragraph is one row over many visual lines. |
+| line | a 1-based number into a snapshot (`startLine`, `endLine`) | what a reader sees as one line of text | "Line" is a number into the snapshot. What is on screen is a row. A wrapped paragraph is one row over many visual lines. |
 | block / row | `Block` — a parsed unit of the document, with `startLine`, `endLine` and a `kind` | `.row` — the element that renders one block | Block is the model, row is the element. One block is one row. |
 | comment | a piece of review feedback (`Comment`, `.bubble`) | an HTML comment inside the markdown (`<!-- … -->`), which akapen shows as text | "Comment" alone is review feedback. For the other, say "an HTML comment in the document". |
 | mark / marker | the row mark — a thin accent line at the left of a row that carries a comment (`.row.has-comment`) | the count marker — the badge in the gutter showing how many comments a row has, shown only while the rail is collapsed (`.marker`) | Always qualified: "row mark", "count marker", "list marker" (`.li-marker`, a bullet or number). |
 | gutter / rail | the gutter — the area left of the text holding the line number, the count marker and the + (`.gutter`) | the rail — the column right of the document holding bubbles (`.rail`) | Left is the gutter, right is the rail. Not "sidebar", not "strip", not "band". |
 | round | a frozen snapshot of the file (`rounds/NNN/`) | the badge showing `R001` (`#round`) and the picker beside it (`#roundPick`) | "Round" is the snapshot. The screen parts are the "round badge" and the "round selector". |
 | draft | a comment being written and not yet sent (`.bubble.draft`, `startDraft`) | a GitHub pull request that is not ready for review | Inside the product, a draft is an unsent comment. The other belongs to how the repository is worked on, not to akapen. |
-| document / file / snapshot | the live file — what is on disk right now | the snapshot — the round's frozen copy (`rounds/NNN/content.md`) | What is on screen is the snapshot, never the live file. `Doc` is the parsed form of the snapshot (`/api/doc`, `#doc`). |
+| document / file / snapshot | the live file — what is on disk right now | the snapshot — the round's frozen copy (`rounds/NNN/content.md`) | What is on screen is the snapshot, never the live file. `Doc` is the parsed form of the snapshot (`/api/doc`); `#doc` is the element it is rendered into. |
 | review | `Review` — the contents of `review.json`: round metadata and the current round number | the activity of reading and leaving feedback | Say "review.json" or "the review store" (`~/.akapen/reviews/`) for the data. |
 | inline review | feedback attached to a place in the document, which is what akapen is for | comments written inline into the markdown file, which akapen never does | The comments are inline with respect to the reading, not to the file. The file is never touched. |
 
@@ -44,7 +44,7 @@ apart. Use the qualified form; the bare word is the one that causes the confusio
 | bubble | one comment on screen, with its replies | `.bubble` |
 | draft bubble | the comment being written | `.bubble.draft` |
 | reply | a message under a comment. One level: a reply cannot be replied to | `Reply`, `.reply` |
-| top bar | the strip across the top: name, file path, round badge, count, controls | `.topbar` |
+| top bar | the bar across the top of the screen: name, file path, round badge, count, controls | `.topbar` |
 | banner | the line saying the live file has changed since the snapshot | `#banner`, `ChangedState` |
 | history bar | the line saying an earlier round is being viewed, which is read-only for the document | `#historyBar` |
 | round badge / round selector | the current round, and the picker for earlier ones | `#round`, `#roundPick` |
@@ -86,7 +86,7 @@ Row states, which stack:
 | dirty | the live file no longer matches the current round's snapshot | `ChangedState.dirty` |
 
 ```text
-~/.akapen/reviews/<basename>-<hash>/
+~/.akapen/reviews/<basename>-<hash>/   # ~/.akapen is the default; AKAPEN_HOME replaces that root
   review.json          # round metadata and the current round number
   rounds/
     001/content.md     # the frozen document
