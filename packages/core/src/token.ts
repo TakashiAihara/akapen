@@ -67,18 +67,32 @@ export function readToken(): string | null {
  * afterwards, since it is usually not ours to create by then — a 0755 directory holding
  * a 0600 file leaks that the file exists, not what is in it.
  */
-export function writeToken(token: string): void {
+/**
+ * Make `~/.akapen` ours alone.
+ *
+ * Everything akapen keeps is in here — the documents' rounds, every comment, which files
+ * are being reviewed and by which process — and the store and the registry both create
+ * the directory without asking for a mode, so it lands world-readable at the usual
+ * umask. Nothing in it is meant for anyone else on the host.
+ *
+ * Called on every start, not only when a token is written. A run given its token through
+ * `--token` or `AKAPEN_TOKEN` never writes one, and it holds the same reviews.
+ *
+ * `mkdirSync` applies its mode only to a directory it creates, so the chmod is not
+ * redundant with the line above it.
+ */
+export function secureHome(): void {
   const home = akapenHome();
   mkdirSync(home, { recursive: true, mode: 0o700 });
-  // `mkdirSync` applies its mode only when it creates the directory, and by the time a
-  // token is first written the store has usually made `~/.akapen` already — at the umask
-  // default, which is world-readable. Tighten it rather than let the mode above describe
-  // something that is only true on a fresh install.
   try {
     chmodSync(home, 0o700);
   } catch {
-    /* Someone else's directory to own. The token file is still 0600 either way. */
+    /* Not ours to tighten. Whatever is written into it still carries its own mode. */
   }
+}
+
+export function writeToken(token: string): void {
+  secureHome();
   writeAtomic(tokenPath(), token, { mode: 0o600 });
 }
 

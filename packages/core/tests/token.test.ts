@@ -11,7 +11,15 @@ import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { currentToken, readToken, resolveToken, rotateToken, tokenPath, tokensMatch } from '../src/token.ts';
+import {
+  currentToken,
+  readToken,
+  resolveToken,
+  rotateToken,
+  secureHome,
+  tokenPath,
+  tokensMatch,
+} from '../src/token.ts';
 
 let sandbox: string;
 let home: string;
@@ -53,6 +61,14 @@ describe('the stored token', () => {
   it('is written where nobody else on the host can read it', () => {
     resolveToken();
     expect(statSync(tokenPath()).mode & 0o777).toBe(0o600);
+    expect(statSync(home).mode & 0o777).toBe(0o700);
+  });
+
+  it('tightens the home directory even when no token is ever written', () => {
+    // A run given its token through `--token` or `AKAPEN_TOKEN` never calls `writeToken`,
+    // and the reviews and the instance registry are in that directory just the same.
+    mkdirSync(home, { recursive: true, mode: 0o755 });
+    secureHome();
     expect(statSync(home).mode & 0o777).toBe(0o700);
   });
 

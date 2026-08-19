@@ -98,6 +98,8 @@ curl -H "Authorization: Bearer $(akapen token)" http://127.0.0.1:4300/api/commen
 
 It is a shared secret, not a key: nothing is signed or encrypted, holding it is the whole of the authorisation, and it travels on every request. There is no TLS, so it crosses the wire in the clear — on a network where that matters, put akapen behind something that terminates TLS and run it with `--no-auth`. Rotation is the only revocation there is; a single secret cannot lock out one client and keep another.
 
+Writes have to come from akapen's own page. `SameSite` is about the site and a site does not include the port, so anything served from another port on this host — a dev server, another person's process — is same-site, and the browser attaches akapen's cookie to requests it makes here. Unsafe methods therefore require `Sec-Fetch-Site: same-origin`, or no such header at all, which is what curl and agents send.
+
 Separately from the token, akapen refuses any request whose `Host` header is not a name it actually serves. That is not the same job. A page you visit can point its own hostname at `127.0.0.1` after loading — DNS rebinding — and the browser will then treat akapen as that page's origin and attach the cookie itself, so the token proves nothing. The `Host` header is the part of the request a script cannot choose, which is why it is the one checked. It is why loopback alone was never a defence, and it stays on under `--no-auth`.
 
 Several akapen on one host can find each other, so `-p 0` — let the OS pick a port — is a reasonable way to start one.

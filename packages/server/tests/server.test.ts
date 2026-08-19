@@ -999,6 +999,63 @@ describe('authentication', () => {
     ctrl.abort();
   });
 
+  it('refuses a write that came from another page, cookie and all', async () => {
+    /**
+     * The cross-port case, which the cookie cannot tell apart on its own.
+     *
+     * Cookies are not isolated by port and neither is `SameSite`, so a page on another
+     * port of this host is the same *site* and the browser attaches akapen's cookie to
+     * its requests. `POST` with no body needs no preflight, so nothing else is in the
+     * way: without this check a page on `localhost:8080` cuts a round here.
+     */
+    const cookie = `akapen_token=${TOKEN}`;
+    const from = (site: string) =>
+      bare('/api/rounds', { method: 'POST', headers: { cookie, 'sec-fetch-site': site } });
+
+    expect((await from('cross-site')).status).toBe(403);
+    expect((await from('same-site')).status).toBe(403);
+
+    // Reads are left alone: without CORS headers the answer cannot be read back, and a
+    // GET changes nothing whether it can be or not.
+    expect((await bare('/api/doc', { headers: { cookie, 'sec-fetch-site': 'cross-site' } })).status).toBe(
+      200,
+    );
+  });
+
+  it("lets akapen's own page write, and lets a client that is not a browser write", async () => {
+    const cookie = `akapen_token=${TOKEN}`;
+    // What the browser sends for akapen's own fetch.
+    expect(
+      (
+        await bare('/api/comments', {
+          method: 'POST',
+          headers: { cookie, 'sec-fetch-site': 'same-origin', 'content-type': 'application/json' },
+          body: JSON.stringify({ startLine: 5, endLine: 5, body: 'from the page itself' }),
+        })
+      ).status,
+    ).toBe(200);
+
+    // curl and agents send no Sec-Fetch-* at all, and carry a bearer token instead.
+    expect(
+      (
+        await bare('/api/comments', {
+          method: 'POST',
+          headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ startLine: 5, endLine: 5, body: 'from an agent' }),
+        })
+      ).status,
+    ).toBe(200);
+  });
+
+  it('serves a name spelled with the root dot', async () => {
+    // `localhost.` is `localhost` with the root of the DNS tree written out. Clients do
+    // send it, and a 403 there is a refusal with nothing wrong on the other end.
+    const port = Number(server!.port);
+    expect(await rawGet(port, '/api/doc', `localhost.:${port}`, [`Authorization: Bearer ${TOKEN}`])).toBe(
+      200,
+    );
+  });
+
   it('refuses a Host it does not serve, even holding a valid token', async () => {
     // DNS rebinding: the browser believes akapen is the attacker's origin and attaches
     // the cookie itself, so the token proves nothing here. The Host is the only part of

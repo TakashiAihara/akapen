@@ -114,8 +114,15 @@ function hostnameOf(header: string): string {
     return close === -1 ? value : value.slice(0, close + 1);
   }
   const colon = value.lastIndexOf(':');
-  return colon === -1 ? value : value.slice(0, colon);
+  const name = colon === -1 ? value : value.slice(0, colon);
+  // `localhost.` is the same name as `localhost` — the trailing dot is the root of the
+  // DNS tree spelled out. Some clients send it, and refusing them would be a 403 with
+  // nothing wrong on the other end.
+  return name.endsWith('.') ? name.slice(0, -1) : name;
 }
+
+/** Methods that only read. A cross-origin one of these cannot be read back without CORS. */
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
 export function startServer(opts: ServeOptions) {
   const file = resolve(opts.file);
@@ -257,7 +264,26 @@ export function startServer(opts: ServeOptions) {
   const app = new Hono();
 
   const token = opts.token;
-  const allowed = allowedHostnames(opts.host);
+
+  /**
+   * The names we answer to, rebuilt when one is not recognised.
+   *
+   * Under a wildcard bind the set is the machine's own addresses, and those change
+   * underneath a running process: joining a VPN or moving to another network gives it an
+   * address it did not have at startup, and every request to that address would be a 403
+   * with nothing wrong. Rebuilding only on a miss keeps the syscall off the common path,
+   * and the interval keeps a stream of unknown Hosts from turning into a stream of them.
+   */
+  let allowed = allowedHostnames(opts.host);
+  let rebuiltAt = 0;
+  const serves = (name: string): boolean => {
+    if (allowed.has(name)) return true;
+    const now = Date.now();
+    if (now - rebuiltAt < 1_000) return false;
+    rebuiltAt = now;
+    allowed = allowedHostnames(opts.host);
+    return allowed.has(name);
+  };
 
   /**
    * Everything below this is behind it, assets and SSE included.
@@ -285,11 +311,44 @@ export function startServer(opts: ServeOptions) {
   });
 
   app.use('*', async (c, next) => {
-    // A missing Host is not treated as a foreign one. Rebinding needs a browser, and a
-    // browser always sends it; refusing would only break odd clients for no gain.
+    /**
+     * HTTP/1.1 requires a Host, and the name check below is the whole rebinding defence,
+     * so an absent one is refused rather than waved through as "not a foreign name".
+     *
+     * Unreachable as things stand: Bun answers a Host-less HTTP/1.1 request with a 500
+     * before any of this runs, which is why there is no test for it — one would pass
+     * with the branch removed and would be pinning nothing. It is here so that the rule
+     * is the rule, rather than something the runtime happens to be enforcing for us.
+     */
     const host = c.req.header('host');
-    if (host !== undefined && !allowed.has(hostnameOf(host))) {
+    if (host === undefined || !serves(hostnameOf(host))) {
       return c.text('host not served here', 403);
+    }
+
+    /**
+     * A write has to come from akapen's own page.
+     *
+     * The cookie is not enough on its own, because cookies are not isolated by port and
+     * neither is `SameSite`: anything served from another port on this host is the same
+     * *site*, so the browser attaches the cookie to its requests here. A `POST` with no
+     * body is a CORS-simple request, so no preflight stands in the way either — a page
+     * on `localhost:8080` could cut a round on `localhost:4300` and the reader would
+     * find their document had moved under them. It could not read the answer, since
+     * nothing here sends CORS headers, but the damage is in the doing.
+     *
+     * `Sec-Fetch-Site` is what closes it, rather than comparing `Origin` with `Host`:
+     * the browser works it out from what it sees, so a TLS-terminating proxy in front —
+     * the arrangement `--no-auth` exists for — still reads as `same-origin`, where
+     * comparing the two headers would refuse every write.
+     *
+     * Absent means a client that is not a browser, which is curl and agents, and they
+     * carry a bearer token instead. Browsers older than the header are not covered.
+     */
+    if (!SAFE_METHODS.has(c.req.method)) {
+      const site = c.req.header('sec-fetch-site');
+      if (site !== undefined && site !== 'same-origin' && site !== 'none') {
+        return c.text('a write has to come from akapen itself', 403);
+      }
     }
     if (token === null) return next();
 

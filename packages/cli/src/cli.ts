@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 import { startServer } from '@akapen/server';
 import { loadReview, pendingComments } from '@akapen/core/store';
 import { liveInstances } from '@akapen/core/instances';
-import { currentToken, resolveToken, rotateToken } from '@akapen/core/token';
+import { currentToken, resolveToken, rotateToken, secureHome } from '@akapen/core/token';
 import { parseArgs, resolvePort, UsageError, type Args } from './args.ts';
 
 const USAGE = `akapen — markdown inline review (PoC)
@@ -192,6 +192,10 @@ try {
  * page in the reader's own browser can reach it. `--no-auth` is the way out, for when
  * something in front is already doing this job.
  */
+// Before anything is written into it, and whether or not a token is generated: the
+// reviews and the registry live in the same directory and are nobody else's business.
+secureHome();
+
 const token = args['no-auth'] ? null : resolveToken(args.token);
 
 const { server, stop, storeDir, round } = startServer({

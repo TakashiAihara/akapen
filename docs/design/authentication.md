@@ -16,6 +16,17 @@ Before this, `--host 0.0.0.0` put four things on the LAN with no credential.
 - A passive listener on the same segment. There is no TLS, so the token crosses the wire in the clear. On switched Ethernet or WPA2/3 the exposure is narrow, but it is not zero and no token closes it. Terminate TLS in front and run with `--no-auth` where that matters.
 - Another process running as the same user on the same host. It can read `~/.akapen/` and the markdown directly, so a credential in front of the port gives it nothing new.
 
+## Accepted limits
+
+These follow from the design rather than from an oversight. They are written down so that nobody has to rediscover them, and so a later change knows what it would be trading away.
+
+- **A sniffer on the segment gets everything.** No TLS, so the token is in the clear on every request, and it does not expire — one capture is good until somebody runs `akapen token --rotate`. Terminate TLS in front and run `--no-auth` where this matters.
+- **The token is in the printed URL, and stays in the bookmark.** That is what makes it work without a login page, and it means the secret also lives in terminal scrollback, in browser bookmark sync, and in any proxy log that records query strings. Pasting that URL to somebody hands them the host.
+- **`--token` is visible in `ps` and in shell history.** `AKAPEN_TOKEN` supplies one without that.
+- **One token is one level of access.** There is no read-only and no per-document scope: whoever holds it can comment, resolve and cut a round on every akapen on that host. Rotation is the only revocation, and it locks out everyone at once.
+- **The machine's short hostname is served.** Reaching it as `http://mcdev:4300` is ordinary and refusing that would break it. Someone who can answer mDNS for that name on the LAN can therefore put a page on an origin akapen serves; the write check below is what stops that page from doing anything with it.
+- **Browsers older than `Sec-Fetch-Site` get no cross-origin write protection.** Chrome 76, Firefox 90 and Safari 16.4 and later send it.
+
 ## What it is
 
 A shared secret, presented three ways, checked in one middleware ahead of every route.
@@ -115,9 +126,18 @@ sequenceDiagram
 
 - The token stops none of this: the browser is holding a valid one and attaches it itself. `HttpOnly` is irrelevant — the browser, not the script, is doing the attaching.
 - What a script cannot choose is the `Host` header, so refusing every name akapen does not serve closes the class. Allowed: the bind address, `localhost`, `127.0.0.1`, the machine's own interface addresses under a wildcard bind, and its hostname.
+- The set is rebuilt when a name is not recognised, at most once a second. Under a wildcard bind it is the machine's own addresses, and those change underneath a running process — joining a VPN or moving network gives it one it did not have at startup, and every request to that address would otherwise be a 403 with nothing wrong.
 - It stays on under `--no-auth`, because it answers a different question from "who may connect".
-- A missing `Host` is allowed rather than refused. Rebinding needs a browser and browsers always send one, so refusing would break odd clients for nothing.
+- A missing `Host` is refused. It cannot happen today — Bun answers a Host-less HTTP/1.1 request with a 500 before any of this runs — so there is no test for it; one would pass with the branch removed and pin nothing.
 - `SameSite=Lax` covers the ordinary cross-site case beneath it: another site's `fetch` or form post carries no cookie.
+
+## Writes have to come from akapen's own page
+
+- `SameSite` is about the *site*, and a site does not include the port. Anything served from another port on this host — a dev server, a static file server, another person's process on a shared machine — is same-site, so the browser attaches akapen's cookie to requests it makes here.
+- A `POST` with no body is a CORS-simple request, so no preflight stands in the way either. Before this check a page on `localhost:8080` could cut a round on `localhost:4300`. It could not read the answer, since nothing here sends CORS headers, but the round had still moved under whoever was reading.
+- Unsafe methods therefore require `Sec-Fetch-Site` to be `same-origin`, `none`, or absent.
+- `Sec-Fetch-Site` rather than comparing `Origin` with `Host`: the browser works it out from what it sees, so a TLS-terminating proxy in front — the arrangement `--no-auth` exists for — still reads as `same-origin`, where comparing the two headers would refuse every write.
+- Reads are left alone. Without CORS headers a cross-origin read cannot be read back, and a `GET` changes nothing either way.
 
 ## Rejected
 
