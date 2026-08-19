@@ -154,13 +154,18 @@ function isStatus(v: unknown): v is StatusPayload {
 }
 
 /**
- * Where to reach an instance from this host.
+ * Where to reach an instance from this host, as a URL authority.
  *
  * A wildcard bind is not an address anything can connect to, so it becomes loopback.
  * Anything else is the address it is actually listening on — a bind to one LAN
  * interface answers there and nowhere else, and assuming loopback would report it dead.
+ *
+ * Exported because the startup line needs the same answer. `http://0.0.0.0:4300` is not
+ * somewhere a browser can go, and since the server refuses a `Host` it does not serve,
+ * it is now a 403 rather than merely unhelpful. Printing a URL that is reachable from
+ * somewhere other than this host is #87, and is a different question.
  */
-function probeHost(host: string): string {
+export function reachableHost(host: string): string {
   if (host === '0.0.0.0') return '127.0.0.1';
   if (host === '::' || host === '[::]') return '[::1]';
   return host.includes(':') && !host.startsWith('[') ? `[${host}]` : host;
@@ -186,7 +191,7 @@ async function askStatus(
     // Passed in rather than read off disk here: a process started with `--token` or
     // `AKAPEN_TOKEN` is running on a token that was never written, and reading the file
     // would send the wrong one — or none — while the caller had the right one all along.
-    const res = await fetch(`http://${probeHost(record.host)}:${record.port}/api/status`, {
+    const res = await fetch(`http://${reachableHost(record.host)}:${record.port}/api/status`, {
       signal: AbortSignal.timeout(timeoutMs),
       ...(token === null ? {} : { headers: { authorization: `Bearer ${token}` } }),
     });

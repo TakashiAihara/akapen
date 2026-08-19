@@ -70,7 +70,7 @@ The examples below use `bun run packages/cli/src/cli.ts`; read that as `akapen` 
 | `--token <s>` | use this token instead of the stored one |
 | `--no-auth` | serve with no token at all, for running behind something that authenticates |
 
-Use `--host 0.0.0.0` to run it on a remote machine and read it from a local browser.
+Use `--host 0.0.0.0` to run it on a remote machine and read it from a local browser. The printed URL says `127.0.0.1`, because a wildcard bind is not an address anything connects to; replace it with the machine's LAN address or its name to reach it from elsewhere.
 
 ### Authentication
 
@@ -96,7 +96,15 @@ curl -H "Authorization: Bearer $(akapen token)" http://127.0.0.1:4300/api/commen
 | `akapen token` | print this host's token |
 | `akapen token --rotate` | replace it — every browser and every script holding the old one is locked out |
 
-It is a shared secret, not a key: nothing is signed or encrypted, holding it is the whole of the authorisation, and it travels on every request. There is no TLS, so it crosses the wire in the clear — on a network where that matters, put akapen behind something that terminates TLS and run it with `--no-auth`. Rotation is the only revocation there is; a single secret cannot lock out one client and keep another.
+It is a shared secret, not a key: nothing is signed or encrypted, holding it is the whole of the authorisation, and it travels on every request. There is no TLS, so it crosses the wire in the clear — on a network where that matters, put akapen behind something that terminates TLS and run it with `--no-auth`. Rotation is the only revocation there is; a single secret cannot lock out one client and keep another. Rotating takes effect on servers that are already running.
+
+`--no-auth` turns the credential off completely, so it is only safe when nothing can reach the port except the thing in front. Bind it to loopback and point the proxy there:
+
+```bash
+akapen note.md --host 127.0.0.1 -p 4300 --no-auth
+```
+
+A proxy does not protect a port that is still listening on the LAN beside it, and the `Host` check is not a credential — a client connecting directly can send whichever name it likes.
 
 Writes have to come from akapen's own page. `SameSite` is about the site and a site does not include the port, so anything served from another port on this host — a dev server, another person's process — is same-site, and the browser attaches akapen's cookie to requests it makes here. Unsafe methods therefore require `Sec-Fetch-Site: same-origin`, or no such header at all, which is what curl and agents send.
 

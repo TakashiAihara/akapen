@@ -136,7 +136,14 @@ export const test = base.extend<{ akapen: Akapen }>({
         append: (text: string) => writeFileSync(file, readFileSync(file, 'utf8') + text),
       });
     } finally {
-      proc.kill();
+      // Waited for, not just signalled — the same as `startPeer`. Removing the sandbox
+      // while the server is still shutting down leaves it writing into a directory that
+      // is going away, and leaves the port held into the next test.
+      if (proc.exitCode === null && proc.signalCode === null) {
+        const exited = new Promise<void>((done) => proc.once('exit', () => done()));
+        proc.kill();
+        await exited;
+      }
       rmSync(sandbox, { recursive: true, force: true });
     }
   },

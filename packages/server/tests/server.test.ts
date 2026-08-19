@@ -1102,6 +1102,68 @@ describe('authentication', () => {
     }
   });
 
+  it('stops accepting the old token once the stored one is rotated', async () => {
+    /**
+     * Rotation is the only revocation there is, so it has to reach the servers that are
+     * already running. Reading the token once at startup would leave every open cookie
+     * and every script holding the old one working until each instance was restarted —
+     * revoking nothing, at the moment somebody had decided to revoke.
+     *
+     * Started without AKAPEN_TOKEN, because a token handed in is pinned on purpose.
+     */
+    const home = join(sandbox, 'rotating-home');
+    const note = join(sandbox, 'rotating.md');
+    writeFileSync(note, SOURCE);
+    const running = await start(note, home, [], { token: null });
+    try {
+      const before = readFileSync(join(home, 'token'), 'utf8').trim();
+      const bearer = (t: string) =>
+        globalThis.fetch(`${running.url}/api/doc`, { headers: { authorization: `Bearer ${t}` } });
+      expect((await bearer(before)).status).toBe(200);
+
+      const after = execSync(`bun run ${CLI} token --rotate`, {
+        env: { ...process.env, AKAPEN_HOME: home },
+        encoding: 'utf8',
+      }).trim();
+      expect(after).not.toBe(before);
+
+      // The server re-reads on an interval rather than per request, so give it one.
+      await new Promise((r) => setTimeout(r, 1_200));
+
+      expect((await bearer(after)).status).toBe(200);
+      expect((await bearer(before)).status).toBe(401);
+    } finally {
+      running.stop();
+      await running.stopped;
+    }
+  });
+
+  it('keeps a token it was handed, whatever the store says afterwards', async () => {
+    // The other half of the rule: `--token` and `AKAPEN_TOKEN` belong to whoever passed
+    // them, and a rotation on this host is not theirs to be told about.
+    const home = join(sandbox, 'pinned-home');
+    const note = join(sandbox, 'pinned.md');
+    writeFileSync(note, SOURCE);
+    const running = await start(note, home, [], { token: 'pinned-for-this-run' });
+    try {
+      execSync(`bun run ${CLI} token --rotate`, {
+        env: { ...process.env, AKAPEN_HOME: home },
+        encoding: 'utf8',
+      });
+      await new Promise((r) => setTimeout(r, 1_200));
+      expect(
+        (
+          await globalThis.fetch(`${running.url}/api/doc`, {
+            headers: { authorization: 'Bearer pinned-for-this-run' },
+          })
+        ).status,
+      ).toBe(200);
+    } finally {
+      running.stop();
+      await running.stopped;
+    }
+  });
+
   it('serves without a credential only when asked to', async () => {
     const open = join(sandbox, 'open.md');
     writeFileSync(open, SOURCE);

@@ -114,6 +114,20 @@ export function currentToken(): string | null {
 }
 
 /**
+ * Whether the token was chosen by the caller rather than read from the store.
+ *
+ * A pinned one belongs to whoever handed it in and lasts as long as the process. One
+ * that came from the store does not: rotating it has to lock out the sessions that are
+ * open now, which means the server has to keep looking at the file rather than at what
+ * it read when it started.
+ */
+export function tokenIsPinned(explicit?: string): boolean {
+  if (explicit !== undefined && explicit !== '') return true;
+  const env = process.env['AKAPEN_TOKEN'];
+  return env !== undefined && env !== '';
+}
+
+/**
  * The token this process will serve with, generating and storing one the first time.
  *
  * `explicit` is `--token`, which wins over everything: it is the only one the caller

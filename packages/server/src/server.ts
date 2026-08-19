@@ -6,7 +6,7 @@ import { getCookie, setCookie } from 'hono/cookie';
 import { vValidator } from '@hono/valibot-validator';
 import { ASSETS, mimeFor } from './assets.ts';
 import { buildDoc } from '@akapen/core/blocks';
-import { tokensMatch } from '@akapen/core/token';
+import { readToken, tokensMatch } from '@akapen/core/token';
 import {
   addReply,
   carriedOver,
@@ -52,6 +52,15 @@ export type ServeOptions = {
    * which is what `allowedHostnames` below is about.
    */
   token: string | null;
+  /**
+   * Whether that secret is fixed for the life of the process.
+   *
+   * True for one handed in with `--token` or `AKAPEN_TOKEN`, which belongs to whoever
+   * handed it in. False for one read from the store, where `akapen token --rotate` has
+   * to take effect on the servers that are already running — otherwise the only
+   * revocation there is revokes nothing until every instance is restarted.
+   */
+  tokenPinned: boolean;
 };
 
 /** Addresses that only the host itself can reach. `::1` also arrives bracketed. */
@@ -266,6 +275,28 @@ export function startServer(opts: ServeOptions) {
   const token = opts.token;
 
   /**
+   * The secret to check against right now.
+   *
+   * Re-read rather than captured, so that rotating the stored token locks out the
+   * cookies and scripts holding the old one without waiting for a restart. Cached for a
+   * moment because this is on the path of every request, including each asset.
+   *
+   * A store that has become unreadable falls back to the startup value rather than
+   * locking everyone out: losing the file should not end a review in progress.
+   */
+  let secretAt = 0;
+  let secret = token;
+  const currentSecret = (): string | null => {
+    if (token === null || opts.tokenPinned) return token;
+    const now = Date.now();
+    if (now - secretAt >= 1_000) {
+      secretAt = now;
+      secret = readToken() ?? token;
+    }
+    return secret;
+  };
+
+  /**
    * The names we answer to, rebuilt when one is not recognised.
    *
    * Under a wildcard bind the set is the machine's own addresses, and those change
@@ -350,15 +381,16 @@ export function startServer(opts: ServeOptions) {
         return c.text('a write has to come from akapen itself', 403);
       }
     }
-    if (token === null) return next();
+    const active = currentSecret();
+    if (active === null) return next();
 
     const cookie = getCookie(c, COOKIE);
-    if (cookie !== undefined && tokensMatch(cookie, token)) return next();
+    if (cookie !== undefined && tokensMatch(cookie, active)) return next();
 
     const url = new URL(c.req.url);
     const presented = url.searchParams.get('token');
-    if (presented !== null && tokensMatch(presented, token)) {
-      setCookie(c, COOKIE, token, {
+    if (presented !== null && tokensMatch(presented, active)) {
+      setCookie(c, COOKIE, active, {
         httpOnly: true,
         sameSite: 'Lax',
         path: '/',
@@ -379,7 +411,7 @@ export function startServer(opts: ServeOptions) {
     // is right while a 401 telling it otherwise is not.
     const auth = c.req.header('authorization') ?? '';
     const bearer = /^bearer /i.test(auth) ? auth.slice('bearer '.length) : null;
-    if (bearer !== null && tokensMatch(bearer, token)) return next();
+    if (bearer !== null && tokensMatch(bearer, active)) return next();
 
     return c.text('unauthenticated. open the URL akapen printed, or run `akapen token`', 401, {
       // What a 401 owes the client: which scheme would have worked (RFC 7235 §3.1).
@@ -559,7 +591,7 @@ export function startServer(opts: ServeOptions) {
    * from the reader's machine at all while being perfectly reachable from here.
    */
   app.get('/api/instances', async (c) => {
-    const live = await liveInstances({ excludePid: process.pid, token });
+    const live = await liveInstances({ excludePid: process.pid, token: currentSecret() });
     const payload: InstancesPayload = {
       instances: live.map(({ record, status }) => ({
         pid: record.pid,

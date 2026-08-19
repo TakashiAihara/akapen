@@ -3,8 +3,8 @@ import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { startServer } from '@akapen/server';
 import { loadReview, pendingComments } from '@akapen/core/store';
-import { liveInstances } from '@akapen/core/instances';
-import { currentToken, resolveToken, rotateToken, secureHome } from '@akapen/core/token';
+import { liveInstances, reachableHost } from '@akapen/core/instances';
+import { currentToken, resolveToken, rotateToken, secureHome, tokenIsPinned } from '@akapen/core/token';
 import { parseArgs, resolvePort, UsageError, type Args } from './args.ts';
 
 const USAGE = `akapen — markdown inline review (PoC)
@@ -203,6 +203,7 @@ const { server, stop, storeDir, round } = startServer({
   host,
   port,
   token,
+  tokenPinned: tokenIsPinned(args.token),
   author: args.author ?? process.env['USER'] ?? 'user',
   // exactOptionalPropertyTypes: `?:` means "may be absent", not "may be undefined".
   // With no value given, drop the key entirely.
@@ -234,7 +235,12 @@ for (const [signal, code] of [
 // Encoded because a generated token is base64url but one handed in through `--token` or
 // `AKAPEN_TOKEN` is any string at all, and a `&` in it would print a URL that cannot be
 // used. The server reads the parameter decoded, so the two ends agree.
-const url = `http://${host}:${server.port}${token === null ? '' : `/?token=${encodeURIComponent(token)}`}`;
+// The bind address is not always somewhere a browser can go. `0.0.0.0` and `::` name
+// every interface rather than any one of them, and since the server refuses a `Host` it
+// does not serve, printing them now yields a 403 rather than just an odd-looking URL.
+// The same mapping the instance registry uses to reach a peer answers this too.
+const shown = reachableHost(host);
+const url = `http://${shown}:${server.port}${token === null ? '' : `/?token=${encodeURIComponent(token)}`}`;
 
 console.log(`akapen  ${resolve(file)}`);
 console.log(`  url     ${url}`);

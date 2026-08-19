@@ -20,10 +20,10 @@ Before this, `--host 0.0.0.0` put four things on the LAN with no credential.
 
 These follow from the design rather than from an oversight. They are written down so that nobody has to rediscover them, and so a later change knows what it would be trading away.
 
-- **A sniffer on the segment gets everything.** No TLS, so the token is in the clear on every request, and it does not expire — one capture is good until somebody runs `akapen token --rotate`. Terminate TLS in front and run `--no-auth` where this matters.
+- **A sniffer on the segment gets everything.** No TLS, so the token is in the clear on every request, and it does not expire — one capture is good until somebody runs `akapen token --rotate`. Terminate TLS in front where this matters, and bind akapen to loopback behind it: TLS in front is worth nothing while the plain port is still listening on the LAN beside it.
 - **The token is in the printed URL, and stays in the bookmark.** That is what makes it work without a login page, and it means the secret also lives in terminal scrollback, in browser bookmark sync, and in any proxy log that records query strings. Pasting that URL to somebody hands them the host.
 - **`--token` is visible in `ps` and in shell history.** `AKAPEN_TOKEN` supplies one without that.
-- **One token is one level of access.** There is no read-only and no per-document scope: whoever holds it can comment, resolve and cut a round on every akapen on that host. Rotation is the only revocation, and it locks out everyone at once.
+- **One token is one level of access.** There is no read-only and no per-document scope: whoever holds it can comment, resolve and cut a round on every akapen on that host. Rotation is the only revocation, it locks out everyone at once, and it reaches servers that are already running.
 - **The machine's short hostname is served.** Reaching it as `http://mcdev:4300` is ordinary and refusing that would break it. Someone who can answer mDNS for that name on the LAN can therefore put a page on an origin akapen serves; the write check below is what stops that page from doing anything with it.
 - **Browsers older than `Sec-Fetch-Site` get no cross-origin write protection.** Chrome 76, Firefox 90 and Safari 16.4 and later send it.
 
@@ -98,6 +98,7 @@ flowchart TD
 
 - Resolution order is `--token`, then `AKAPEN_TOKEN`, then the stored one. Even so, prefer `AKAPEN_TOKEN` when supplying one yourself: a flag is visible in `ps` output and in shell history.
 - Neither a flag nor an environment token is written to disk. Persisting one would quietly make somebody else's secret this host's secret for every later run.
+- The server re-reads it rather than capturing it at startup, so `akapen token --rotate` locks out the open cookies and running scripts without waiting for every instance to be restarted. A token handed in with `--token` or `AKAPEN_TOKEN` is pinned instead: it belongs to whoever passed it, and a rotation on this host is not theirs to be told about.
 - It is persisted so that the URL survives a restart, which is the condition for a bookmark being worth keeping. A token generated per run is seamless too, right up until the cookie is cleared — and then the bookmark is dead.
 - The cookie is given a year, because the token behind it does not expire and a session cookie would mean logging in again after every browser restart — the thing this flow exists to avoid.
 - The token itself does not expire. An expiring token means the bookmark breaks on a schedule, which is the thing this design exists to avoid; expiry would need separate lifetimes for the cookie and the token, and that is a different design.
@@ -162,5 +163,6 @@ sequenceDiagram
 
 ### Delegating to Tailscale Serve
 
-- Not rejected. It is a good answer where Tailscale is installed and it composes with this — run with `--no-auth` behind it.
+- Not rejected. It is a good answer where Tailscale is installed and it composes with this — run with `--no-auth` behind it, bound to loopback.
+- `--no-auth` removes the credential entirely, so it is only safe when the port cannot be reached except through the thing in front. The `Host` check is not a substitute: it is not a credential, and a client connecting directly sends whatever name it likes.
 - It is simply not something akapen can implement.
