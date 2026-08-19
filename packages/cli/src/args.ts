@@ -14,10 +14,10 @@
 export class UsageError extends Error {}
 
 /** Flags that carry a value. Given without one, they fail rather than becoming `true`. */
-const VALUE_FLAGS = ['host', 'port', 'css', 'keymap', 'author'] as const;
+const VALUE_FLAGS = ['host', 'port', 'css', 'keymap', 'author', 'token'] as const;
 
 /** Flags that are on or off. Given a value, they fail — `--all=false` reads as "off". */
-const BOOLEAN_FLAGS = ['help', 'all', 'json'] as const;
+const BOOLEAN_FLAGS = ['help', 'all', 'json', 'no-auth', 'rotate'] as const;
 
 type ValueFlag = (typeof VALUE_FLAGS)[number];
 type BooleanFlag = (typeof BOOLEAN_FLAGS)[number];
@@ -48,7 +48,14 @@ const missing = (value: string | undefined): boolean =>
  * which is the failure this file exists to remove.
  */
 export function parseArgs(argv: string[]): Args {
-  const args: Args = { positional: [], help: false, all: false, json: false };
+  const args: Args = {
+    positional: [],
+    help: false,
+    all: false,
+    json: false,
+    'no-auth': false,
+    rotate: false,
+  };
 
   for (let i = 0; i < argv.length; i++) {
     const token = argv[i]!;

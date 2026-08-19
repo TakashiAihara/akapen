@@ -1,9 +1,12 @@
 import { readFileSync, watch, existsSync } from 'node:fs';
+import { hostname, networkInterfaces } from 'node:os';
 import { basename, resolve } from 'node:path';
 import { Hono, type Context } from 'hono';
+import { getCookie, setCookie } from 'hono/cookie';
 import { vValidator } from '@hono/valibot-validator';
 import { ASSETS, mimeFor } from './assets.ts';
 import { buildDoc } from '@akapen/core/blocks';
+import { tokensMatch } from '@akapen/core/token';
 import {
   addReply,
   carriedOver,
@@ -40,11 +43,78 @@ export type ServeOptions = {
   author: string;
   cssPath?: string;
   keymapPath?: string;
+  /**
+   * The shared secret every request must present, or null for `--no-auth`.
+   *
+   * Null exists for the case where something in front already authenticates — Tailscale
+   * Serve, or a proxy — and is not the default at any bind address. Loopback is not the
+   * exception it looks like: a page in the reader's own browser can reach `127.0.0.1`,
+   * which is what `allowedHostnames` below is about.
+   */
+  token?: string | null;
 };
 
 /** Addresses that only the host itself can reach. `::1` also arrives bracketed. */
 function isLoopback(host: string): boolean {
   return host === '127.0.0.1' || host === 'localhost' || host === '::1' || host === '[::1]';
+}
+
+/** The cookie the browser is handed once, so nothing after the first visit carries a token. */
+const COOKIE = 'akapen_token';
+
+/**
+ * The hostnames this instance answers to.
+ *
+ * A token says who on the network may connect. It says nothing about the attack that
+ * makes "it only listens on loopback" untrue: a page the reader visits can point its own
+ * hostname at `127.0.0.1` after loading — DNS rebinding — and the browser then treats
+ * akapen as that page's origin, attaches the cookie itself and lets the page read the
+ * answer. Being `HttpOnly` changes nothing; the browser is the one holding it.
+ *
+ * What the attacker cannot do is choose the `Host` header — it is forbidden to scripts —
+ * so refusing every name akapen is not actually serving closes the whole class.
+ *
+ * A wildcard bind answers on every interface, so every local address is a real name for
+ * it. The machine's own hostname is included because reaching it that way is normal
+ * (`http://mcdev:4300`), and an attacker who can put that name in a browser's address
+ * bar already controls this network's DNS.
+ */
+function allowedHostnames(bind: string): Set<string> {
+  const names = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
+  const wildcard = bind === '0.0.0.0' || bind === '::' || bind === '[::]';
+  if (wildcard) {
+    for (const list of Object.values(networkInterfaces())) {
+      for (const ni of list ?? []) {
+        names.add(ni.address.toLowerCase());
+        if (ni.family === 'IPv6') names.add(`[${ni.address.toLowerCase()}]`);
+      }
+    }
+  } else {
+    names.add(bind.toLowerCase());
+  }
+  const self = hostname().toLowerCase();
+  names.add(self);
+  // `mcdev` and `mcdev.local` are the same machine, and which one gets typed is the
+  // resolver's business, not ours.
+  const short = self.split('.')[0];
+  if (short) names.add(short);
+  return names;
+}
+
+/**
+ * The name out of a `Host` header, without the port.
+ *
+ * The port is deliberately not checked. Cookies are not isolated by port anyway
+ * (RFC 6265 §8.5), so a per-port rule would suggest a separation that does not exist.
+ */
+function hostnameOf(header: string): string {
+  const value = header.trim().toLowerCase();
+  if (value.startsWith('[')) {
+    const close = value.indexOf(']');
+    return close === -1 ? value : value.slice(0, close + 1);
+  }
+  const colon = value.lastIndexOf(':');
+  return colon === -1 ? value : value.slice(0, colon);
 }
 
 export function startServer(opts: ServeOptions) {
@@ -185,6 +255,60 @@ export function startServer(opts: ServeOptions) {
   });
 
   const app = new Hono();
+
+  const token = opts.token ?? null;
+  const allowed = allowedHostnames(opts.host);
+
+  /**
+   * Everything below this is behind it, assets and SSE included.
+   *
+   * Three ways in, one secret. The cookie is the steady state; the query is the first
+   * visit and the bookmark; the bearer header is curl and an agent, which get no cookie
+   * because they keep no jar.
+   *
+   * The redirect after the query is what makes it seamless: the token leaves the address
+   * bar and the history entry, and the browser holds it from then on, so every later
+   * visit is the bare URL. The bookmark keeps its copy, which is how a cleared cookie or
+   * a second browser recovers without anyone going to look for a URL.
+   */
+  app.use('*', async (c, next) => {
+    // A missing Host is not treated as a foreign one. Rebinding needs a browser, and a
+    // browser always sends it; refusing would only break odd clients for no gain.
+    const host = c.req.header('host');
+    if (host !== undefined && !allowed.has(hostnameOf(host))) {
+      return c.text('host not served here', 403);
+    }
+    // Nothing to leak into a referrer today, but the token rides in a URL and this costs
+    // nothing to guarantee for whatever gets linked later.
+    c.header('referrer-policy', 'no-referrer');
+
+    if (token === null) return next();
+
+    const cookie = getCookie(c, COOKIE);
+    if (cookie !== undefined && tokensMatch(cookie, token)) return next();
+
+    const url = new URL(c.req.url);
+    const presented = url.searchParams.get('token');
+    if (presented !== null && tokensMatch(presented, token)) {
+      setCookie(c, COOKIE, token, {
+        httpOnly: true,
+        sameSite: 'Lax',
+        path: '/',
+        // No `secure`: the transport is plain HTTP, and a Secure cookie sent over it is
+        // simply never stored, which would turn the whole flow into a redirect loop.
+      });
+      url.searchParams.delete('token');
+      // Relative on purpose. Redirecting to the URL we were given would echo an
+      // attacker-chosen host back at the browser as a location it should follow.
+      return c.redirect(`${url.pathname}${url.search}`, 302);
+    }
+
+    const auth = c.req.header('authorization');
+    const bearer = auth?.startsWith('Bearer ') === true ? auth.slice('Bearer '.length) : null;
+    if (bearer !== null && tokensMatch(bearer, token)) return next();
+
+    return c.text('unauthenticated. open the URL akapen printed, or run `akapen token`', 401);
+  });
 
   app.get('/api/doc', vValidator('query', DocQuerySchema), (c) => {
     const want = c.req.valid('query').round ?? review.currentRound;
@@ -358,7 +482,7 @@ export function startServer(opts: ServeOptions) {
    * from the reader's machine at all while being perfectly reachable from here.
    */
   app.get('/api/instances', async (c) => {
-    const live = await liveInstances({ excludePid: process.pid });
+    const live = await liveInstances({ excludePid: process.pid, token });
     const payload: InstancesPayload = {
       instances: live.map(({ record, status }) => ({
         pid: record.pid,

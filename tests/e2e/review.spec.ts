@@ -5,7 +5,7 @@
  * CodeRabbit. The storage-layer tests caught none of them, so these look at the DOM.
  */
 import type { Page } from '@playwright/test';
-import { expect, test } from './fixtures.ts';
+import { AUTH, expect, test } from './fixtures.ts';
 
 const A = { rail: '#railAnchored .bubble', draft: '#rail .bubble.draft', ta: '#rail .bubble.draft textarea' };
 
@@ -87,6 +87,7 @@ test('keeps the document DOM and the text selection through server-driven events
 
   // Another client posting must not change this screen
   await request.post(`${akapen.url}/api/comments`, {
+    headers: AUTH,
     data: { startLine: 9, endLine: 9, body: 'from another client' },
   });
   await page.waitForTimeout(700);
@@ -115,6 +116,7 @@ test('never rebuilds the textarea when a doc payload lands mid-typing (it would 
   }, A.ta);
 
   await request.post(`${akapen.url}/api/comments`, {
+    headers: AUTH,
     data: { startLine: 9, endLine: 9, body: 'from another client' },
   });
   await page.waitForTimeout(700);
