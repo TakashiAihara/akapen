@@ -17,6 +17,9 @@ permissions:
   attestations: write
 
 jobs:
+  # Pinned to commits rather than tags, same as ci.yml. This one matters more: the job
+  # holds contents:write and signs provenance, so an action swapped under a moved tag
+  # would be attested as ours. Version lives in the trailing comment.
   build:
     runs-on: ubuntu-latest
     steps:
@@ -24,10 +27,10 @@ jobs:
       # explicit ref, binaries whose contents do not match the tag end up in the release
       # and become impossible to tell apart later. A missing tag fails here, so no
       # release is created for a tag that does not exist.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.inputs.tag || github.ref }}
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: latest
       - run: bun install --frozen-lockfile
@@ -47,7 +50,7 @@ jobs:
       - name: check the built binary runs (only the one this runner can execute)
         run: ./dist/akapen-linux-x64 --help
 
-      - uses: actions/attest-build-provenance@v2
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: 'dist/akapen-*'
 
