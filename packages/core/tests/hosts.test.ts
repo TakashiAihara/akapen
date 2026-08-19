@@ -80,10 +80,19 @@ describe('the names a bind address answers to', () => {
      * is resolved through anything an attacker can answer.
      */
     const self = hostname().toLowerCase();
+    // Loopback is served by name, and a machine actually called `localhost` is reached
+    // that way — by the loopback rule, not by being this machine. Asserting a refusal
+    // there would fail for the one name that is meant to work.
+    const byAnotherRule = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
+    const mine = [self, self.split('.')[0]!].filter((name) => !byAnotherRule.has(name));
+
     for (const bind of ['0.0.0.0', '127.0.0.1']) {
       const names = allowedHostnames(bind);
-      expect(names.has(self), `${bind} / ${self}`).toBe(false);
-      expect(names.has(self.split('.')[0]!), `${bind} / short`).toBe(false);
+      // Fixed names as well as this machine's, so the test still says something on a
+      // host that happens to be called `localhost` and has nothing of its own to check.
+      for (const name of [...mine, 'mcdev', 'mcdev.local', 'some-host']) {
+        expect(names.has(name), `${bind} / ${name}`).toBe(false);
+      }
     }
   });
 
