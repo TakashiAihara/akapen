@@ -18,6 +18,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  renameSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -563,10 +564,22 @@ describe('cutting a round while the file is being written', () => {
   }, 30_000);
 
   it('refuses while the file is still moving, rather than freezing what it caught', async () => {
-    // Non-empty the whole time, so the empty guard cannot be what refuses this. Only
-    // reading twice and comparing can tell that the file has not settled.
+    /**
+     * Non-empty the whole time, so the empty guard cannot be what refuses this. Only
+     * reading twice and comparing can tell that the file has not settled.
+     *
+     * Written through a rename to make that true. `writeFileSync` truncates and then
+     * writes, so the file really is empty in between, and a read landing in that window
+     * is answered "the file is empty right now" — a correct refusal for the other reason,
+     * which leaves this test passing or failing on timing and pinning neither path. It
+     * failed that way on CI, which is what #119 was about.
+     */
     let i = 0;
-    const writer = setInterval(() => writeFileSync(work, `# still writing ${i++}\n`), 10);
+    const writer = setInterval(() => {
+      const tmp = `${work}.writing`;
+      writeFileSync(tmp, `# still writing ${i++}\n`);
+      renameSync(tmp, work);
+    }, 10);
     try {
       const res = await post('/api/rounds');
       expect(res.status).toBe(409);
