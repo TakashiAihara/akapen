@@ -6,27 +6,32 @@ on:
   pull_request:
 
 jobs:
+  # Every action is pinned to a commit, not a tag. A tag is mutable, so whoever can move
+  # it can run their code inside this workflow with the repository's token. The version
+  # is kept in the trailing comment because a bare SHA says nothing to a reader; both
+  # change together on a bump.
+
   # Mistakes in the workflows and the installer are not caught by CI; they surface when
   # a tag is pushed, or when someone runs curl | sh. Pull that forward.
   static:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # This file gets piped into sh, so it is the most expensive place to be wrong
       - name: shellcheck (install.sh)
         run: shellcheck install.sh
 
       # Catch workflow mistakes before a tag is pushed
-      - uses: docker://rhysd/actionlint:latest
+      - uses: docker://rhysd/actionlint@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667 # v1.7.12
         with:
           args: -color
 
   unit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: latest
       - run: bun install --frozen-lockfile
@@ -48,8 +53,8 @@ jobs:
   e2e:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: latest
       - run: bun install --frozen-lockfile
@@ -60,7 +65,7 @@ jobs:
       # The storage-layer tests detected none of them.
       - run: bun run test:e2e
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: failure()
         with:
           name: playwright-trace
