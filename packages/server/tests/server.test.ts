@@ -12,7 +12,7 @@
  * transform does not implement; and this is the same path the shipped binary takes.
  */
 import { execSync, spawn, type ChildProcess } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -416,10 +416,11 @@ describe('a round moving under another screen', () => {
 
 /** Every frozen document the rounds under a store hold. A round is only useful if it has one. */
 function frozen(home: string): string[] {
-  return execSync(`find ${home} -name content.md`, { encoding: 'utf8' })
-    .split('\n')
-    .filter(Boolean)
-    .map((f) => readFileSync(f, 'utf8'));
+  // readdirSync rather than `find`: the path goes into a shell there, so a sandbox with a
+  // space in it splits into two arguments and a metacharacter is read as syntax.
+  return readdirSync(home, { recursive: true, withFileTypes: true })
+    .filter((e) => e.isFile() && e.name === 'content.md')
+    .map((e) => readFileSync(join(e.parentPath, e.name), 'utf8'));
 }
 
 describe('cutting a round while the file is being written', () => {
