@@ -2,6 +2,7 @@
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { startServer } from '@akapen/server';
+import { urlsFor } from '@akapen/core/addresses';
 import { loadReview, pendingComments } from '@akapen/core/store';
 import { parseArgs, resolvePort, UsageError, type Args } from './args.ts';
 
@@ -106,8 +107,17 @@ const { server, storeDir, round } = startServer({
   ...(args.keymap ? { keymapPath: resolve(args.keymap) } : {}),
 });
 
+// The bound address is not always one that can be opened: `--host 0.0.0.0` names
+// every interface and no machine. What gets printed is what a browser can reach.
+// `server.port` is what the OS chose for `-p 0`; Bun only leaves it unset when serving
+// on a unix socket, which nothing here does, so the requested port is the fallback.
+const urls = urlsFor(host, server.port ?? port);
+
 console.log(`akapen  ${resolve(file)}`);
-console.log(`  url     http://${host}:${server.port}`);
+console.log(`  url     ${urls[0]}`);
+// The same server, reached another way. Which one works is knowledge the reader has
+// and this process does not, so all of them are offered rather than one guessed at.
+for (const also of urls.slice(1)) console.log(`  also    ${also}`);
 console.log(`  round   ${String(round).padStart(3, '0')}`);
 console.log(`  store   ${storeDir}`);
 if (host !== '127.0.0.1') console.log(`  note    no authentication. mind who can reach this address.`);
