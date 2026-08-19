@@ -964,6 +964,41 @@ describe('authentication', () => {
     ctrl.abort();
   });
 
+  it('accepts the scheme however it is capitalised, and says which one it wanted', async () => {
+    // RFC 7235 §2.1: the scheme is case-insensitive, so a client sending `bearer` is
+    // right and a 401 in reply would be ours to explain.
+    for (const scheme of ['Bearer', 'bearer', 'BEARER']) {
+      expect(
+        (await bare('/api/doc', { headers: { authorization: `${scheme} ${TOKEN}` } })).status,
+        scheme,
+      ).toBe(200);
+    }
+    // RFC 7235 §3.1: a 401 names the scheme that would have worked.
+    expect((await bare('/api/doc')).headers.get('www-authenticate')).toBe('Bearer');
+  });
+
+  it('gives the cookie a life longer than the browser window', async () => {
+    // A session cookie would mean logging in again after every browser restart, which is
+    // the whole thing this flow exists to remove. The token behind it does not expire, so
+    // an expiry here would be asking again rather than protecting anything.
+    const res = await bare(`/?token=${TOKEN}`, { redirect: 'manual' });
+    expect(res.headers.get('set-cookie')).toMatch(/Max-Age=\d{6,}/i);
+  });
+
+  it('sets the referrer policy on every answer, including the ones it refuses', async () => {
+    // The token rides in a URL, and the two answers that would miss it are exactly the
+    // ones built outside the JSON handlers: the host refusal, and the SSE stream.
+    expect((await bare('/api/doc')).headers.get('referrer-policy')).toBe('no-referrer');
+
+    const ctrl = new AbortController();
+    const events = await globalThis.fetch(`${base}/events`, {
+      headers: { cookie: `akapen_token=${TOKEN}` },
+      signal: ctrl.signal,
+    });
+    expect(events.headers.get('referrer-policy')).toBe('no-referrer');
+    ctrl.abort();
+  });
+
   it('refuses a Host it does not serve, even holding a valid token', async () => {
     // DNS rebinding: the browser believes akapen is the attacker's origin and attaches
     // the cookie itself, so the token proves nothing here. The Host is the only part of

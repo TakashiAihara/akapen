@@ -17,7 +17,7 @@
  */
 
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { akapenHome, writeAtomic } from './store.ts';
 
@@ -26,9 +26,19 @@ export function tokenPath(): string {
   return join(akapenHome(), 'token');
 }
 
-/** 32 bytes, so guessing is not a strategy. base64url, so it survives a URL untouched. */
+/**
+ * 32 bytes, so guessing is not a strategy. base64url, so it survives a URL untouched.
+ *
+ * Never starting with `-`. base64url includes it, and a value beginning with a dash is
+ * read as an option rather than a value in the space-separated form, so one token in
+ * sixty-four would come back out of `akapen token` and fail to go into `--token`. The
+ * attached form always works; this is so the obvious thing works too.
+ */
 function generate(): string {
-  return randomBytes(32).toString('base64url');
+  for (;;) {
+    const token = randomBytes(32).toString('base64url');
+    if (!token.startsWith('-')) return token;
+  }
 }
 
 /**
@@ -52,12 +62,23 @@ export function readToken(): string | null {
 /**
  * Write the token where only this user can read it.
  *
- * The mode is set at creation, not after: a token written world-readable and chmodded a
- * moment later has already been readable. `mkdirSync` takes the same treatment, since a
- * 0755 directory holding a 0600 file still tells everyone the file is there.
+ * The file's mode is set at creation, not after: a token written world-readable and
+ * chmodded a moment later has already been readable. The directory is only tightened
+ * afterwards, since it is usually not ours to create by then — a 0755 directory holding
+ * a 0600 file leaks that the file exists, not what is in it.
  */
 export function writeToken(token: string): void {
-  mkdirSync(akapenHome(), { recursive: true, mode: 0o700 });
+  const home = akapenHome();
+  mkdirSync(home, { recursive: true, mode: 0o700 });
+  // `mkdirSync` applies its mode only when it creates the directory, and by the time a
+  // token is first written the store has usually made `~/.akapen` already — at the umask
+  // default, which is world-readable. Tighten it rather than let the mode above describe
+  // something that is only true on a fresh install.
+  try {
+    chmodSync(home, 0o700);
+  } catch {
+    /* Someone else's directory to own. The token file is still 0600 either way. */
+  }
   writeAtomic(tokenPath(), token, { mode: 0o600 });
 }
 

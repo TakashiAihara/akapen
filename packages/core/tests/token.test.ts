@@ -7,27 +7,41 @@
  * is the whole credential handed over — the review is one `cat` away, and nothing about
  * the running server would look wrong.
  */
-import { mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { currentToken, readToken, resolveToken, rotateToken, tokenPath, tokensMatch } from '../src/token.ts';
 
+let sandbox: string;
 let home: string;
 
 beforeEach(() => {
-  home = mkdtempSync(join(tmpdir(), 'akapen-token-'));
+  sandbox = mkdtempSync(join(tmpdir(), 'akapen-token-'));
+  // A directory the code under test has to create for itself. Pointing AKAPEN_HOME at
+  // the mkdtemp directory instead would make the mode assertion below meaningless:
+  // mkdtemp always creates 0700, so it would pass whatever mode writeToken asked for.
+  home = join(sandbox, 'home');
   process.env['AKAPEN_HOME'] = home;
   delete process.env['AKAPEN_TOKEN'];
 });
 
 afterEach(() => {
-  rmSync(home, { recursive: true, force: true });
+  rmSync(sandbox, { recursive: true, force: true });
   delete process.env['AKAPEN_HOME'];
   delete process.env['AKAPEN_TOKEN'];
 });
 
 describe('the stored token', () => {
+  it('never starts with a dash, so it can be handed back through --token', () => {
+    // base64url includes `-`, and a value beginning with one is read as an option in the
+    // space-separated form. One token in sixty-four would come out of `akapen token` and
+    // fail to go back in.
+    for (let i = 0; i < 200; i++) {
+      expect(rotateToken().startsWith('-')).toBe(false);
+    }
+  });
+
   it('is generated once and read back every time after', () => {
     const first = resolveToken();
     expect(first.length).toBeGreaterThan(20);
@@ -39,6 +53,18 @@ describe('the stored token', () => {
   it('is written where nobody else on the host can read it', () => {
     resolveToken();
     expect(statSync(tokenPath()).mode & 0o777).toBe(0o600);
+    expect(statSync(home).mode & 0o777).toBe(0o700);
+  });
+
+  it('tightens a home directory something else created loosely', () => {
+    // The usual case, not the fresh one: the review store and the instance registry both
+    // make `~/.akapen` before a token is ever written, and neither asks for a mode. The
+    // directory is then 0755, and `mkdirSync` will not change it — it only applies a mode
+    // to a directory it creates.
+    mkdirSync(home, { recursive: true, mode: 0o755 });
+    expect(statSync(home).mode & 0o777).toBe(0o755);
+
+    resolveToken();
     expect(statSync(home).mode & 0o777).toBe(0o700);
   });
 
@@ -55,6 +81,9 @@ describe('the stored token', () => {
   it('reads an empty or blank file as no token at all', () => {
     // An empty string compared with an empty string matches, so a truncated write must
     // never become the token — that is "everyone is authenticated" with no error anywhere.
+    // The directory has to exist before writing straight into it; nothing has created
+    // it yet in this test, since `resolveToken` is what normally would.
+    mkdirSync(home, { recursive: true });
     for (const junk of ['', '   ', '\n']) {
       writeFileSync(tokenPath(), junk);
       expect(readToken()).toBeNull();

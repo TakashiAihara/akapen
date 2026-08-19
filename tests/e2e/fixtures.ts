@@ -116,23 +116,29 @@ export const test = base.extend<{ akapen: Akapen }>({
     });
 
     const url = `http://127.0.0.1:${port}`;
-    await waitUntilServing(url);
 
-    // What a browser holds after one visit to the printed URL. Seeding it here rather
-    // than navigating to `?token=` first keeps every test's opening navigation the real
-    // one — the bare URL, which is what both a bookmark and a reload are.
-    await context.addCookies([{ name: 'akapen_token', value: TOKEN, url }]);
+    // From here on the process exists, so every exit has to go through the same cleanup.
+    // A server that never comes up, or a cookie that will not seed, would otherwise leave
+    // a bun process holding the port and a sandbox on disk for the rest of the run.
+    try {
+      await waitUntilServing(url);
 
-    await use({
-      url,
-      token: TOKEN,
-      file,
-      home,
-      append: (text: string) => writeFileSync(file, readFileSync(file, 'utf8') + text),
-    });
+      // What a browser holds after one visit to the printed URL. Seeding it here rather
+      // than navigating to `?token=` first keeps every test's opening navigation the real
+      // one — the bare URL, which is what both a bookmark and a reload are.
+      await context.addCookies([{ name: 'akapen_token', value: TOKEN, url }]);
 
-    proc.kill();
-    rmSync(sandbox, { recursive: true, force: true });
+      await use({
+        url,
+        token: TOKEN,
+        file,
+        home,
+        append: (text: string) => writeFileSync(file, readFileSync(file, 'utf8') + text),
+      });
+    } finally {
+      proc.kill();
+      rmSync(sandbox, { recursive: true, force: true });
+    }
   },
 });
 

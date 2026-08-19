@@ -85,11 +85,13 @@ flowchart TD
     FILE -- "no" --> GEN["generate 32 bytes"] --> WRITE["write 0600<br>in a 0700 directory"] --> USE
 ```
 
-- `AKAPEN_TOKEN` is preferred over `--token` in practice because a flag is visible in `ps` output and shell history.
+- Resolution order is `--token`, then `AKAPEN_TOKEN`, then the stored one. Even so, prefer `AKAPEN_TOKEN` when supplying one yourself: a flag is visible in `ps` output and in shell history.
 - Neither a flag nor an environment token is written to disk. Persisting one would quietly make somebody else's secret this host's secret for every later run.
 - It is persisted so that the URL survives a restart, which is the condition for a bookmark being worth keeping. A token generated per run is seamless too, right up until the cookie is cleared — and then the bookmark is dead.
-- It does not expire. An expiring token means the bookmark breaks on a schedule, which is the thing this design exists to avoid; expiry would need separate lifetimes for the cookie and the token, and that is a different design.
+- The cookie is given a year, because the token behind it does not expire and a session cookie would mean logging in again after every browser restart — the thing this flow exists to avoid.
+- The token itself does not expire. An expiring token means the bookmark breaks on a schedule, which is the thing this design exists to avoid; expiry would need separate lifetimes for the cookie and the token, and that is a different design.
 - `akapen token` prints it, so scripts read it from the command rather than hardcoding a path.
+- A generated token never starts with `-`. base64url contains it, and `args.ts` reads a value beginning with a dash as an option rather than a value — deliberately, so `--author --all` fails instead of taking a flag as a name. Rather than carve an exception into that rule, the generator does not produce the character in front. A token supplied by hand that starts with `-` still needs the attached form, `--token=-abc`.
 
 ## The Host check, which the token does not cover
 

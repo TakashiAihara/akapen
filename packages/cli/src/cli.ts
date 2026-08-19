@@ -226,7 +226,11 @@ for (const [signal, code] of [
 // The token is in the URL so that opening it is the whole of logging in. The redirect
 // takes it back out of the address bar, and the cookie left behind means every later
 // visit is the bare URL — so this line is also the one worth bookmarking.
-const url = `http://${host}:${server.port}${token === null ? '' : `/?token=${token}`}`;
+//
+// Encoded because a generated token is base64url but one handed in through `--token` or
+// `AKAPEN_TOKEN` is any string at all, and a `&` in it would print a URL that cannot be
+// used. The server reads the parameter decoded, so the two ends agree.
+const url = `http://${host}:${server.port}${token === null ? '' : `/?token=${encodeURIComponent(token)}`}`;
 
 console.log(`akapen  ${resolve(file)}`);
 console.log(`  url     ${url}`);

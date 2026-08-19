@@ -51,7 +51,7 @@ export type ServeOptions = {
    * exception it looks like: a page in the reader's own browser can reach `127.0.0.1`,
    * which is what `allowedHostnames` below is about.
    */
-  token?: string | null;
+  token: string | null;
 };
 
 /** Addresses that only the host itself can reach. `::1` also arrives bracketed. */
@@ -256,7 +256,7 @@ export function startServer(opts: ServeOptions) {
 
   const app = new Hono();
 
-  const token = opts.token ?? null;
+  const token = opts.token;
   const allowed = allowedHostnames(opts.host);
 
   /**
@@ -271,6 +271,19 @@ export function startServer(opts: ServeOptions) {
    * visit is the bare URL. The bookmark keeps its copy, which is how a cleared cookie or
    * a second browser recovers without anyone going to look for a URL.
    */
+  /**
+   * Set on the way out, so it reaches every answer.
+   *
+   * Setting it before `next()` misses both ends: the host refusal returns above it, and
+   * `/events` builds its own `Response`, which nothing set on the context is merged into.
+   * The token rides in a URL, so this is worth being true of everything rather than of
+   * the handlers that happen to use `c.json`.
+   */
+  app.use('*', async (c, next) => {
+    await next();
+    c.res.headers.set('referrer-policy', 'no-referrer');
+  });
+
   app.use('*', async (c, next) => {
     // A missing Host is not treated as a foreign one. Rebinding needs a browser, and a
     // browser always sends it; refusing would only break odd clients for no gain.
@@ -278,10 +291,6 @@ export function startServer(opts: ServeOptions) {
     if (host !== undefined && !allowed.has(hostnameOf(host))) {
       return c.text('host not served here', 403);
     }
-    // Nothing to leak into a referrer today, but the token rides in a URL and this costs
-    // nothing to guarantee for whatever gets linked later.
-    c.header('referrer-policy', 'no-referrer');
-
     if (token === null) return next();
 
     const cookie = getCookie(c, COOKIE);
@@ -294,6 +303,10 @@ export function startServer(opts: ServeOptions) {
         httpOnly: true,
         sameSite: 'Lax',
         path: '/',
+        // Without this it is a session cookie, and "every visit after is the bare URL"
+        // would last until the browser is closed. The token does not expire, so an
+        // expiry here would not be protecting anything — only asking again.
+        maxAge: 60 * 60 * 24 * 365,
         // No `secure`: the transport is plain HTTP, and a Secure cookie sent over it is
         // simply never stored, which would turn the whole flow into a redirect loop.
       });
@@ -303,11 +316,16 @@ export function startServer(opts: ServeOptions) {
       return c.redirect(`${url.pathname}${url.search}`, 302);
     }
 
-    const auth = c.req.header('authorization');
-    const bearer = auth?.startsWith('Bearer ') === true ? auth.slice('Bearer '.length) : null;
+    // The scheme is case-insensitive (RFC 7235 §2.1), and a client sending `bearer`
+    // is right while a 401 telling it otherwise is not.
+    const auth = c.req.header('authorization') ?? '';
+    const bearer = /^bearer /i.test(auth) ? auth.slice('bearer '.length) : null;
     if (bearer !== null && tokensMatch(bearer, token)) return next();
 
-    return c.text('unauthenticated. open the URL akapen printed, or run `akapen token`', 401);
+    return c.text('unauthenticated. open the URL akapen printed, or run `akapen token`', 401, {
+      // What a 401 owes the client: which scheme would have worked (RFC 7235 §3.1).
+      'www-authenticate': 'Bearer',
+    });
   });
 
   app.get('/api/doc', vValidator('query', DocQuerySchema), (c) => {
