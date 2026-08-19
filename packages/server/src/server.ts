@@ -385,27 +385,49 @@ export function startServer(opts: ServeOptions) {
     if (active === null) return next();
 
     const cookie = getCookie(c, COOKIE);
-    if (cookie !== undefined && tokensMatch(cookie, active)) return next();
+    const cookieOk = cookie !== undefined && tokensMatch(cookie, active);
 
     const url = new URL(c.req.url);
     const presented = url.searchParams.get('token');
-    if (presented !== null && tokensMatch(presented, active)) {
-      setCookie(c, COOKIE, active, {
-        httpOnly: true,
-        sameSite: 'Lax',
-        path: '/',
-        // Without this it is a session cookie, and "every visit after is the bare URL"
-        // would last until the browser is closed. The token does not expire, so an
-        // expiry here would not be protecting anything — only asking again.
-        maxAge: 60 * 60 * 24 * 365,
-        // No `secure`: the transport is plain HTTP, and a Secure cookie sent over it is
-        // simply never stored, which would turn the whole flow into a redirect loop.
-      });
+    const queryOk = presented !== null && tokensMatch(presented, active);
+
+    /**
+     * A token in the URL is taken back out of it, on every visit and not only the first.
+     *
+     * Checking the cookie first and answering there would leave the bookmark — which
+     * keeps its `?token=` on purpose — putting the secret back in the address bar and in
+     * a fresh history entry every time it is opened, once the browser already had a
+     * cookie. The whole point of the redirect is that the URL somebody copies out of the
+     * bar is not the credential, and it only held on the very first visit.
+     *
+     * The cookie is only written when the query itself was right. A bookmark holding a
+     * rotated-away token, opened by a browser whose cookie is still good, is redirected
+     * without that stale value being stored.
+     *
+     * Only for methods that read. Redirecting a POST loses its body, and a `?token=` on
+     * one is a credential rather than something a person is about to bookmark.
+     */
+    if (presented !== null && (cookieOk || queryOk) && SAFE_METHODS.has(c.req.method)) {
+      if (queryOk) {
+        setCookie(c, COOKIE, active, {
+          httpOnly: true,
+          sameSite: 'Lax',
+          path: '/',
+          // Without this it is a session cookie, and "every visit after is the bare URL"
+          // would last until the browser is closed. The token does not expire, so an
+          // expiry here would not be protecting anything — only asking again.
+          maxAge: 60 * 60 * 24 * 365,
+          // No `secure`: the transport is plain HTTP, and a Secure cookie sent over it
+          // is simply never stored, turning the whole flow into a redirect loop.
+        });
+      }
       url.searchParams.delete('token');
       // Relative on purpose. Redirecting to the URL we were given would echo an
       // attacker-chosen host back at the browser as a location it should follow.
       return c.redirect(`${url.pathname}${url.search}`, 302);
     }
+
+    if (cookieOk || queryOk) return next();
 
     // The scheme is case-insensitive (RFC 7235 §2.1), and a client sending `bearer`
     // is right while a 401 telling it otherwise is not.

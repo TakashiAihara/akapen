@@ -948,6 +948,41 @@ describe('authentication', () => {
     expect(cookie).not.toContain('Secure');
   });
 
+  it('takes the token back out of the URL on every visit, not only the first', async () => {
+    /**
+     * The bookmark keeps its `?token=` on purpose, so it is opened again and again by a
+     * browser that already has the cookie. Answering on the cookie and stopping there
+     * would put the secret back in the address bar and in a new history entry each time
+     * — the redirect would only ever have worked once, on the very first visit.
+     */
+    const cookie = `akapen_token=${TOKEN}`;
+    const res = await bare(`/?token=${TOKEN}`, { headers: { cookie }, redirect: 'manual' });
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toBe('/');
+  });
+
+  it('strips a stale token without storing it, when the cookie is still good', async () => {
+    // A bookmark from before a rotation, opened by a browser whose cookie still works.
+    // It gets in on the cookie, and the dead value is taken out of the URL rather than
+    // written over the credential that is working.
+    const cookie = `akapen_token=${TOKEN}`;
+    const res = await bare(`/?token=${WRONG_TOKEN}`, { headers: { cookie }, redirect: 'manual' });
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toBe('/');
+    expect(res.headers.get('set-cookie')).toBeNull();
+  });
+
+  it('keeps a token in the query working as a credential on a write', async () => {
+    // Redirecting a POST would lose its body, so a query token on one is read as a
+    // credential rather than as something somebody is about to bookmark.
+    const res = await bare(`/api/comments?token=${TOKEN}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ startLine: 5, endLine: 5, body: 'posted with a query token' }),
+    });
+    expect(res.status).toBe(200);
+  });
+
   it('lets the cookie alone carry the whole surface, SSE included', async () => {
     const cookie = `akapen_token=${TOKEN}`;
     expect((await bare('/api/doc', { headers: { cookie } })).status).toBe(200);

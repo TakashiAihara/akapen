@@ -81,7 +81,7 @@ akapen  /home/you/notes/design.md
   url     http://0.0.0.0:4300/?token=Cu1fE0h07o__JPQQYfF_5zDjTxU6A2X8NriPndNrSHc
 ```
 
-Opening that once is the whole of logging in. akapen answers with a cookie and a redirect that takes the token back out of the address bar, so every later visit is the bare `http://host:4300` — and the URL above, kept as a bookmark, still works when the cookie is gone or you are on another browser.
+Opening that once is the whole of logging in. akapen answers with a cookie and a redirect that takes the token back out of the address bar, so every later visit is the bare `http://host:4300` — and the URL above, kept as a bookmark, still works when the cookie is gone or you are on another browser. Opening the bookmark again redirects again: the token comes out of the address bar every time, not only on the first visit.
 
 The token is one per host, kept in `~/.akapen/token` (mode `0600`), and it does not expire. One per host rather than one per instance is deliberate: cookies are not isolated by port ([RFC 6265 §8.5](https://www.rfc-editor.org/rfc/rfc6265#section-8.5)), so opening any one of the akapen running on a machine authenticates the browser for all of them, including ones started later.
 

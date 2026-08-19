@@ -73,6 +73,9 @@ sequenceDiagram
 
 - No login page, no prompt, no second step: opening the printed URL once per browser is all of it.
 - The redirect takes the token out of the address bar and the history entry. The bookmark keeps its copy on purpose, which is what recovers a cleared cookie without anyone going to find a URL.
+- It redirects on every visit with a token in the URL, not only when the cookie is missing. Answering on the cookie and stopping there would put the secret back in the address bar each time the bookmark was opened — the redirect would have worked exactly once per browser.
+- The cookie is written only when the query itself was right, so a bookmark holding a rotated-away token is stripped rather than stored over a cookie that still works.
+- Only methods that read are redirected. Redirecting a `POST` loses its body, and a token on the query of one is a credential rather than something anybody is about to bookmark.
 - `packages/web/src/app.ts` did not change. Every request it makes is a same-origin relative path and `EventSource` sends cookies same-origin, so one cookie covers the API, the posts and the SSE stream. This is the reason for choosing a cookie over a header the client has to attach: `EventSource` cannot attach one at all.
 - `akapen comments` reads the store off disk and never speaks HTTP, so the agent handoff is untouched.
 
