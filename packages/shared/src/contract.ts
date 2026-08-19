@@ -161,6 +161,20 @@ export const CreateCommentSchema = v.object({
   startLine: LineNumber,
   endLine: LineNumber,
   body: v.pipe(v.string(), v.minLength(1)),
+  /**
+   * The round the screen was showing when this was written.
+   *
+   * Line numbers only mean something inside one round's snapshot, and akapen is read
+   * from more than one screen (`--host 0.0.0.0` is the normal way to run it). When
+   * another screen cuts a round, this one keeps the old numbers and every comment from
+   * it lands somewhere else — or is refused as pointing at nothing, which is what was
+   * actually seen (#100). Saying which round it came from is what lets the server tell
+   * "this line is blank" from "your document moved".
+   *
+   * Optional: a tab that was loaded before this existed still works, and a client that
+   * does not say gets the old behaviour rather than a refusal.
+   */
+  round: v.optional(v.pipe(v.number(), v.integer(), v.minValue(1))),
 });
 export type CreateComment = v.InferOutput<typeof CreateCommentSchema>;
 
@@ -224,6 +238,28 @@ export const ChangedEventSchema = v.object({
   ...ChangedStateSchema.entries,
 });
 export type ChangedEvent = v.InferOutput<typeof ChangedEventSchema>;
+
+/**
+ * A round was opened, by whoever clicked. Carries no document, for the same reason
+ * `changed` does not: the screen is rebuilt when the person asks, not when a message
+ * arrives.
+ *
+ * Without this, only the screen that clicked ever learns. Every other one keeps the
+ * previous round's line numbers and cannot comment at all, with nothing on it saying
+ * why (#100).
+ */
+export const RoundEventSchema = v.object({
+  type: v.literal('round'),
+  n: v.pipe(v.number(), v.integer(), v.minValue(1)),
+});
+export type RoundEvent = v.InferOutput<typeof RoundEventSchema>;
+
+/**
+ * Everything that can arrive on the stream. A receiver matches on `type`, so a kind it
+ * was not built for is dropped instead of being read as the one it does know.
+ */
+export const ServerEventSchema = v.variant('type', [ChangedEventSchema, RoundEventSchema]);
+export type ServerEvent = v.InferOutput<typeof ServerEventSchema>;
 
 /** What /api/rounds answers with. */
 export const RoundsPayloadSchema = v.object({

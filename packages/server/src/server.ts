@@ -1,6 +1,6 @@
 import { readFileSync, watch, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { vValidator } from '@hono/valibot-validator';
 import { ASSETS, mimeFor } from './assets.ts';
 import { buildDoc } from '@akapen/core/blocks';
@@ -25,6 +25,7 @@ import {
   type ChangedEvent,
   type ChangedState,
   type DocPayload,
+  type RoundEvent,
   type RoundState,
 } from '@akapen/shared';
 
@@ -66,9 +67,11 @@ export function startServer(opts: ServeOptions) {
    * Rounds already say the person decides when the document changes; this applies
    * that rule to the whole screen.
    */
-  const notifyChanged = () => {
-    const payload = JSON.stringify(changedEvent());
-    for (const send of clients) send(payload);
+  const notifyChanged = () => notify(changedEvent());
+
+  const notify = (payload: unknown) => {
+    const data = JSON.stringify(payload);
+    for (const send of clients) send(data);
   };
 
   const readLive = (): string | null => {
@@ -79,12 +82,55 @@ export function startServer(opts: ServeOptions) {
     }
   };
 
+  /**
+   * Read the file only once it has stopped moving.
+   *
+   * An editing agent writes by truncating and writing back. Reading once, in between,
+   * takes the empty file as the round's document — and since a round's snapshot is
+   * frozen, that document then has nothing to comment on until somebody opens another
+   * round (#100). The watcher already waits for quiet before it reads; this is the same
+   * idea for the one read where getting it wrong is not recoverable.
+   *
+   * Equality of two reads is evidence, not proof — a write slower than the interval can
+   * still be caught mid-way. `looksEmptied` below is the guard for the case that
+   * actually happened, and it stands behind this one.
+   */
+  const SETTLE_MS = 50;
+  const SETTLE_TRIES = 6;
+  const readSettled = async (): Promise<
+    { ok: true; content: string } | { ok: false; reason: 'unreadable' | 'unsettled' }
+  > => {
+    let prev = readLive();
+    if (prev === null) return { ok: false, reason: 'unreadable' };
+    for (let i = 0; i < SETTLE_TRIES; i++) {
+      await new Promise((r) => setTimeout(r, SETTLE_MS));
+      const next = readLive();
+      if (next === null) return { ok: false, reason: 'unreadable' };
+      if (next === prev) return { ok: true, content: next };
+      prev = next;
+    }
+    return { ok: false, reason: 'unsettled' };
+  };
+
+  /**
+   * The document had text and now has none. Opening a round on that freezes an empty
+   * snapshot, which is the state nothing recovers from: the file coming back does not
+   * undo it, because the round already holds the empty copy.
+   *
+   * Deliberately not symmetric — a file that was already empty opens a round normally.
+   * A blank note is a legitimate thing to review, and refusing that would trade one
+   * stuck state for another.
+   */
+  const looksEmptied = (live: string): boolean => live.trim() === '' && snapshot.trim() !== '';
+
   const changedState = (): ChangedState => {
     const live = readLive();
     return { changes, dirty: live !== null && live !== snapshot };
   };
 
   const changedEvent = (): ChangedEvent => ({ type: 'changed', ...changedState() });
+
+  const roundEvent = (): RoundEvent => ({ type: 'round', n: review.currentRound });
 
   const roundState = (): RoundState => ({
     n: review.currentRound,
@@ -141,7 +187,18 @@ export function startServer(opts: ServeOptions) {
   app.get('/api/comments', (c) => c.json(comments));
 
   app.post('/api/comments', vValidator('json', CreateCommentSchema), (c) => {
-    const { startLine, endLine, body } = c.req.valid('json');
+    const { startLine, endLine, body, round } = c.req.valid('json');
+    /**
+     * The screen this came from is showing a round that has since been cut, so its line
+     * numbers describe a document the server no longer has. Answered apart from the
+     * range check because the two mean opposite things to whoever is reading: one says
+     * the line is blank, the other says the document moved and the same comment will go
+     * through once it is reloaded (#100). Same status the browser needs to tell them
+     * apart without reading the text.
+     */
+    if (round !== undefined && round !== review.currentRound) {
+      return c.text('the round moved; reload the document and send it again', 409);
+    }
     /**
      * The schema only knows a line number is a positive integer. Whether the range
      * points at anything depends on the document, which the schema cannot see.
@@ -209,18 +266,59 @@ export function startServer(opts: ServeOptions) {
     return c.json({ comment: added.comment, comments, carried: carriedOver(file) });
   });
 
+  /**
+   * One cut at a time.
+   *
+   * Waiting for the file to settle handed control back mid-request, which the earlier
+   * synchronous handler never did. Two screens both showing the banner and both pressing
+   * the button — the situation this whole change is about — then landed inside that
+   * window together, and each opened a round of its own: the second one identical to the
+   * first, the first one closed before a single comment could be written on it, and the
+   * screen that opened it already behind.
+   *
+   * The second one is refused rather than queued. Queuing it just opens that spare round
+   * a moment later; refusing says the truth, which is that the round it asked for exists
+   * already. It arrives on that screen as the `round` event, same as any other.
+   */
+  let cutting = false;
+
   // Only a person cuts a round. An agent's intermediate save never does.
-  app.post('/api/rounds', (c) => {
-    const live = readLive();
-    if (live === null) return c.text('cannot read file', 500);
+  app.post('/api/rounds', async (c) => {
+    if (cutting) return c.text('a round is already being opened; it will arrive on its own', 409);
+    cutting = true;
+    try {
+      return await cutRound(c);
+    } finally {
+      // Every exit releases it. One that did not would leave the document permanently
+      // stuck on the round it was on, with nothing on screen saying why.
+      cutting = false;
+    }
+  });
+
+  const cutRound = async (c: Context) => {
+    const read = await readSettled();
+    if (!read.ok) {
+      if (read.reason === 'unreadable') return c.text('cannot read file', 500);
+      // Refusing costs a click. Freezing a half-written document costs the whole file:
+      // every comment on it is refused until another round is opened.
+      return c.text('the file is still being written; the round was not opened', 409);
+    }
+    const live = read.content;
+    if (looksEmptied(live)) {
+      return c.text('the file is empty right now; the round was not opened', 409);
+    }
     review = openRound(file, live);
     snapshot = live;
     doc = buildDoc(file, snapshot);
     comments = [];
     changes = 0;
+    // Every other screen is still on the previous round and does not know. Telling them
+    // is what stops them from sending comments against line numbers that have moved.
+    // Only that it moved: rebuilding a screen nobody touched is what rounds exist to avoid.
+    notify(roundEvent());
     // A new round means a new document. Return it, and only the clicker's screen swaps.
     return c.json(docPayload());
-  });
+  };
 
   app.get('/api/rounds', (c) => c.json({ current: review.currentRound, rounds: review.rounds }));
 

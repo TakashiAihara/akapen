@@ -119,6 +119,8 @@ body {
   color: var(--ak-fg);
 }
 .banner.history { color: var(--ak-fg-muted); background: var(--ak-bg-subtle); }
+/* The document on screen is not the one the server has. Same weight as the changed banner: nothing is lost, but nothing can be written either */
+.banner.moved { color: var(--ak-warn); background: var(--ak-accent-subtle); }
 
 /* Earlier unresolved comments. No anchor in this round, so they stack in normal flow */
 .rail-carried { margin-top: var(--ak-bubble-gap); border-top: 1px dashed var(--ak-border); padding-top: 10px; }
