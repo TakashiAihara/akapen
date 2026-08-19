@@ -70,7 +70,7 @@ The examples below use `bun run packages/cli/src/cli.ts`; read that as `akapen` 
 | `--token <s>` | use this token instead of the stored one (`AKAPEN_TOKEN` does the same without appearing in `ps`) |
 | `--no-auth` | serve with no token at all, for running behind something that authenticates |
 
-Use `--host 0.0.0.0` to run it on a remote machine and read it from a local browser. The printed URL says `127.0.0.1`, because a wildcard bind is not an address anything connects to; replace it with the machine's LAN address or its name to reach it from elsewhere.
+Use `--host 0.0.0.0` to run it on a remote machine and read it from a local browser. The printed URL says `127.0.0.1`, because a wildcard bind is not an address anything connects to; replace it with the machine's LAN address to reach it from elsewhere. An address, not a name: akapen serves literal addresses and `localhost` only, because a name is the one thing another machine on the network can claim and rebind.
 
 ### Authentication
 
@@ -96,9 +96,9 @@ curl -H "Authorization: Bearer $(akapen token)" http://127.0.0.1:4300/api/commen
 | `akapen token` | print this host's token |
 | `akapen token --rotate` | replace it — every browser and every script holding the old one is locked out |
 
-It is a shared secret, not a key: nothing is signed or encrypted, holding it is the whole of the authorisation, and it travels on every request. There is no TLS, so it crosses the wire in the clear — on a network where that matters, put akapen behind something that terminates TLS and run it with `--no-auth`. Rotation is the only revocation there is; a single secret cannot lock out one client and keep another. Rotating takes effect on servers that are already running — except one started with `--token` or `AKAPEN_TOKEN`, which keeps the token it was handed for as long as it runs.
+It is a shared secret, not a key: nothing is signed or encrypted, holding it is the whole of the authorisation, and it travels on every request. There is no TLS, so it crosses the wire in the clear — on a network where that matters, put akapen behind something that terminates TLS. Keep the token on while you do: TLS encrypts the traffic, it does not decide who may connect, and `--no-auth` behind a proxy that only terminates TLS hands the review to everyone who can reach the proxy. Rotation is the only revocation there is; a single secret cannot lock out one client and keep another. Rotating takes effect on servers that are already running — except one started with `--token` or `AKAPEN_TOKEN`, which keeps the token it was handed for as long as it runs.
 
-`--no-auth` turns the credential off completely, so it is only safe when nothing can reach the port except the thing in front. Bind it to loopback and point the proxy there:
+`--no-auth` turns the credential off completely, so it is only for a front that authenticates on akapen's behalf — Tailscale Serve, or a proxy asking for a login. It also needs nothing else to be able to reach the port. Bind it to loopback and point the proxy there:
 
 ```bash
 akapen note.md --host 127.0.0.1 -p 4300 --no-auth

@@ -60,15 +60,30 @@ describe('the names a bind address answers to', () => {
     expect(names.has('fd00::1')).toBe(true);
   });
 
-  it('answers to this machine on a wildcard bind, and to its own name', () => {
+  it('answers to every address this machine has, on a wildcard bind', () => {
     const names = allowedHostnames('0.0.0.0');
-    const self = hostname().toLowerCase();
-    expect(names.has(self)).toBe(true);
-    expect(names.has(self.split('.')[0]!)).toBe(true);
     for (const list of Object.values(networkInterfaces())) {
       for (const ni of list ?? []) {
         expect(names.has(ni.address.toLowerCase()), ni.address).toBe(true);
       }
+    }
+  });
+
+  it("does not answer to this machine's own name", () => {
+    /**
+     * The one name in reach of somebody else on the network: answer mDNS for it, serve a
+     * page from that name on akapen's port, then rebind the name here. The browser is
+     * then on a page whose origin matches akapen's exactly — cookie attached, every
+     * answer readable, and `Sec-Fetch-Site: same-origin` on writes too.
+     *
+     * Everything the set does hold is a literal address or `localhost`, neither of which
+     * is resolved through anything an attacker can answer.
+     */
+    const self = hostname().toLowerCase();
+    for (const bind of ['0.0.0.0', '127.0.0.1']) {
+      const names = allowedHostnames(bind);
+      expect(names.has(self), `${bind} / ${self}`).toBe(false);
+      expect(names.has(self.split('.')[0]!), `${bind} / short`).toBe(false);
     }
   });
 
@@ -87,7 +102,6 @@ describe('the names a bind address answers to', () => {
     // A bind to one interface answers there and nowhere else, so the wildcard's set would
     // be wrong here — and wrong in the direction that accepts too much.
     const names = allowedHostnames('127.0.0.1');
-    expect(names.has(hostname().toLowerCase())).toBe(true); // reaching it by name is normal
     const other = Object.values(networkInterfaces())
       .flatMap((list) => list ?? [])
       .find((ni) => !ni.internal);

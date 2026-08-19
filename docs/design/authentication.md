@@ -131,7 +131,9 @@ sequenceDiagram
 ```
 
 - The token stops none of this: the browser is holding a valid one and attaches it itself. `HttpOnly` is irrelevant — the browser, not the script, is doing the attaching.
-- What a script cannot choose is the `Host` header, so refusing every name akapen does not serve closes the class. Allowed: the bind address, `localhost`, `127.0.0.1`, the machine's own interface addresses under a wildcard bind, and its hostname.
+- What a script cannot choose is the `Host` header, so refusing every name akapen does not serve closes the class. Allowed: the bind address, `localhost`, `127.0.0.1`, and the machine's own interface addresses under a wildcard bind — every one of them a literal address or `localhost`.
+- The machine's own hostname is **not** allowed, although reaching akapen by name is the ordinary thing to want. It is the only name in the set that somebody else on the network can claim: answer mDNS for `mcdev`, serve a page from that name on akapen's port, then rebind the name to this machine. The browser is then on a page whose origin — scheme, host and port — matches akapen's exactly, so it attaches the cookie, reads every answer, and passes the write check as `same-origin` too.
+- That last part is worth being explicit about, because an earlier draft of this document claimed the `Sec-Fetch-Site` check covered it. It does not. That check separates origins; rebinding works by making them the same origin. Nothing but refusing the name closes it.
 - The set is rebuilt when a name is not recognised, at most once a second. Under a wildcard bind it is the machine's own addresses, and those change underneath a running process — joining a VPN or moving network gives it one it did not have at startup, and every request to that address would otherwise be a 403 with nothing wrong.
 - It stays on under `--no-auth`, because it answers a different question from "who may connect".
 - A missing `Host` is refused. It cannot happen today — Bun answers a Host-less HTTP/1.1 request with a 500 before any of this runs — so there is no test for it; one would pass with the branch removed and pin nothing.
@@ -168,6 +170,6 @@ sequenceDiagram
 
 ### Delegating to Tailscale Serve
 
-- Not rejected. It is a good answer where Tailscale is installed and it composes with this — run with `--no-auth` behind it, bound to loopback.
+- Not rejected. It is a good answer where Tailscale is installed, because it authenticates rather than only encrypting — run with `--no-auth` behind it, bound to loopback. A front that only terminates TLS is a different thing and does not earn `--no-auth`: keep the token on behind one.
 - `--no-auth` removes the credential entirely, so it is only safe when the port cannot be reached except through the thing in front. The `Host` check is not a substitute: it is not a credential, and a client connecting directly sends whatever name it likes.
 - It is simply not something akapen can implement.

@@ -9,7 +9,7 @@
  * directly.
  */
 
-import { hostname, networkInterfaces } from 'node:os';
+import { networkInterfaces } from 'node:os';
 
 /**
  * The hostnames this instance answers to.
@@ -58,12 +58,22 @@ export function allowedHostnames(bind: string): Set<string> {
     // `::1` happened to work only because the set above already carries both forms.
     for (const form of bothForms(bind.toLowerCase())) names.add(form);
   }
-  const self = hostname().toLowerCase();
-  names.add(self);
-  // `mcdev` and `mcdev.local` are the same machine, and which one gets typed is the
-  // resolver's business, not ours.
-  const short = self.split('.')[0];
-  if (short) names.add(short);
+  /**
+   * The machine's own name is deliberately not here.
+   *
+   * It was, and reaching akapen as `http://mcdev:4300` is the ordinary thing to want. It
+   * is also the one name in the set that somebody else on the network can claim: answer
+   * mDNS for `mcdev`, serve a page from that name on this port, then rebind the name to
+   * this machine. The browser then has a page whose origin — scheme, host and port — is
+   * the same as akapen's, so it attaches the cookie, reads every answer, and passes the
+   * `Sec-Fetch-Site: same-origin` check on writes as well.
+   *
+   * An earlier version of this comment claimed that check covered the case. It does not:
+   * it separates origins, and rebinding works by making them the same one.
+   *
+   * Every other name in the set is a literal address or `localhost`. Neither is resolved
+   * through anything an attacker can answer, so there is no name left to rebind.
+   */
   return names;
 }
 
