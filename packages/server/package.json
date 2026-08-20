@@ -12,7 +12,7 @@
     "@akapen/shared": "workspace:*",
     "@akapen/web": "workspace:*",
     "@hono/valibot-validator": "^0.6.1",
-    "hono": "^4.13.1",
+    "hono": "^4.13.2",
     "valibot": "^1.4.2"
   }
 }
