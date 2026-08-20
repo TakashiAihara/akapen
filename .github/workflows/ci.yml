@@ -74,22 +74,20 @@ jobs:
         run: echo "version=$(bunx playwright --version | awk '{ print $2 }')" >> "$GITHUB_OUTPUT"
 
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        id: browsers
         with:
           path: ~/.cache/ms-playwright
           key: ms-playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
 
-      # Split from the download on purpose. The system libraries go to /usr, which the
-      # cache does not carry, so they have to be installed on a hit as well; the browsers
-      # come from the cache when it has them. Neither step is conditional on the hit: a
-      # cache is an optimisation, and CI has to be correct when it misses.
-      # apt reaches Ubuntu's mirrors, which are the least reliable thing this job touches:
-      # on 32273362486 the Azure mirror Ign'd every index, apt fell back to
-      # archive.ubuntu.com, and the run sat on one InRelease file for 92 minutes. Nothing
-      # bounded it. A stall should cost a step, not an afternoon.
-      - run: bunx playwright install-deps chromium
-        timeout-minutes: 5
-
+      # No --with-deps, so no apt. Every shared library chromium asks for is already on
+      # the runner image — the nine packages the flag installs are fonts, and the fixture
+      # is Latin, which the image's fonts-liberation covers. What that removes is not only
+      # 40 of the 52 seconds this step used to take: reaching Ubuntu's mirrors was the
+      # least reliable thing in the job. On 32273362486 the Azure mirror Ign'd every
+      # index, apt fell back to archive.ubuntu.com, and the run sat on a single InRelease
+      # file for 92 minutes before it was cancelled by hand.
+      #
+      # Not conditional on the cache hitting. A cache is an optimisation, and a miss has
+      # to be slow rather than broken.
       - run: bunx playwright install chromium
         timeout-minutes: 5
 
