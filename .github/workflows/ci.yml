@@ -64,7 +64,32 @@ jobs:
           bun-version: latest
       - run: bun install --frozen-lockfile
       - run: bun run build:web
-      - run: bunx playwright install --with-deps chromium
+
+      # The browsers live outside node_modules, under ~/.cache/ms-playwright, and which
+      # build they are is decided by the playwright version alone. Keying on that version
+      # rather than on bun.lock means a lockfile change that leaves playwright where it is
+      # still hits.
+      - name: the playwright version, for the cache key
+        id: playwright
+        run: echo "version=$(bunx playwright --version | awk '{ print $2 }')" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: ms-playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+
+      # No --with-deps, so no apt. Every shared library chromium asks for is already on
+      # the runner image — the nine packages the flag installs are fonts, and the fixture
+      # is Latin, which the image's fonts-liberation covers. What that removes is not only
+      # 40 of the 52 seconds this step used to take: reaching Ubuntu's mirrors was the
+      # least reliable thing in the job. On 32273362486 the Azure mirror Ign'd every
+      # index, apt fell back to archive.ubuntu.com, and the run sat on a single InRelease
+      # file for 92 minutes before it was cancelled by hand.
+      #
+      # Not conditional on the cache hitting. A cache is an optimisation, and a miss has
+      # to be slow rather than broken.
+      - run: bunx playwright install chromium
+        timeout-minutes: 5
 
       # Regressions only a real browser catches: focus, IME, ranges, re-rendering.
       # The storage-layer tests detected none of them.
