@@ -1,50 +1,50 @@
 ---
-title: E2E の対象
+title: What e2e runs against
 status: active
 tags:
   - akapen
 ---
 
-# 見出し
+# Heading
 
-最初の段落。ここを選択してサーバ由来のイベントで消えないことを見る。
+The first paragraph. A test selects it, to watch that an event from the server does not drop the selection.
 
-## 決まっていること
+## What is settled
 
-- ラウンドはファイル内容の凍結スナップショット
-- コメントはそのスナップショット内の行に紐づく
-- ラウンドを切るのは人
+- a round is a frozen snapshot of the contents of the file
+- a comment is tied to a line inside that snapshot
+- closing a round is a person's call
 
-## 表
+## Table
 
-| 項目 | passive | review |
+| field | passive | review |
 |---|---|---|
-| 本文 | live 追従 | 凍結 |
-| コメント | 打てない | 打てる |
+| body | follows the file | frozen |
+| comments | not allowed | allowed |
 
-## 最後の節
+## The last section
 
-長い段落を 1 つ置いておく。折り返しても 1 行目にアンカーが揃うことと、レールの吹き出しが本文の高さを変えないことを確認するために使う。
+One long paragraph, here on purpose. It has to wrap, so that a row taller than one line exists to check two things against: that the anchor stays level with the first line of the row rather than its middle, and that a bubble out on the rail never changes the height of the document itself.
 
-## 生 HTML
+## Raw HTML
 
 <script>window.xssMarker = 'executed';</script>
 
 <img src=x onerror="window.xssMarker = 'executed'">
 
-<b>太字にはならない</b>
+<b>not actually bold</b>
 
-## 図
+## Diagram
 
 ```mermaid
 graph TD
-  A[読む] --> B[投げる]
-  B --> C[締める]
+  A[read] --> B[comment]
+  B --> C[close]
 ```
 
-## 図（大文字の fence）
+## Diagram (capitalised fence)
 
 ```Mermaid
 graph TD
-  D[書く] --> E[直す]
+  D[write] --> E[revise]
 ```

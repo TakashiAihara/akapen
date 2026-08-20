@@ -107,8 +107,10 @@ test('never rebuilds the textarea when a doc payload lands mid-typing (it would 
   akapen,
 }) => {
   await openDraft(page);
-  // The text stays Japanese on purpose: this is what an IME composition looks like
-  await page.locator(A.ta).fill('へんかんちゅう');
+  // A real composition is CJK, but nothing here reads the glyphs: the event below is
+  // synthetic and the assertions are on element identity and value. Multi-byte handling
+  // is covered where it belongs, by sweep over docs/, which never opens a browser.
+  await page.locator(A.ta).fill('midway through composing');
   await page.evaluate((sel) => {
     const ta = document.querySelector(sel) as HTMLTextAreaElement;
     ta.dataset['mark'] = 'original';
@@ -124,7 +126,7 @@ test('never rebuilds the textarea when a doc payload lands mid-typing (it would 
   const ta = page.locator(A.ta);
   await expect(ta).toHaveAttribute('data-mark', 'original'); // still the same element
   await expect(ta).toBeFocused();
-  await expect(ta).toHaveValue('へんかんちゅう');
+  await expect(ta).toHaveValue('midway through composing');
 });
 
 test('posts the grown range after a draft range is extended', async ({ page }) => {
@@ -264,9 +266,8 @@ test('shows raw HTML from the markdown as text instead of running it', async ({ 
 
   // It must still be readable as text: this is what is under review
   await expect(page.locator('#doc')).toContainText("<script>window.xssMarker = 'executed';</script>");
-  // The fixture stays Japanese on purpose (it also exercises CJK wrapping), so the
-  // expected text is quoted from it verbatim
-  await expect(page.locator('#doc')).toContainText('<b>太字にはならない</b>');
+  // Quoted from the fixture verbatim
+  await expect(page.locator('#doc')).toContainText('<b>not actually bold</b>');
 });
 
 test('loads and renders mermaid only when a diagram is present', async ({ page, akapen }) => {
