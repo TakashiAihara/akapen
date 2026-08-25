@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { startServer } from '@akapen/server';
 import { AdvertiseError, localAddresses, resolveAdvertised, urlsFor } from '@akapen/core/addresses';
+
 import { loadReview, pendingComments } from '@akapen/core/store';
 import { liveInstances } from '@akapen/core/instances';
 import { currentToken, resolveToken, rotateToken, secureHome, tokenIsPinned } from '@akapen/core/token';
@@ -276,11 +277,12 @@ for (const [signal, code] of [
  * `server.port` is what the OS chose for `-p 0`; Bun only leaves it unset when serving
  * on a unix socket, which nothing here does, so the requested port is the fallback.
  */
-const [primary, ...alternates] = urlsFor(
-  host,
-  server.port ?? port,
-  advertised === null ? localAddresses() : [advertised],
-);
+// A pinned address stands in for the bind, rather than being offered alongside it.
+// Passing it as the list instead would have been dropped for a concrete bind, where
+// `urlsFor` prints what it was bound to and never looks at the addresses — so
+// `--host 127.0.0.1 -A localhost` printed `127.0.0.1` and the flag did nothing.
+// It can never be a wildcard: it came out of the served set, and no wildcard is in it.
+const [primary, ...alternates] = urlsFor(advertised ?? host, server.port ?? port);
 
 /**
  * The token is in the URL so that opening it is the whole of logging in. The redirect

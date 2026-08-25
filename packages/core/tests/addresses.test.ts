@@ -136,6 +136,21 @@ describe('the URL to print', () => {
     expect(urlsFor('0.0.0.0', 4300, ['fd00::1'])).toEqual(['http://[fd00::1]:4300']);
   });
 
+  it('leaves an IPv6 literal that arrives already bracketed alone', () => {
+    // Both spellings reach here: `--host` takes either, and `allowedHostnames` keeps
+    // both, so `--advertise` can hand back a bracketed one. `http://[[::1]]:4300` is no
+    // more openable than the unbracketed form the bracketing exists to prevent.
+    expect(urlsFor('[::1]', 4300, [])).toEqual(['http://[::1]:4300']);
+    expect(urlsFor('0.0.0.0', 4300, ['[fd00::1]'])).toEqual(['http://[fd00::1]:4300']);
+  });
+
+  it('treats [::] as the wildcard it is, not as an address to print back', () => {
+    // `allowedHostnames` already reads both spellings as the wildcard. Calling it
+    // concrete here printed the bind address back, which is the whole failure.
+    expect(urlsFor('[::]', 4300, ['192.168.0.151'])).toEqual(['http://192.168.0.151:4300']);
+    expect(urlsFor('::', 4300, ['192.168.0.151'])).toEqual(['http://192.168.0.151:4300']);
+  });
+
   it('prints the port it was given, including the one the OS chose for -p 0', () => {
     expect(urlsFor('0.0.0.0', 51234, ['192.168.0.151'])).toEqual(['http://192.168.0.151:51234']);
   });
@@ -196,6 +211,13 @@ describe('the address to advertise', () => {
     expect(resolve('FD00::1')).toBe('fd00::1');
   });
 
+  it('hands back a bracketed IPv6 address in the spelling it was given', () => {
+    // Not normalised to the bare form: the caller puts it straight into a URL, and both
+    // spellings are in the served set, so changing it would only move the bracketing bug.
+    expect(resolve('[::1]')).toBe('[::1]');
+    expect(resolve('::1')).toBe('::1');
+  });
+
   it('refuses an address this server does not answer to, and says what it is bound to', () => {
     // Bound to one interface: the LAN address is real, and this server is not on it.
     const loopbackOnly = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
@@ -228,6 +250,25 @@ describe('the address to advertise', () => {
     expect(() => resolve('akapen.d1.local')).toThrow(AdvertiseError);
     expect(() => resolve('akapen.d1.local')).toThrow(/hostname/i);
     expect(() => resolve('akapen.d1.local')).toThrow('akapen.d1.local');
+  });
+
+  it('refuses a link-local IPv6 address, which the served set does hold', () => {
+    // The server answers on it, so the served-set check passes and cannot be what stops
+    // it. Without a zone identifier it is still not a URL anybody can open — the same
+    // reason the default listing never offers one.
+    const refuse = () => resolve('fe80::be24:11ff:fef1:429b');
+    expect(refuse).toThrow(AdvertiseError);
+    expect(refuse).toThrow(/link-local/i);
+    // Bracketed is the same address and has to be refused the same way.
+    expect(() =>
+      resolve('[fe80::be24:11ff:fef1:429b]', '0.0.0.0', new Set([...ALLOWED, '[fe80::be24:11ff:fef1:429b]'])),
+    ).toThrow(/link-local/i);
+  });
+
+  it('still takes an IPv6 address that is not link-local', () => {
+    // The refusal above is about the zone identifier, not about IPv6.
+    expect(resolve('fd00::1')).toBe('fd00::1');
+    expect(resolve('::1')).toBe('::1');
   });
 
   it('refuses an interface carrying no IPv4 address', () => {

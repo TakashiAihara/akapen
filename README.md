@@ -64,13 +64,14 @@ The examples below use `bun run packages/cli/src/cli.ts`; read that as `akapen` 
 |---|---|
 | `--host <addr>` | listen address (default `127.0.0.1`) |
 | `-p, --port <n>` | port (default `4300`) |
+| `-A, --advertise <addr\|iface>` | address to print in the URL, or an interface to take one from (`AKAPEN_ADVERTISE` sets it once per host) |
 | `--css <file>` | extra stylesheet, loaded after the defaults so it can override everything |
 | `--keymap <file>` | JSON overriding the keymap, merged over the defaults |
 | `--author <name>` | comment author (default `$USER`) |
 | `--token <s>` | use this token instead of the stored one (`AKAPEN_TOKEN` does the same without appearing in `ps`) |
 | `--no-auth` | serve with no token at all, for running behind something that authenticates |
 
-Use `--host 0.0.0.0` to run it on a remote machine and read it from a local browser. The printed URL says `127.0.0.1`, because a wildcard bind is not an address anything connects to; replace it with the machine's LAN address to reach it from elsewhere. An address, not a name: akapen serves literal addresses and `localhost` only, because a name is the one thing another machine on the network can claim and rebind.
+Use `--host 0.0.0.0` to run it on a remote machine and read it from a local browser. A wildcard bind is not an address anything connects to, so what gets printed is the machine's own addresses — the section below says which, and how to pin one. An address, not a name: akapen serves literal addresses and `localhost` only, because a name is the one thing another machine on the network can claim and rebind.
 
 ### Authentication
 
@@ -78,7 +79,7 @@ Every request needs a token, at every bind address. The URL akapen prints carrie
 
 ```text
 akapen  /home/you/notes/design.md
-  url     http://0.0.0.0:4300/?token=Cu1fE0h07o__JPQQYfF_5zDjTxU6A2X8NriPndNrSHc
+  url     http://192.168.0.151:4300/?token=Cu1fE0h07o__JPQQYfF_5zDjTxU6A2X8NriPndNrSHc
 ```
 
 Opening that once is the whole of logging in. akapen answers with a cookie and a redirect that takes the token back out of the address bar, so every later visit is the bare `http://host:4300` — and the URL above, kept as a bookmark, still works when the cookie is gone or you are on another browser. Opening the bookmark again redirects again: the token comes out of the address bar every time, not only on the first visit.

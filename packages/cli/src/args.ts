@@ -68,8 +68,10 @@ export function parseArgs(argv: string[]): Args {
       continue;
     }
 
-    // The attached form (`-A=eth0`, `--advertise=eth0`) is not matched here and falls
-    // through to the general handling below, the same way `--port=4300` does.
+    // `--advertise=eth0` is not matched here and falls through to the general handling
+    // below, the same way `--port=4300` does. `-A=eth0` does not: that handling is for
+    // `--` options only, so it is refused as an unknown one — which is what `-p=4300`
+    // already does, so the two short flags stay consistent.
     if (token === '-A' || token === '--advertise') {
       const next = argv[i + 1];
       if (missing(next)) throw new UsageError(`${token} needs a value`);

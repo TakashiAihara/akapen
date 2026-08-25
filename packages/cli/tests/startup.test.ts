@@ -164,6 +164,9 @@ describe('--advertise', () => {
         (infos ?? []).some((info) => info.address === lan),
       )?.[0];
       const { lines } = await start(['--host', '0.0.0.0', '--no-auth', '-A', name!]);
+      // The length matters as much as the value: asserting only `[0]` would pass just
+      // as well if this form had gone on offering the other addresses beside it.
+      expect(urlsIn(lines)).toHaveLength(1);
       expect(urlsIn(lines)[0]).toContain(`//${lan!}:`);
     },
     30_000,
@@ -173,16 +176,27 @@ describe('--advertise', () => {
     'reads AKAPEN_ADVERTISE, and lets the flag beat it',
     async () => {
       const fromEnv = await start(['--host', '0.0.0.0', '--no-auth'], { AKAPEN_ADVERTISE: lan! });
+      expect(urlsIn(fromEnv.lines)).toHaveLength(1);
       expect(urlsIn(fromEnv.lines)[0]).toContain(`//${lan!}:`);
 
       // Set once per host, so reaching for the flag is what says this run is the exception.
       const overridden = await start(['--host', '0.0.0.0', '--no-auth', '-A', '127.0.0.1'], {
         AKAPEN_ADVERTISE: lan!,
       });
+      expect(urlsIn(overridden.lines)).toHaveLength(1);
       expect(urlsIn(overridden.lines)[0]).toContain('//127.0.0.1:');
     },
     60_000,
   );
+
+  it('honours the pinned address even when the bind was concrete', async () => {
+    // `urlsFor` prints a concrete bind back without looking at any address list, so
+    // handing the pinned one over as that list dropped it: `--host 127.0.0.1 -A
+    // localhost` printed `127.0.0.1` and the flag did nothing at all.
+    const { lines } = await start(['--host', '127.0.0.1', '--no-auth', '-A', 'localhost']);
+    expect(urlsIn(lines)).toHaveLength(1);
+    expect(urlsIn(lines)[0]).toContain('//localhost:');
+  }, 30_000);
 
   it('refuses to start on an address this host does not answer to', () => {
     const result = failing(['--host', '127.0.0.1', '--advertise', '203.0.113.9']);

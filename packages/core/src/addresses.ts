@@ -25,15 +25,36 @@ import { allowedHostnames } from './hosts.ts';
  */
 const ADDRESS_SHAPED = /^\[?[0-9a-f.:]+\]?$/i;
 
-/** Bind addresses that mean "every interface" rather than naming one. */
-const WILDCARD = new Set(['0.0.0.0', '::']);
+/**
+ * A link-local IPv6 address, which needs a zone identifier nothing here carries.
+ *
+ * `allowedHostnames` holds these for a wildcard bind — the server really does answer on
+ * them — so the served-set check alone lets one through. It is still not a URL anybody
+ * can open, which is the same reason `orderedIPv4` never offers one.
+ */
+const LINK_LOCAL_V6 = /^\[?fe[89ab][0-9a-f]:/i;
+
+/**
+ * Bind addresses that mean "every interface" rather than naming one.
+ *
+ * `[::]` is here because `--host` takes an IPv6 literal in either spelling and
+ * `allowedHostnames` already treats both as the wildcard. Leaving it out made the two
+ * disagree: this module called `[::]` a concrete address and printed it back.
+ */
+const WILDCARD = new Set(['0.0.0.0', '::', '[::]']);
 
 /**
  * An IPv6 literal has to be bracketed or the port cannot be told from the address.
  * `http://::1:4300` is not a URL; `http://[::1]:4300` is the same host, openable.
+ *
+ * One that arrives already bracketed is left alone. Both spellings reach here — `--host`
+ * accepts either, and `allowedHostnames` keeps both, so `--advertise` can return one —
+ * and bracketing a bracketed address gives `http://[[::1]]:4300`, which is no more
+ * openable than the unbracketed form this exists to prevent.
  */
 function asUrl(address: string, port: number): string {
-  return `http://${address.includes(':') ? `[${address}]` : address}:${port}`;
+  const authority = address.includes(':') && !address.startsWith('[') ? `[${address}]` : address;
+  return `http://${authority}:${port}`;
 }
 
 /**
@@ -169,7 +190,16 @@ export function resolveAdvertised(
   // Addresses first, and `localhost` with them: an interface is never named like either,
   // so nothing is shadowed, and it means the common case never touches the interface list.
   const literal = name.toLowerCase();
-  if (allowed.has(literal)) return literal;
+  if (allowed.has(literal)) {
+    // Served and still unopenable. Refusing here rather than at the served-set check
+    // because the reason is different, and so is what the caller has to do about it.
+    if (LINK_LOCAL_V6.test(literal)) {
+      throw new AdvertiseError(
+        `--advertise: ${name} is a link-local address, which needs a zone identifier a URL cannot carry`,
+      );
+    }
+    return literal;
+  }
 
   const iface = interfaces[name];
   if (iface === undefined) {
