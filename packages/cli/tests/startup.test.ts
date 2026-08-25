@@ -7,7 +7,7 @@
  * failure it guards against (`http://0.0.0.0:4300`) is invisible to every other check:
  * the process starts, serves correctly, and prints an address that opens nothing.
  */
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { networkInterfaces } from 'node:os';
 import { tmpdir } from 'node:os';
@@ -33,14 +33,14 @@ afterEach(() => {
  * Start akapen and collect the startup block. `-p 0` so a port someone left listening
  * on cannot fail this, which is also the case the printed port has to survive.
  */
-async function start(extra: string[] = []): Promise<Started> {
+async function start(extra: string[] = [], env: NodeJS.ProcessEnv = {}): Promise<Started> {
   const sandbox = mkdtempSync(join(tmpdir(), 'akapen-startup-'));
   sandboxes.push(sandbox);
   const file = join(sandbox, 'note.md');
   writeFileSync(file, SOURCE);
 
   const proc: ChildProcess = spawn('bun', ['run', CLI, file, '-p', '0', ...extra], {
-    env: { ...process.env, AKAPEN_HOME: join(sandbox, 'home') },
+    env: { ...process.env, AKAPEN_HOME: join(sandbox, 'home'), ...env },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   const stop = () => void proc.kill();
@@ -118,5 +118,86 @@ describe('the startup block', () => {
     const { lines } = await start();
     expect(lines.some((line) => /^\s+round\s+\d{3}$/.test(line))).toBe(true);
     expect(lines.some((line) => /^\s+store\s+\S/.test(line))).toBe(true);
+  }, 30_000);
+});
+
+/**
+ * Pinning the address, from a real process.
+ *
+ * The unit tests state which value is accepted; these cover the two things only a
+ * process shows — that the pinned address is what comes out of the printed block with
+ * nothing else offered beside it, and that a refused one costs a message rather than a
+ * server that is running and cannot be opened.
+ */
+describe('--advertise', () => {
+  /** The machine's own LAN address, or nothing to pin on an isolated container. */
+  const lan = Object.values(networkInterfaces())
+    .flatMap((infos) => infos ?? [])
+    .find((info) => !info.internal && info.family === 'IPv4')?.address;
+
+  const failing = (extra: string[], env: NodeJS.ProcessEnv = {}) => {
+    const sandbox = mkdtempSync(join(tmpdir(), 'akapen-startup-'));
+    sandboxes.push(sandbox);
+    const file = join(sandbox, 'note.md');
+    writeFileSync(file, SOURCE);
+    return spawnSync('bun', ['run', CLI, file, '-p', '0', ...extra], {
+      env: { ...process.env, AKAPEN_HOME: join(sandbox, 'home'), ...env },
+      encoding: 'utf8',
+    });
+  };
+
+  it.runIf(lan !== undefined)(
+    'prints the pinned address and offers nothing else',
+    async () => {
+      const { lines } = await start(['--host', '0.0.0.0', '--no-auth', '--advertise', lan!]);
+      expect(urlsIn(lines)).toEqual([`http://${lan!}:${String(new URL(urlsIn(lines)[0]!).port)}`]);
+      // The reason to pin one is to stop being handed three that cannot work.
+      expect(lines.some((line) => /^\s+also\s/.test(line))).toBe(false);
+    },
+    30_000,
+  );
+
+  it.runIf(lan !== undefined)(
+    'takes the address from an interface name',
+    async () => {
+      const name = Object.entries(networkInterfaces()).find(([, infos]) =>
+        (infos ?? []).some((info) => info.address === lan),
+      )?.[0];
+      const { lines } = await start(['--host', '0.0.0.0', '--no-auth', '-A', name!]);
+      expect(urlsIn(lines)[0]).toContain(`//${lan!}:`);
+    },
+    30_000,
+  );
+
+  it.runIf(lan !== undefined)(
+    'reads AKAPEN_ADVERTISE, and lets the flag beat it',
+    async () => {
+      const fromEnv = await start(['--host', '0.0.0.0', '--no-auth'], { AKAPEN_ADVERTISE: lan! });
+      expect(urlsIn(fromEnv.lines)[0]).toContain(`//${lan!}:`);
+
+      // Set once per host, so reaching for the flag is what says this run is the exception.
+      const overridden = await start(['--host', '0.0.0.0', '--no-auth', '-A', '127.0.0.1'], {
+        AKAPEN_ADVERTISE: lan!,
+      });
+      expect(urlsIn(overridden.lines)[0]).toContain('//127.0.0.1:');
+    },
+    60_000,
+  );
+
+  it('refuses to start on an address this host does not answer to', () => {
+    const result = failing(['--host', '127.0.0.1', '--advertise', '203.0.113.9']);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('203.0.113.9');
+  }, 30_000);
+
+  it('refuses a hostname, rather than starting and being refused by its own Host check', () => {
+    const result = failing(['--host', '0.0.0.0', '--advertise', 'akapen.example.local']);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toMatch(/hostname/i);
+  }, 30_000);
+
+  it('an empty AKAPEN_ADVERTISE is an unset one, not a request to advertise nothing', async () => {
+    const { lines } = await start([], { AKAPEN_ADVERTISE: '' });
+    expect(urlsIn(lines)[0]).toContain('//127.0.0.1:');
   }, 30_000);
 });

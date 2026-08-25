@@ -2,7 +2,7 @@
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { startServer } from '@akapen/server';
-import { urlsFor } from '@akapen/core/addresses';
+import { AdvertiseError, localAddresses, resolveAdvertised, urlsFor } from '@akapen/core/addresses';
 import { loadReview, pendingComments } from '@akapen/core/store';
 import { liveInstances } from '@akapen/core/instances';
 import { currentToken, resolveToken, rotateToken, secureHome, tokenIsPinned } from '@akapen/core/token';
@@ -16,16 +16,18 @@ const USAGE = `akapen — markdown inline review (PoC)
   akapen token                   print this host's token (--rotate to replace it)
 
 options:
-  --host <addr>    listen address (default 127.0.0.1)
-  -p, --port <n>   port (default 4300)
-  --css <file>     extra stylesheet to load
-  --keymap <file>  JSON overriding the keymap ({ "action": ["key"] })
-  --author <name>  comment author (default $USER)
-  --token <s>      use this token instead of the stored one
-  --no-auth        serve with no token at all (only behind something that authenticates)
-  --all            comments: include resolved ones
-  --json           list: print as JSON (for agents)
-  --rotate         token: replace the stored token
+  --host <addr>            listen address (default 127.0.0.1)
+  -p, --port <n>           port (default 4300)
+  -A, --advertise <addr>   address to print in the URL, or an interface to take one
+                           from ($AKAPEN_ADVERTISE sets it once per host)
+  --css <file>             extra stylesheet to load
+  --keymap <file>          JSON overriding the keymap ({ "action": ["key"] })
+  --author <name>          comment author (default $USER)
+  --token <s>              use this token instead of the stored one
+  --no-auth                serve with no token at all (only behind something that authenticates)
+  --all                    comments: include resolved ones
+  --json                   list: print as JSON (for agents)
+  --rotate                 token: replace the stored token
 `;
 
 /** Anything typed wrong ends here: the reason, then how to type it. */
@@ -80,6 +82,13 @@ if (positional[0] === 'list') {
   // stores a secret as a side effect is a surprise. An instance running on a token this
   // caller does not have simply does not answer, and reads as not running.
   const live = await liveInstances({ token: currentToken() });
+  // Read once for the whole table rather than per row: every instance is on this host,
+  // so the answer is the same for all of them and the routing table is a file read.
+  const addresses = localAddresses();
+  // What a peer advertised for itself is not in the registry — it is derived here from
+  // what it bound. Recording the URL it actually printed is #99.
+  const urlOf = (record: { host: string; port: number }): string =>
+    urlsFor(record.host, record.port, addresses)[0];
   if (args.json) {
     console.log(
       JSON.stringify(
@@ -87,6 +96,7 @@ if (positional[0] === 'list') {
           pid: record.pid,
           host: record.host,
           port: record.port,
+          url: urlOf(record),
           file: record.file,
           round: status.round,
           unresolved: status.unresolved,
@@ -104,7 +114,9 @@ if (positional[0] === 'list') {
   }
   const rows = live.map(({ record, status }) => ({
     pid: String(record.pid),
-    address: `${record.host}:${record.port}`,
+    // The bind address is what the registry holds, and `0.0.0.0:4300` is not somewhere
+    // to go. The column is the URL for the same reason the startup line is.
+    url: urlOf(record),
     round: `R${String(status.round).padStart(3, '0')}`,
     unresolved: String(status.unresolved),
     file: record.file,
@@ -115,16 +127,16 @@ if (positional[0] === 'list') {
     Math.max(head.length, ...rows.map((r) => pick(r).length));
   const w = {
     pid: width((r) => r.pid, 'PID'),
-    address: width((r) => r.address, 'ADDRESS'),
+    url: width((r) => r.url, 'URL'),
     round: width((r) => r.round, 'ROUND'),
     unresolved: width((r) => r.unresolved, 'UNRESOLVED'),
   };
   console.log(
-    `${'PID'.padEnd(w.pid)}  ${'ADDRESS'.padEnd(w.address)}  ${'ROUND'.padEnd(w.round)}  ${'UNRESOLVED'.padEnd(w.unresolved)}  FILE`,
+    `${'PID'.padEnd(w.pid)}  ${'URL'.padEnd(w.url)}  ${'ROUND'.padEnd(w.round)}  ${'UNRESOLVED'.padEnd(w.unresolved)}  FILE`,
   );
   for (const r of rows) {
     console.log(
-      `${r.pid.padEnd(w.pid)}  ${r.address.padEnd(w.address)}  ${r.round.padEnd(w.round)}  ${r.unresolved.padEnd(w.unresolved)}  ${r.file}`,
+      `${r.pid.padEnd(w.pid)}  ${r.url.padEnd(w.url)}  ${r.round.padEnd(w.round)}  ${r.unresolved.padEnd(w.unresolved)}  ${r.file}`,
     );
   }
   process.exit(0);
@@ -186,6 +198,31 @@ try {
 }
 
 /**
+ * `--advertise` / `-A`, or `AKAPEN_ADVERTISE` for a host that always wants the same one.
+ *
+ * Resolved before the socket is bound, so a value this server would refuse costs a
+ * message rather than a review that is running and cannot be opened.
+ *
+ * The flag beats the environment. The variable is set once per host, so reaching for the
+ * flag is what says this invocation is the exception — the other way round would mean
+ * the exception could only be expressed by unsetting something.
+ *
+ * An empty variable is an unset one. `AKAPEN_ADVERTISE=` in a profile that builds it
+ * conditionally is far more likely than somebody asking to advertise nothing, and the
+ * flag form of the same mistake is already refused by parseArgs.
+ */
+let advertised: string | null = null;
+const requestedAdvertise = args.advertise ?? process.env['AKAPEN_ADVERTISE'] ?? '';
+if (requestedAdvertise !== '') {
+  try {
+    advertised = resolveAdvertised(requestedAdvertise, host);
+  } catch (err) {
+    if (!(err instanceof AdvertiseError)) throw err;
+    fail(err.message);
+  }
+}
+
+/**
  * Authentication is on at every bind address, loopback included.
  *
  * Deciding it from the bind address would make the rule depend on the one flag people
@@ -239,7 +276,11 @@ for (const [signal, code] of [
  * `server.port` is what the OS chose for `-p 0`; Bun only leaves it unset when serving
  * on a unix socket, which nothing here does, so the requested port is the fallback.
  */
-const [primary, ...alternates] = urlsFor(host, server.port ?? port);
+const [primary, ...alternates] = urlsFor(
+  host,
+  server.port ?? port,
+  advertised === null ? localAddresses() : [advertised],
+);
 
 /**
  * The token is in the URL so that opening it is the whole of logging in. The redirect
@@ -260,6 +301,7 @@ console.log(`akapen  ${resolve(file)}`);
 console.log(`  url     ${withToken(primary)}`);
 // The same server, reached another way. Which one works is knowledge the reader has
 // and this process does not, so all of them are offered rather than one guessed at.
+// Nothing is printed here when `--advertise` named one: the choice has been made.
 for (const also of alternates) console.log(`  also    ${withToken(also)}`);
 console.log(`  round   ${String(round).padStart(3, '0')}`);
 console.log(`  store   ${storeDir}`);

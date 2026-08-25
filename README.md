@@ -118,23 +118,38 @@ bun run packages/cli/src/cli.ts list --json   # the same, for agents
 ```
 
 ```text
-PID     ADDRESS         ROUND  UNRESOLVED  FILE
-81234   0.0.0.0:4300    R002   3           /path/to/design.md
-81235   127.0.0.1:4391  R001   0           /path/to/plan.md
+PID     URL                          ROUND  UNRESOLVED  FILE
+81234   http://192.168.0.151:4300    R002   3           /path/to/design.md
+81235   http://127.0.0.1:4391        R001   0           /path/to/plan.md
 ```
+
+The column is a URL rather than the address each was bound to, for the same reason the startup block is one: `0.0.0.0:4300` is not somewhere to go. It carries no token — the terminal it is read in belongs to whoever started them, and a secret printed on every row would be in the scrollback of every other thing they did. `akapen token` prints it when a script needs one.
 
 `0.0.0.0` names every interface and no machine, so it is not printed back. When the bound address is a wildcard, the startup block lists the machine's own non-loopback IPv4 addresses instead — the one carrying the default route first, the rest as `also`, because which one your browser can reach is knowledge akapen does not have.
 
 ```text
 akapen  /home/me/notes/design.md
-  url     http://192.168.0.151:4300
-  also    http://172.17.0.1:4300
+  url     http://192.168.0.151:4300/?token=6Qk3vN…
+  also    http://172.17.0.1:4300/?token=6Qk3vN…
   round   001
   store   /home/me/.akapen/reviews/design-ab12cd34ef56
-  note    no authentication. mind who can reach this address.
 ```
 
 A concrete `--host` is printed unchanged. Ordering by the default route reads `/proc/net/route`, so on a platform without it the addresses come out in whatever order the OS reports them.
+
+### Pinning the one to hand over
+
+Listing every address is honest and still leaves you picking one out of three that cannot work. `--advertise` (`-A`) says which one, and `AKAPEN_ADVERTISE` says it once for a host that always wants the same answer — the flag wins, so reaching for it is what marks this run as the exception.
+
+```bash
+akapen note.md --host 0.0.0.0 --advertise 192.168.0.151   # this address
+akapen note.md --host 0.0.0.0 -A eth0                     # whatever that interface has
+export AKAPEN_ADVERTISE=eth0                              # and then neither
+```
+
+An interface yields its IPv4 address. What is pinned is checked rather than believed: akapen refuses to start on an address it does not answer to, because it would otherwise print that address and then meet it with its own 403.
+
+A hostname is refused rather than resolved, and this is deliberate. The `Host` check leaves this machine's own name out of the set it serves — a name is the one entry somebody else on the network can claim, and rebinding it produces a same-origin page rather than a cross-origin one, which is the attack the check exists to stop. Advertising a name would mean widening that set, which is a separate decision.
 
 The handoff to an agent is a CLI command.
 

@@ -14,7 +14,7 @@
 export class UsageError extends Error {}
 
 /** Flags that carry a value. Given without one, they fail rather than becoming `true`. */
-const VALUE_FLAGS = ['host', 'port', 'css', 'keymap', 'author', 'token'] as const;
+const VALUE_FLAGS = ['host', 'port', 'css', 'keymap', 'author', 'token', 'advertise'] as const;
 
 /** Flags that are on or off. Given a value, they fail — `--all=false` reads as "off". */
 const BOOLEAN_FLAGS = ['help', 'all', 'json', 'no-auth', 'rotate'] as const;
@@ -68,11 +68,21 @@ export function parseArgs(argv: string[]): Args {
       continue;
     }
 
+    // The attached form (`-A=eth0`, `--advertise=eth0`) is not matched here and falls
+    // through to the general handling below, the same way `--port=4300` does.
+    if (token === '-A' || token === '--advertise') {
+      const next = argv[i + 1];
+      if (missing(next)) throw new UsageError(`${token} needs a value`);
+      args.advertise = next!;
+      i++;
+      continue;
+    }
+
     if (!token.startsWith('--')) {
-      // `-p` is matched whole, above. Anything else that starts with a dash is meant as
-      // an option, so it cannot be filed as a file name: `akapen note.md -p4300` would
-      // otherwise start on the default port with the one that was asked for ignored,
-      // and `akapen -p4300 note.md` would report "no such file: -p4300".
+      // `-p` and `-A` are matched whole, above. Anything else starting with a dash is
+      // meant as an option, so it cannot be filed as a file name: `akapen note.md -p4300`
+      // would otherwise start on the default port with the one that was asked for
+      // ignored, and `akapen -p4300 note.md` would report "no such file: -p4300".
       if (token.startsWith('-') && token !== '-') {
         throw new UsageError(`unknown option: ${token} (values are separate: -p 4300)`);
       }
