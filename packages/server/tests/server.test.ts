@@ -846,6 +846,9 @@ describe('listing the instances from the terminal', () => {
         pid: expect.any(Number),
         host: '127.0.0.1',
         port: Number(server!.port),
+        // Somewhere to go, not the address it bound. A caller reading this to open one
+        // would otherwise have to know what `0.0.0.0` means for a peer that used it.
+        url: `http://127.0.0.1:${String(server!.port)}`,
         // The terminal is on the host and belongs to whoever started them, unlike the
         // switcher, so here the path is the useful part.
         file: work,
@@ -860,6 +863,13 @@ describe('listing the instances from the terminal', () => {
     const out = run().stdout;
     expect(out).toContain('R001');
     expect(out).toContain(work);
+  });
+
+  it('prints a url to open, not the address the peer bound', () => {
+    const out = run().stdout;
+    expect(out).toContain('URL');
+    expect(out).toContain(`http://127.0.0.1:${String(server!.port)}`);
+    expect(out).not.toContain('ADDRESS');
   });
 
   it('says so when nothing is running', () => {
