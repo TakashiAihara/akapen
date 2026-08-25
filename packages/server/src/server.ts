@@ -22,7 +22,9 @@ import {
   type Comment,
   type Review,
 } from '@akapen/core/store';
-import { liveInstances, registerInstance, removeInstance } from '@akapen/core/instances';
+import { detectOrigin, liveInstances, registerInstance, removeInstance } from '@akapen/core/instances';
+import { forgetUrl, liveEntries, recordUrl, sweep as sweepSessions } from '@akapen/core/sessions';
+import { urlsFor } from '@akapen/core/addresses';
 import {
   CreateCommentSchema,
   CreateReplySchema,
@@ -41,6 +43,14 @@ export type ServeOptions = {
   host: string;
   port: number;
   author: string;
+  /**
+   * The address `--advertise` pinned, when one was pinned.
+   *
+   * Only used to decide what to record as this instance's url. The startup line derives
+   * the same answer from the same value, and a registry that disagreed with the line
+   * printed a moment earlier would be worse than no registry.
+   */
+  advertised?: string | null;
   cssPath?: string;
   keymapPath?: string;
   /**
@@ -76,6 +86,33 @@ const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
 export function startServer(opts: ServeOptions) {
   const file = resolve(opts.file);
+  // Read once. It cannot change while the process runs, and the login handler below
+  // needs it on a path that should not be touching the environment.
+  const origin = detectOrigin();
+
+  /**
+   * Say where this instance can be reached, if anybody is going to look.
+   *
+   * Written twice over a life. Once when the socket is listening, with the address the
+   * startup line printed — so a session that has just started one has something to show
+   * before anybody has opened it. Again when a browser logs in, with the origin that
+   * browser now holds a cookie for.
+   *
+   * The second is what makes the first safe. The recorded url is a guess at which of
+   * this machine's addresses the reader will use, and a cookie is scoped to scheme, host
+   * and port together — so a wrong guess is one a bare url cannot come back on. But a
+   * wrong guess is also, precisely, one whose cookie will not be sent, which forces a
+   * login, which rewrites it. It repairs itself in the case it is wrong, and only then.
+   *
+   * Guarded on the value because a bookmark carrying `?token=` logs in on every visit,
+   * and rewriting an identical file on every reload is a write nobody asked for.
+   */
+  let recordedUrl: string | null = null;
+  const rememberUrl = (url: string): void => {
+    if (origin.id === undefined || url === recordedUrl) return;
+    recordedUrl = url;
+    recordUrl(origin.id, process.pid, url);
+  };
 
   let review: Review = ensureRound(file, readFileSync(file, 'utf8'));
   // What we render is the current round's snapshot, not the live file. Freezing what
@@ -350,6 +387,16 @@ export function startServer(opts: ServeOptions) {
      */
     if (presented !== null && (cookieOk || queryOk) && SAFE_METHODS.has(c.req.method)) {
       if (queryOk) {
+        /**
+         * The authority the cookie is about to be scoped to, which is the one this
+         * browser can come back on. Taken from the request rather than derived: what
+         * was bound, what `--advertise` named and what the reader typed are three
+         * different things, and only the last one is what the cookie will follow.
+         *
+         * Already checked — a `Host` this server does not serve was refused above — so
+         * what is recorded here is a name it answers to.
+         */
+        if (host !== undefined) rememberUrl(`http://${host}`);
         setCookie(c, COOKIE, active, {
           httpOnly: true,
           sameSite: 'Lax',
@@ -664,7 +711,14 @@ export function startServer(opts: ServeOptions) {
       port: server.port,
       file,
       startedAt: new Date().toISOString(),
+      origin,
     });
+    // The same derivation the startup line prints, so the two never disagree.
+    rememberUrl(urlsFor(opts.advertised ?? opts.host, server.port)[0]);
+    // A crash leaves a file behind that nothing will ever remove on its own, and one
+    // that never looks wrong: whoever reads it checks the pid and skips it. Starting is
+    // when the registry has just been read anyway, so it is the cheapest moment to look.
+    sweepSessions(liveEntries());
   }
 
   /**
@@ -681,6 +735,7 @@ export function startServer(opts: ServeOptions) {
     // Before the socket closes: an entry left pointing at a port nobody is listening on
     // is what every reader then has to spend a timeout discovering.
     removeInstance();
+    if (origin.id !== undefined) forgetUrl(origin.id, process.pid);
     await server.stop(true);
   };
 

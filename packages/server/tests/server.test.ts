@@ -26,7 +26,7 @@ import {
 import { connect } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   CommentsPayloadSchema,
   DocPayloadSchema,
@@ -82,13 +82,24 @@ async function start(
   file: string,
   home: string,
   extra: string[] = [],
-  opts: { token?: string | null } = {},
+  opts: { token?: string | null; env?: NodeJS.ProcessEnv } = {},
 ): Promise<Server> {
   // `null` leaves AKAPEN_TOKEN out, so the server generates and stores one — the path
   // the everyday case takes, and the only way to test what it writes.
   const token = opts.token === undefined ? TOKEN : opts.token;
   const proc: ChildProcess = spawn('bun', ['run', CLI, file, '-p', '0', ...extra], {
-    env: { ...process.env, AKAPEN_HOME: home, ...(token === null ? {} : { AKAPEN_TOKEN: token }) },
+    env: {
+      ...process.env,
+      // Cleared unless a test sets them. akapen reads the origin off the environment,
+      // and these tests are themselves run by something that may export a session id —
+      // inheriting it would make what is asserted depend on who ran the suite, and pass
+      // in CI while failing on the machine that wrote it.
+      CLAUDE_CODE_SESSION_ID: '',
+      AKAPEN_ORIGIN_LABEL: '',
+      AKAPEN_HOME: home,
+      ...(token === null ? {} : { AKAPEN_TOKEN: token }),
+      ...opts.env,
+    },
     // stderr is piped, not dropped: when startup fails, the reason is only on stderr,
     // and a discarded one turns every failure into a bare timeout.
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -849,6 +860,10 @@ describe('listing the instances from the terminal', () => {
         // Somewhere to go, not the address it bound. A caller reading this to open one
         // would otherwise have to know what `0.0.0.0` means for a peer that used it.
         url: `http://127.0.0.1:${String(server!.port)}`,
+        // Started with no session id, so there is nothing to attribute it to. Null
+        // rather than absent: a consumer filtering on it should not have to tell the
+        // two apart.
+        origin: { kind: 'shell', cwd: expect.any(String) },
         // The terminal is on the host and belongs to whoever started them, unlike the
         // switcher, so here the path is the useful part.
         file: work,
@@ -886,6 +901,161 @@ describe('listing the instances from the terminal', () => {
         }).stdout,
       ),
     ).toEqual([]);
+  });
+});
+
+/**
+ * Finding your own akapen again, from the session that started it.
+ *
+ * An agent starts one and the url lives in that session's scrollback and nowhere else.
+ * Both halves of the fix fail quietly: an origin that is never recorded looks exactly
+ * like a shell that had no session, and a url recorded on the wrong origin looks exactly
+ * right until the browser is asked to come back on it and finds no cookie.
+ */
+describe('the session that started an instance', () => {
+  const SESSION = 'f8f3b87b-e51b-4f8e-ac92-1e743787d779';
+  const home = () => join(sandbox, 'home');
+  const entry = (pid: number, session = SESSION) => join(home(), 'sessions', session, String(pid));
+  const recorded = (pid: number, session = SESSION) =>
+    existsSync(entry(pid, session)) ? readFileSync(entry(pid, session), 'utf8').trim() : null;
+  const registered = (pid: number) =>
+    JSON.parse(readFileSync(join(home(), 'instances', `${String(pid)}.json`), 'utf8')) as {
+      origin?: { kind: string; id?: string; label?: string; cwd: string };
+    };
+
+  const startFor = (name: string, env: NodeJS.ProcessEnv, extra: string[] = []) => {
+    const file = join(sandbox, name);
+    writeFileSync(file, SOURCE);
+    return start(file, home(), extra, { env });
+  };
+
+  it('records who started it, and where to come back to', async () => {
+    const peer = await startFor('design.md', { CLAUDE_CODE_SESSION_ID: SESSION });
+    try {
+      expect(registered(peer.pid).origin).toMatchObject({ kind: 'claude-code', id: SESSION });
+      // The url, not the bind address, and no token on it: this file is read by a
+      // statusline that prints it on every redraw.
+      expect(recorded(peer.pid)).toBe(`http://127.0.0.1:${peer.port}`);
+      expect(recorded(peer.pid)).not.toContain('token');
+    } finally {
+      peer.stop();
+      await peer.stopped;
+    }
+  });
+
+  it('records nothing to come back to when there was no session', async () => {
+    // The other direction. Without it, a test that only ever starts akapen with a session
+    // cannot tell "records the right thing" from "records something regardless".
+    const peer = await startFor('plan.md', {});
+    try {
+      expect(registered(peer.pid).origin).toMatchObject({ kind: 'shell' });
+      expect(registered(peer.pid).origin?.id).toBeUndefined();
+      expect(existsSync(join(home(), 'sessions'))).toBe(false);
+    } finally {
+      peer.stop();
+      await peer.stopped;
+    }
+  });
+
+  it('passes an origin label through without reading it', async () => {
+    // Whoever runs akapen may have a pane id or a ticket to attach. akapen holding it as
+    // an opaque string is what keeps one person's setup out of a tool anybody installs.
+    const peer = await startFor('labelled.md', {
+      CLAUDE_CODE_SESSION_ID: SESSION,
+      AKAPEN_ORIGIN_LABEL: 'wA:p1',
+    });
+    try {
+      expect(registered(peer.pid).origin?.label).toBe('wA:p1');
+    } finally {
+      peer.stop();
+      await peer.stopped;
+    }
+  });
+
+  it('rewrites the url to the origin a browser actually logged in on', async () => {
+    const peer = await startFor('rebind.md', { CLAUDE_CODE_SESSION_ID: SESSION });
+    try {
+      expect(recorded(peer.pid)).toBe(`http://127.0.0.1:${peer.port}`);
+
+      // A cookie is scoped to scheme, host and port together, so the guess above is one
+      // this browser could not come back on. Logging in on it is what corrects the guess,
+      // and it is why guessing is safe: a wrong guess is exactly a guess whose cookie is
+      // not sent, which forces the login that fixes it.
+      //
+      // Written onto the socket because Host is a forbidden header name for `fetch` — a
+      // version of this test using `fetch` would send the real authority and pass no
+      // matter what the server recorded.
+      const authority = `localhost:${peer.port}`;
+      expect(await rawGet(Number(peer.port), `/?token=${TOKEN}`, authority)).toBe(302);
+      await vi.waitFor(() => expect(recorded(peer.pid)).toBe(`http://${authority}`));
+    } finally {
+      peer.stop();
+      await peer.stopped;
+    }
+  });
+
+  it('does not rewrite the url for a request that failed to log in', async () => {
+    const peer = await startFor('refused.md', { CLAUDE_CODE_SESSION_ID: SESSION });
+    try {
+      const before = recorded(peer.pid);
+      // No cookie is set, so no origin became valid, so there is nothing to record. A
+      // rewrite here would let anyone who can reach the port move where the session
+      // thinks its own review is.
+      expect(await rawGet(Number(peer.port), '/?token=wrong', `localhost:${peer.port}`)).toBe(401);
+      expect(recorded(peer.pid)).toBe(before);
+    } finally {
+      peer.stop();
+      await peer.stopped;
+    }
+  });
+
+  it('takes its own entry out when it stops, and leaves a sibling alone', async () => {
+    const one = await startFor('one.md', { CLAUDE_CODE_SESSION_ID: SESSION });
+    const two = await startFor('two.md', { CLAUDE_CODE_SESSION_ID: SESSION });
+    try {
+      expect(recorded(one.pid)).not.toBeNull();
+      expect(recorded(two.pid)).not.toBeNull();
+
+      one.stop();
+      await one.stopped;
+
+      expect(recorded(one.pid)).toBeNull();
+      // The direction that is easy to get wrong: one file per instance exists so that
+      // stopping one cannot take the other's with it.
+      expect(recorded(two.pid)).not.toBeNull();
+    } finally {
+      two.stop();
+      await two.stopped;
+    }
+  });
+
+  it('lists only what one session started', async () => {
+    const mine = await startFor('mine.md', { CLAUDE_CODE_SESSION_ID: SESSION });
+    const theirs = await startFor('theirs.md', { CLAUDE_CODE_SESSION_ID: 'another-session' });
+    try {
+      const run = (extra: string[]) =>
+        spawnSync('bun', ['run', CLI, 'list', ...extra], {
+          env: { ...process.env, AKAPEN_HOME: home(), AKAPEN_TOKEN: TOKEN },
+          encoding: 'utf8',
+        });
+
+      const filtered = JSON.parse(run(['--json', '--session', SESSION]).stdout) as {
+        pid: number;
+      }[];
+      expect(filtered.map((e) => e.pid)).toContain(mine.pid);
+      expect(filtered.map((e) => e.pid)).not.toContain(theirs.pid);
+
+      // Without the filter both are there, so what is being shown is the filter working
+      // and not the second instance having failed to register.
+      const all = JSON.parse(run(['--json']).stdout) as { pid: number }[];
+      expect(all.map((e) => e.pid)).toEqual(expect.arrayContaining([mine.pid, theirs.pid]));
+
+      expect(run(['--session', 'nobody-started-this']).stdout.trim()).toBe('that session has none running');
+    } finally {
+      mine.stop();
+      theirs.stop();
+      await Promise.all([mine.stopped, theirs.stopped]);
+    }
   });
 });
 
