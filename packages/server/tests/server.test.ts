@@ -18,7 +18,6 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
-  renameSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -516,6 +515,44 @@ function frozen(home: string): string[] {
     .map((e) => readFileSync(join(e.parentPath, e.name), 'utf8'));
 }
 
+/**
+ * Rewrite a file, through a rename, every 10ms, from a process that does nothing else.
+ *
+ * As a `setInterval` here it ran on the vitest worker's event loop, which is shared with
+ * whatever the runner is doing between tests, and a stall there stops the writes without
+ * stopping the server — the two reads match, the round is cut, and the test reports the
+ * guard as missing when what went missing was the writer.
+ *
+ * Through a rename, not a plain write: `writeFileSync` truncates before it writes, so the
+ * file really is empty in between, and a read landing in that window is refused for being
+ * empty — the other guard, a correct refusal, and one that leaves this test pinning
+ * neither path. That is what #119 was about.
+ */
+function moveFile(path: string): { stop: () => Promise<void> } {
+  const proc = spawn(
+    'bun',
+    [
+      '-e',
+      `import { writeFileSync, renameSync } from 'node:fs';
+       const file = process.env.AKAPEN_TEST_MOVING_FILE;
+       let i = 0;
+       setInterval(() => {
+         writeFileSync(file + '.writing', '# still writing ' + i++ + '\\n');
+         renameSync(file + '.writing', file);
+       }, 10);`,
+    ],
+    { env: { ...process.env, AKAPEN_TEST_MOVING_FILE: path }, stdio: 'ignore' },
+  );
+  return {
+    // Awaited, not fired and forgotten: whatever is written next would race a writer
+    // that is still alive, and the test would go on to assert against that file.
+    stop: async () => {
+      proc.kill();
+      await new Promise<void>((done) => proc.on('exit', () => done()));
+    },
+  };
+}
+
 describe('cutting a round while the file is being written', () => {
   it('does not freeze a round on a file that is halfway through being replaced', async () => {
     // An editing agent truncates and writes back. This is the gap in between.
@@ -577,27 +614,23 @@ describe('cutting a round while the file is being written', () => {
   /**
    * The gap this server leaves between the two reads that decide the file has settled.
    *
-   * Twenty times the shipped 50ms, and the whole of the fix for #135. The assertion below
-   * needs a write to land inside every one of those gaps; the writer is a timer in this
-   * process and the reader is a timer in another, and nothing couples them, so all the
-   * assertion ever had was that one timer outran the other. At 50ms the room was five
-   * writes, and a runner that stalled the vitest worker past a single gap took the two
-   * reads back to matching and answered 200 — twice on CI, once on `main`. Widening the
-   * gap does not remove the race, it moves what losing it would take from a stall this
-   * suite produces to one that would fail every other test in the file too.
+   * Twenty times the shipped 50ms, and half of the fix for #135. The assertion below needs
+   * a write to land inside every one of those gaps, and nothing couples the writer to the
+   * reader, so all the assertion ever had was that one timer outran the other. At 50ms the
+   * room was five writes, and a runner that stalled the writer past a single gap took the
+   * two reads back to matching and answered 200 — twice on CI, once on `main`.
+   *
+   * The other half is that the writer no longer shares an event loop with vitest (see
+   * `moveFile`), which is what was doing the stalling. Between them, losing this race
+   * needs a process that does nothing else to be held off a CPU for a full second.
    */
   const SETTLE_MS = 1_000;
 
   it('refuses while the file is still moving, rather than freezing what it caught', async () => {
     /**
      * Non-empty the whole time, so the empty guard cannot be what refuses this. Only
-     * reading twice and comparing can tell that the file has not settled.
-     *
-     * Written through a rename to make that true. `writeFileSync` truncates and then
-     * writes, so the file really is empty in between, and a read landing in that window
-     * is answered "the file is empty right now" — a correct refusal for the other reason,
-     * which leaves this test passing or failing on timing and pinning neither path. It
-     * failed that way on CI, which is what #119 was about.
+     * reading twice and comparing can tell that the file has not settled. `moveFile` above
+     * is what keeps that true, and why it writes the way it does.
      *
      * On its own server and its own file: the interval is handed over at startup, and the
      * shared one in `beforeEach` was started without it. A separate file also keeps this
@@ -609,13 +642,12 @@ describe('cutting a round while the file is being written', () => {
       env: { AKAPEN_SETTLE_MS: String(SETTLE_MS) },
     });
     try {
-      let i = 0;
-      const writer = setInterval(() => {
-        const tmp = `${file}.writing`;
-        writeFileSync(tmp, `# still writing ${i++}\n`);
-        renameSync(tmp, file);
-      }, 10);
+      const writer = moveFile(file);
       try {
+        // Nothing asserts a writer that never started: the file would sit still, the round
+        // would be cut, and the failure would read as the guard being gone. Wait for the
+        // first write to land, so a writer that cannot start times out saying so instead.
+        await until(() => readFileSync(file, 'utf8').startsWith('# still writing'));
         const started = Date.now();
         const res = await fetch(`${other.url}/api/rounds`, { method: 'POST' });
         const took = Date.now() - started;
@@ -637,7 +669,7 @@ describe('cutting a round while the file is being written', () => {
         // would clear it too.
         expect(took).toBeGreaterThan(SETTLE_MS * 5);
       } finally {
-        clearInterval(writer);
+        await writer.stop();
       }
       writeFileSync(file, SOURCE);
       expect((await fetch(`${other.url}/api/rounds`, { method: 'POST' })).ok).toBe(true);

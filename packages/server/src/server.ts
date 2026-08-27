@@ -103,16 +103,15 @@ const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
  * asserts the refusal took long enough to have used it, so a typo there fails loudly
  * instead of quietly restoring the flake.
  *
- * The upper bound is the one the runtime imposes rather than a taste: a delay past it
- * does not wait longer, it fires on the next tick (measured — `setTimeout` at 2^31 came
- * back in 3ms). Taking such a value would turn "wait longer before deciding the file has
- * settled" into "decide immediately", which is the failure this whole read exists to
- * avoid, and it would do it without a word on screen.
+ * Not bounded above. A delay past 2^31-1 does not wait longer, it fires on the next tick,
+ * so a value up there means no gap at all — but refusing it needs a test, and the only
+ * test that could tell the two apart is a moving file refused at 50ms, which is the
+ * margin this variable exists to get rid of. A guard nothing pins is worth less than the
+ * sentence saying it is not there.
  */
-const MAX_SETTLE_MS = 2_147_483_647;
 const SETTLE_MS = ((): number => {
   const asked = Number(process.env['AKAPEN_SETTLE_MS']);
-  return Number.isInteger(asked) && asked > 0 && asked <= MAX_SETTLE_MS ? asked : 50;
+  return Number.isInteger(asked) && asked > 0 ? asked : 50;
 })();
 
 export function startServer(opts: ServeOptions) {
