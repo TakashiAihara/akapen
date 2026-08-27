@@ -18,7 +18,6 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
-  renameSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -516,6 +515,102 @@ function frozen(home: string): string[] {
     .map((e) => readFileSync(join(e.parentPath, e.name), 'utf8'));
 }
 
+/**
+ * Rewrite a file, through a rename, every 10ms, from a process that does nothing else.
+ *
+ * As a `setInterval` here it ran on the vitest worker's event loop, which is shared with
+ * whatever the runner is doing between tests, and a stall there stops the writes without
+ * stopping the server — the two reads match, the round is cut, and the test reports the
+ * guard as missing when what went missing was the writer.
+ *
+ * Through a rename, not a plain write: `writeFileSync` truncates before it writes, so the
+ * file really is empty in between, and a read landing in that window is refused for being
+ * empty — the other guard, a correct refusal, and one that leaves this test pinning
+ * neither path. That is what #119 was about.
+ *
+ * Resolves once the first write has landed. Nothing downstream asserts a writer that
+ * never started — the file would sit still, the round would be cut, and it would read as
+ * the guard being gone — so that is checked here, where the process output is still to
+ * hand to say why.
+ */
+async function moveFile(path: string): Promise<{ stop: () => Promise<void> }> {
+  const proc = spawn(
+    'bun',
+    [
+      '-e',
+      `import { writeFileSync, renameSync } from 'node:fs';
+       const file = process.env.AKAPEN_TEST_MOVING_FILE;
+       let i = 0;
+       setInterval(() => {
+         writeFileSync(file + '.writing', '# still writing ' + i++ + '\\n');
+         renameSync(file + '.writing', file);
+       }, 10);`,
+    ],
+    // Piped rather than ignored, for the same reason `start` pipes: a writer that dies on
+    // startup says why on stderr, and dropping it turns every such failure into a bare
+    // timeout on the wait below.
+    { env: { ...process.env, AKAPEN_TEST_MOVING_FILE: path }, stdio: ['ignore', 'pipe', 'pipe'] },
+  );
+  let out = '';
+  const collect = (chunk: Buffer) => {
+    out += chunk.toString();
+  };
+  proc.stdout?.on('data', collect);
+  proc.stderr?.on('data', collect);
+
+  /**
+   * The one event that says there is nothing left to wait for, recorded as it happens.
+   *
+   * `close` and not `exit`: a spawn that never reached a process emits `error` and `close`
+   * and no `exit` at all, leaving both `exitCode` and `signalCode` null (measured — a
+   * missing binary gives exactly that, in that order). Waiting on `exit` there waits for
+   * something that is never coming, and reading the codes afterwards cannot tell that
+   * apart from a process still running. `close` is also the one that fires after the pipes
+   * have drained, so what the writer said on its way out is in `out` by the time anyone
+   * prints it.
+   *
+   * `error` is only a source of text. It is not a second way of being over — it can reach
+   * a process that is still running, and treating it as the end would leave that one alive
+   * — and `close` follows it anyway in the case that matters. The listener exists because
+   * an `error` nobody is listening for is thrown rather than delivered: vitest reports that
+   * as an unhandled error, with its own warning that a test may have come out the way it
+   * did for the wrong reason. This one had. The missing-binary control was reaching its
+   * verdict through that thrown error rather than through the wait below, which sat there
+   * for an `exit` that never came. `on`, not `once`, so a second one cannot be thrown
+   * either.
+   */
+  let over = false;
+  proc.on('error', (err: Error) => {
+    out += `${err}\n`;
+  });
+  proc.once('close', () => {
+    over = true;
+  });
+
+  // Awaited, not fired and forgotten: whatever is written next would race a writer that is
+  // still alive, and the test would go on to assert against that file. One that is already
+  // over is not waited for at all: the first version of this waited on an `exit` that had
+  // already been and gone, which hung out the whole test timeout and reported that instead
+  // of whatever killed the writer. Measured: 30s, against 6s now.
+  const stop = () =>
+    new Promise<void>((done) => {
+      if (over) return done();
+      proc.once('close', () => done());
+      // Returns false rather than throwing for a process that is already gone, so there is
+      // nothing here to unwind — checked on this runtime, both for one that exited and one
+      // that never started.
+      proc.kill();
+    });
+
+  try {
+    await until(() => readFileSync(path, 'utf8').startsWith('# still writing'));
+  } catch {
+    await stop();
+    throw new Error(`the writer never wrote to ${path}:\n${out}`);
+  }
+  return { stop };
+}
+
 describe('cutting a round while the file is being written', () => {
   it('does not freeze a round on a file that is halfway through being replaced', async () => {
     // An editing agent truncates and writes back. This is the gap in between.
@@ -574,32 +669,67 @@ describe('cutting a round while the file is being written', () => {
     }
   }, 30_000);
 
+  /**
+   * The gap this server leaves between the two reads that decide the file has settled.
+   *
+   * Twenty times the shipped 50ms, and half of the fix for #135. The assertion below needs
+   * a write to land inside every one of those gaps, and nothing couples the writer to the
+   * reader, so all the assertion ever had was that one timer outran the other. At 50ms the
+   * room was five writes, and a runner that stalled the writer past a single gap took the
+   * two reads back to matching and answered 200 — twice on CI, once on `main`.
+   *
+   * The other half is that the writer no longer shares an event loop with vitest (see
+   * `moveFile`), which is what was doing the stalling. Between them, losing this race
+   * needs a process that does nothing else to be held off a CPU for a full second.
+   */
+  const SETTLE_MS = 1_000;
+
   it('refuses while the file is still moving, rather than freezing what it caught', async () => {
     /**
      * Non-empty the whole time, so the empty guard cannot be what refuses this. Only
-     * reading twice and comparing can tell that the file has not settled.
+     * reading twice and comparing can tell that the file has not settled. `moveFile` above
+     * is what keeps that true, and why it writes the way it does.
      *
-     * Written through a rename to make that true. `writeFileSync` truncates and then
-     * writes, so the file really is empty in between, and a read landing in that window
-     * is answered "the file is empty right now" — a correct refusal for the other reason,
-     * which leaves this test passing or failing on timing and pinning neither path. It
-     * failed that way on CI, which is what #119 was about.
+     * On its own server and its own file: the interval is handed over at startup, and the
+     * shared one in `beforeEach` was started without it. A separate file also keeps this
+     * churn out of the shared server's watcher.
      */
-    let i = 0;
-    const writer = setInterval(() => {
-      const tmp = `${work}.writing`;
-      writeFileSync(tmp, `# still writing ${i++}\n`);
-      renameSync(tmp, work);
-    }, 10);
+    const file = join(sandbox, 'moving.md');
+    writeFileSync(file, SOURCE);
+    const other = await start(file, join(sandbox, 'moving-home'), [], {
+      env: { AKAPEN_SETTLE_MS: String(SETTLE_MS) },
+    });
     try {
-      const res = await post('/api/rounds');
-      expect(res.status).toBe(409);
-      expect(await res.text()).toMatch(/still being written/);
+      const writer = await moveFile(file);
+      try {
+        const started = Date.now();
+        const res = await fetch(`${other.url}/api/rounds`, { method: 'POST' });
+        const took = Date.now() - started;
+        expect(res.status).toBe(409);
+        expect(await res.text()).toMatch(/still being written/);
+        // The margin above only exists if the server took the interval it was handed. A
+        // variable that never reached the process, or a name it does not read, silently
+        // returns it to the shipped 50ms and brings the flake back with nothing saying
+        // so. Refusing costs one gap per try: measured, this refusal takes upwards of
+        // six seconds, and the same refusal on the shipped 50ms takes 365ms.
+        //
+        // Five gaps, against a floor of six. One would also be cleared by the 50ms server
+        // on a runner that stalled two thirds of a second, and this is measured from here
+        // rather than inside the server, so a stall after the reply arrives counts toward
+        // it just as much as the reading did. That is the honest limit of this check: it
+        // catches an interval that never arrived, which is the way this breaks — a name
+        // the server no longer reads, a variable that never reached the process — and it
+        // is not proof, because a stall of several seconds landing in the right place
+        // would clear it too.
+        expect(took).toBeGreaterThan(SETTLE_MS * 5);
+      } finally {
+        await writer.stop();
+      }
+      writeFileSync(file, SOURCE);
+      expect((await fetch(`${other.url}/api/rounds`, { method: 'POST' })).ok).toBe(true);
     } finally {
-      clearInterval(writer);
+      other.stop();
     }
-    writeFileSync(work, SOURCE);
-    expect((await post('/api/rounds')).ok).toBe(true);
   }, 30_000);
 });
 
