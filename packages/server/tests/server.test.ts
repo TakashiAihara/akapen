@@ -558,15 +558,42 @@ async function moveFile(path: string): Promise<{ stop: () => Promise<void> }> {
   proc.stdout?.on('data', collect);
   proc.stderr?.on('data', collect);
 
+  /**
+   * Whether there is anything left to wait for, recorded as it happens.
+   *
+   * From listeners attached here rather than read off `exitCode` later: a spawn that never
+   * reached a process leaves both `exitCode` and `signalCode` null, and emits `error` and
+   * `close` and no `exit` at all (measured — a missing binary gives exactly that). Waiting
+   * on `exit` there waits for something that is never coming.
+   *
+   * `close` rather than `exit` for the same reason the output is collected at all: it is
+   * the one that fires once the pipes have drained, so what the writer said on its way out
+   * is in `out` by the time the failure below is written.
+   *
+   * An `error` with nobody listening is thrown rather than delivered, which vitest reports
+   * as an unhandled error and warns may have turned some test green for the wrong reason.
+   * It did: before this listener, the missing-binary case failed on that thrown error and
+   * not on the wait below, while `stop` sat waiting for an `exit` that never came.
+   */
+  let over = false;
+  proc.once('close', () => {
+    over = true;
+  });
+  proc.once('error', (err: Error) => {
+    out += `${err}\n`;
+    over = true;
+  });
+
   // Awaited, not fired and forgotten: whatever is written next would race a writer that is
   // still alive, and the test would go on to assert against that file. One that is already
-  // gone is not waited for at all — `exit` has been and gone by then, a listener attached
-  // afterwards never fires, and this would hang out the whole test timeout rather than
-  // report whatever killed it. Measured before the check was here: 30s, against 6s now.
+  // over is not waited for at all — before that check, a writer that died early hung here
+  // for the whole test timeout and reported that instead of whatever killed it. Measured:
+  // 30s, against 6s now.
   const stop = () =>
     new Promise<void>((done) => {
-      if (proc.exitCode !== null || proc.signalCode !== null) return done();
-      proc.once('exit', () => done());
+      if (over) return done();
+      proc.once('close', () => done());
+      proc.once('error', () => done());
       proc.kill();
     });
 
