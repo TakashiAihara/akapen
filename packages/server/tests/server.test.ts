@@ -1009,6 +1009,30 @@ describe('the session that started an instance', () => {
     }
   });
 
+  it('records on a later login what a failed startup write did not', async () => {
+    // The startup write is made impossible: a file sits where the session directory
+    // belongs, so `mkdir` cannot make one. Then the obstruction is removed and the same
+    // url is logged in on.
+    //
+    // Caching the attempt rather than the write is what this catches. The url is the one
+    // startup already tried, so a cache set on the attempt makes the login return early
+    // and the instance stays unrecorded for the rest of its life — with nothing on screen
+    // to say so.
+    mkdirSync(join(home(), 'sessions'), { recursive: true });
+    writeFileSync(join(home(), 'sessions', SESSION), 'in the way');
+
+    const peer = await startFor('retry.md', { CLAUDE_CODE_SESSION_ID: SESSION });
+    try {
+      rmSync(join(home(), 'sessions', SESSION));
+      const authority = `127.0.0.1:${peer.port}`;
+      expect(await rawGet(Number(peer.port), `/?token=${TOKEN}`, authority)).toBe(302);
+      await vi.waitFor(() => expect(recorded(peer.pid)).toBe(`http://${authority}`));
+    } finally {
+      peer.stop();
+      await peer.stopped;
+    }
+  });
+
   it('takes its own entry out when it stops, and leaves a sibling alone', async () => {
     const one = await startFor('one.md', { CLAUDE_CODE_SESSION_ID: SESSION });
     const two = await startFor('two.md', { CLAUDE_CODE_SESSION_ID: SESSION });

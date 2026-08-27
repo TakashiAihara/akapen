@@ -7,7 +7,15 @@
  * thousands of directories. And a pid alone cannot decide what to keep, because pids
  * come round again, so the sweep has to be shown that it compares the session too.
  */
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -54,9 +62,27 @@ describe('recording where a session can come back to', () => {
   it('writes the url on a line of its own, so a shell can read it with `read`', () => {
     // The consumer is a statusline that cannot afford to fork. `read -r url < file` is
     // the whole of its parsing, and it wants a newline to stop at.
-    recordUrl(SESSION, 4321, url(4300));
-    const raw = readdirSync(sessionDir(SESSION)!);
-    expect(raw).toEqual(['4321']);
+    //
+    // Asserted on the bytes, not on the directory listing. An earlier version of this
+    // checked only that the file was there, which is true of a file holding anything at
+    // all — the newline this claims to be about could be dropped and it still passed.
+    expect(recordUrl(SESSION, 4321, url(4300))).toBe(true);
+    expect(readdirSync(sessionDir(SESSION)!)).toEqual(['4321']);
+    expect(readFileSync(join(sessionDir(SESSION)!, '4321'), 'utf8')).toBe(`${url(4300)}\n`);
+  });
+
+  it('says whether the url reached the disk', () => {
+    // The server caches what it recorded so a bookmark reloading every few seconds does
+    // not rewrite an identical file. Caching an attempt that failed would mean the login
+    // that repairs a wrong guess returns early and never repairs it.
+    expect(recordUrl(SESSION, 4321, url(4300))).toBe(true);
+    expect(recordUrl('../escape', 4321, url(4300))).toBe(false);
+
+    // A file where the session directory belongs: `mkdir` cannot make one there, so the
+    // write cannot happen and must not be reported as though it had.
+    mkdirSync(sessionsDir(), { recursive: true });
+    writeFileSync(join(sessionsDir(), 'blocked'), 'in the way');
+    expect(recordUrl('blocked', 4321, url(4300))).toBe(false);
   });
 
   it('recreates the directory a sibling swept away between two writes', () => {
@@ -144,6 +170,14 @@ describe('sweeping what no live instance stands behind', () => {
     recordUrl(SESSION, 4321, url(4300));
     expect(() => sweep([{ sessionId: SESSION, pid: 4321 }])).not.toThrow();
     expect(readUrls(SESSION)).toHaveLength(1);
+  });
+
+  it('returns nothing, rather than throwing, when a session name is a file', () => {
+    // `existsSync` is true for it, so the guard in `readUrls` lets it through and the
+    // listing throws ENOTDIR. `sweep` already steps over this; reading did not.
+    mkdirSync(sessionsDir(), { recursive: true });
+    writeFileSync(join(sessionsDir(), 'stray'), 'not a directory');
+    expect(readUrls('stray')).toEqual([]);
   });
 
   it('does nothing at all when there is no index yet', () => {

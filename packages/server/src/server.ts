@@ -110,8 +110,10 @@ export function startServer(opts: ServeOptions) {
   let recordedUrl: string | null = null;
   const rememberUrl = (url: string): void => {
     if (origin.id === undefined || url === recordedUrl) return;
-    recordedUrl = url;
-    recordUrl(origin.id, process.pid, url);
+    // Cached only once it is on disk. Caching the attempt would mean a write that failed
+    // — a directory removed underneath it, a full disk — is never tried again, and the
+    // login that would have repaired a wrong guess returns early instead.
+    if (recordUrl(origin.id, process.pid, url)) recordedUrl = url;
   };
 
   let review: Review = ensureRound(file, readFileSync(file, 'utf8'));

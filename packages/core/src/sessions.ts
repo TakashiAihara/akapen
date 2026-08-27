@@ -52,22 +52,35 @@ export function sessionDir(sessionId: string): string | null {
  *
  * `mkdirSync` on every write, not once at startup: the sweep removes a session directory
  * as soon as it is empty, and a sibling instance of the same session can do that between
- * this instance's two writes. Recreating it costs a syscall and removes the need for the
- * two of them to coordinate at all.
+ * this instance's two writes.
+ *
+ * Twice, because recreating it is not by itself enough. A sibling can remove the
+ * directory in the window between this instance's `mkdir` and its write, and the write
+ * then fails on a directory that existed a moment earlier. One retry closes it: the
+ * second `mkdir` cannot lose the same race, because by then this instance has a file to
+ * put in the directory and the sibling has nothing left to find empty.
  *
  * Failing here never blocks serving, for the same reason registering does not: a session
  * that cannot be found again is a lost convenience, not a lost review.
+ *
+ * @returns whether the url is now on disk. The caller caches what it wrote, and caching
+ *   a write that did not happen would mean never trying that url again.
  */
-export function recordUrl(sessionId: string, pid: number, url: string): void {
+export function recordUrl(sessionId: string, pid: number, url: string): boolean {
   const dir = sessionDir(sessionId);
-  if (dir === null) return;
-  try {
-    mkdirSync(dir, { recursive: true });
-    writeAtomic(join(dir, String(pid)), `${url}\n`);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error(`akapen: could not record this instance's url for its session (${message})`);
+  if (dir === null) return false;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      mkdirSync(dir, { recursive: true });
+      writeAtomic(join(dir, String(pid)), `${url}\n`);
+      return true;
+    } catch (err) {
+      if (attempt === 0) continue;
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`akapen: could not record this instance's url for its session (${message})`);
+    }
   }
+  return false;
 }
 
 /** Best-effort, like `removeInstance`: shutdown must not fail over a bookkeeping file. */
@@ -158,7 +171,15 @@ export function readUrls(sessionId: string): { pid: number; url: string }[] {
   const dir = sessionDir(sessionId);
   if (dir === null || !existsSync(dir)) return [];
   const out: { pid: number; url: string }[] = [];
-  for (const name of readdirSync(dir)) {
+  let names: string[];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    // A file where a directory was expected. `existsSync` is true for it, so the guard
+    // above lets it through — the same case `sweep` steps over rather than throwing on.
+    return [];
+  }
+  for (const name of names) {
     const pid = /^\d+$/.test(name) ? Number(name) : NaN;
     if (!Number.isInteger(pid)) continue;
     try {

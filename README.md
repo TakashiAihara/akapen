@@ -362,12 +362,12 @@ There is also a reverse index, for a statusline that wants to show the url and c
 for f in "$HOME/.akapen/sessions/$session_id"/*; do
   [[ -r $f ]] || continue
   pid=${f##*/}
-  [[ -d /proc/$pid ]] || continue
+  kill -0 "$pid" 2>/dev/null || continue
   read -r url < "$f"
 done
 ```
 
-Pathname expansion and `read` are builtins, so that loop forks nothing. The pid check is a cheap way to skip an instance that has gone; what actually removes the file is `akapen list`, or the next instance to start, neither of which trusts a pid on its own — pids come round again, and an entry standing behind an unrelated process would keep a dead url on screen.
+Pathname expansion, `kill` and `read` are all builtins, so that loop forks nothing. `kill -0` sends no signal and only asks whether the process is there; `/proc` would do as well on linux and never answer on darwin, which akapen also ships for. The pid check is a cheap way to skip an instance that has gone; what actually removes the file is `akapen list`, or the next instance to start, neither of which trusts a pid on its own — pids come round again, and an entry standing behind an unrelated process would keep a dead url on screen.
 
 The url has no token on it. It is the one to come back to, and coming back is what the cookie already covers; a secret printed on every redraw would end up in the scrollback of everything else that terminal did. Recorded at startup it is a guess at which of this machine's addresses you will use, and a login corrects it: a cookie is scoped to scheme, host and port together, so a wrong guess is exactly one whose cookie is not sent — which forces the login that rewrites it.
 
