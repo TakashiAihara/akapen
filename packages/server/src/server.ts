@@ -93,18 +93,26 @@ const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
  * loses to a stall, reporting it as the guard not firing (#135). Handing that test a long
  * interval costs it a few seconds and buys a margin no plausible stall reaches.
  *
- * Deliberately not a flag. Nobody reviewing a document is served by choosing this, and
- * the only caller that needs it is one that spawns the process.
+ * Deliberately not a CLI flag. Nobody reviewing a document is served by choosing this,
+ * and the only caller that needs it is one that spawns the process. It is written down
+ * with the other variables in the README rather than left for someone to find in here.
  *
  * A value that is not a positive whole number of milliseconds falls back to the shipped
  * one rather than refusing to start: a typo in an environment variable should not be
  * able to end a review that is running. The test that depends on the long interval
  * asserts the refusal took long enough to have used it, so a typo there fails loudly
  * instead of quietly restoring the flake.
+ *
+ * The upper bound is the one the runtime imposes rather than a taste: a delay past it
+ * does not wait longer, it fires on the next tick (measured — `setTimeout` at 2^31 came
+ * back in 3ms). Taking such a value would turn "wait longer before deciding the file has
+ * settled" into "decide immediately", which is the failure this whole read exists to
+ * avoid, and it would do it without a word on screen.
  */
+const MAX_SETTLE_MS = 2_147_483_647;
 const SETTLE_MS = ((): number => {
   const asked = Number(process.env['AKAPEN_SETTLE_MS']);
-  return Number.isInteger(asked) && asked > 0 ? asked : 50;
+  return Number.isInteger(asked) && asked > 0 && asked <= MAX_SETTLE_MS ? asked : 50;
 })();
 
 export function startServer(opts: ServeOptions) {
