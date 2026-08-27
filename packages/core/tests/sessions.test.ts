@@ -164,6 +164,22 @@ describe('sweeping what no live instance stands behind', () => {
     expect(readUrls(OTHER)).toHaveLength(1);
   });
 
+  it('clears the debris an interrupted write leaves in a session directory', () => {
+    // `writeAtomic` writes `<pid>.<pid>.<hex>.tmp` and renames. A process killed between
+    // the two leaves that behind, and nothing else would ever remove it: the consumer
+    // skips it because `kill -0` refuses a name that is not a number, and `readUrls`
+    // skips it because it is not all digits. The sweep is the only thing that looks.
+    recordUrl(SESSION, 4321, url(4300));
+    const debris = join(sessionDir(SESSION)!, '4322.99.deadbeef.tmp');
+    writeFileSync(debris, 'half a write');
+    expect(readUrls(SESSION)).toEqual([{ pid: 4321, url: url(4300) }]);
+
+    sweep([{ sessionId: SESSION, pid: 4321 }]);
+    expect(existsSync(debris)).toBe(false);
+    // And the live entry beside it is untouched, so the sweep is not simply emptying it.
+    expect(readUrls(SESSION)).toEqual([{ pid: 4321, url: url(4300) }]);
+  });
+
   it('steps over anything in the directory that is not one of its files', () => {
     mkdirSync(sessionsDir(), { recursive: true });
     writeFileSync(join(sessionsDir(), 'stray'), 'not a directory');

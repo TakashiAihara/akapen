@@ -22,6 +22,14 @@ import { join } from 'node:path';
 import { readInstances } from './instances.ts';
 import { akapenHome, writeAtomic } from './store.ts';
 
+/**
+ * How many times a write is tried before it is given up on.
+ *
+ * Three rather than two only because the window is small and the cost of another go is a
+ * syscall. Nothing here is proof against a determined sweeper; see `recordUrl`.
+ */
+const ATTEMPTS = 3;
+
 /** One live instance, as the sweep needs to know it. */
 export type SessionEntry = { sessionId: string; pid: number };
 
@@ -54,11 +62,17 @@ export function sessionDir(sessionId: string): string | null {
  * as soon as it is empty, and a sibling instance of the same session can do that between
  * this instance's two writes.
  *
- * Twice, because recreating it is not by itself enough. A sibling can remove the
- * directory in the window between this instance's `mkdir` and its write, and the write
- * then fails on a directory that existed a moment earlier. One retry closes it: the
- * second `mkdir` cannot lose the same race, because by then this instance has a file to
- * put in the directory and the sibling has nothing left to find empty.
+ * Retried, and not because retrying closes the race. It does not: the second `mkdir`
+ * returns with the directory as empty as the first left it, and the window before the
+ * write is exactly the same one. A sibling that swept in the first window can sweep in
+ * the second.
+ *
+ * It is retried because losing that window twice running means a sibling swept in two
+ * separate intervals microseconds wide, and because of what losing costs. What is lost
+ * is a bookkeeping file, not the review; the instance goes on serving, and the next
+ * write — a login, if there is one — puts it back. Closing the race properly would mean
+ * either never removing an empty directory, which is the cleanup this index needs, or
+ * locking between a writer and a sweeper, which `instances/` chose this shape to avoid.
  *
  * Failing here never blocks serving, for the same reason registering does not: a session
  * that cannot be found again is a lost convenience, not a lost review.
@@ -69,13 +83,13 @@ export function sessionDir(sessionId: string): string | null {
 export function recordUrl(sessionId: string, pid: number, url: string): boolean {
   const dir = sessionDir(sessionId);
   if (dir === null) return false;
-  for (let attempt = 0; attempt < 2; attempt++) {
+  for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
     try {
       mkdirSync(dir, { recursive: true });
       writeAtomic(join(dir, String(pid)), `${url}\n`);
       return true;
     } catch (err) {
-      if (attempt === 0) continue;
+      if (attempt < ATTEMPTS - 1) continue;
       const message = err instanceof Error ? err.message : String(err);
       console.error(`akapen: could not record this instance's url for its session (${message})`);
     }
