@@ -20,6 +20,28 @@ import { join } from 'node:path';
 import type { StatusPayload } from '@akapen/shared';
 import { akapenHome, writeAtomic } from './store.ts';
 
+/**
+ * Who started an instance. Decided once, at startup, and never revised.
+ *
+ * An agent that starts akapen leaves its URL in the scrollback of the session that ran
+ * it, and nowhere else. Recording the session here is what lets that session find its
+ * own again, and lets a reader of the list tell which of five akapen is the one they
+ * are working in.
+ *
+ * `label` is opaque and akapen never reads it. Whoever runs it may have a pane id, a
+ * ticket, a workspace name — things that belong to one person's setup and have no place
+ * compiled into a tool anybody can install.
+ */
+export type InstanceOrigin = {
+  /** `claude-code` when a session id was there to find, `shell` when it was not. */
+  kind: 'claude-code' | 'shell';
+  /** The session id. Absent for `shell`, which is the whole difference between the two. */
+  id?: string;
+  cwd: string;
+  /** Whatever `AKAPEN_ORIGIN_LABEL` held, passed through untouched. */
+  label?: string;
+};
+
 /** What an instance writes about itself. Nothing in here changes while it runs. */
 export type InstanceRecord = {
   pid: number;
@@ -29,7 +51,47 @@ export type InstanceRecord = {
   /** Absolute path of the file under review. */
   file: string;
   startedAt: string;
+  /** Absent in entries written before this existed, which are still perfectly good ones. */
+  origin?: InstanceOrigin;
 };
+
+/**
+ * Read the origin off the environment, so that nothing has to be passed in.
+ *
+ * Claude Code exports `CLAUDE_CODE_SESSION_ID` to what it runs, so `akapen <file>` typed
+ * by an agent records where it came from without the agent knowing this exists. That is
+ * the point: a convention the caller has to remember is one that will be forgotten by
+ * the caller that needed it most.
+ *
+ * An empty variable is an unset one — a profile that builds it conditionally is far more
+ * likely than somebody meaning "the session whose id is the empty string".
+ */
+export function detectOrigin(env: NodeJS.ProcessEnv = process.env, cwd = process.cwd()): InstanceOrigin {
+  const id = env['CLAUDE_CODE_SESSION_ID'] ?? '';
+  const label = env['AKAPEN_ORIGIN_LABEL'] ?? '';
+  return {
+    ...(id === '' ? { kind: 'shell' as const } : { kind: 'claude-code' as const, id }),
+    cwd,
+    ...(label === '' ? {} : { label }),
+  };
+}
+
+/**
+ * An origin that can be trusted with a path.
+ *
+ * `id` names a directory under `sessions/`, so the shapes that are not plain names are
+ * refused here rather than at every use. Everything else is opaque and only has to be
+ * the right type.
+ */
+function isOrigin(v: unknown): v is InstanceOrigin {
+  if (typeof v !== 'object' || v === null) return false;
+  const o = v as InstanceOrigin;
+  if (o.kind !== 'claude-code' && o.kind !== 'shell') return false;
+  if (typeof o.cwd !== 'string') return false;
+  if (o.id !== undefined && (typeof o.id !== 'string' || /[/\\:\0]/.test(o.id) || o.id === '')) return false;
+  if (o.label !== undefined && typeof o.label !== 'string') return false;
+  return true;
+}
 
 /** An instance that answered. The state is what it reported, not what the file said. */
 export type LiveInstance = { record: InstanceRecord; status: StatusPayload };
@@ -107,7 +169,11 @@ function isRecord(v: unknown): v is InstanceRecord {
     r.port > 0 &&
     r.port <= 65_535 &&
     typeof r.file === 'string' &&
-    typeof r.startedAt === 'string'
+    typeof r.startedAt === 'string' &&
+    // Absent is fine — entries predating it are current in every other way. Present and
+    // malformed is not: the id goes into a path, and a record nobody wrote is a record
+    // to drop rather than to read around.
+    (r.origin === undefined || isOrigin(r.origin))
   );
 }
 

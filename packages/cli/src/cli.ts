@@ -6,6 +6,7 @@ import { AdvertiseError, localAddresses, resolveAdvertised, urlsFor } from '@aka
 
 import { loadReview, pendingComments } from '@akapen/core/store';
 import { liveInstances } from '@akapen/core/instances';
+import { liveEntries, sweep as sweepSessions } from '@akapen/core/sessions';
 import { currentToken, resolveToken, rotateToken, secureHome, tokenIsPinned } from '@akapen/core/token';
 import { parseArgs, resolvePort, UsageError, type Args } from './args.ts';
 
@@ -28,6 +29,7 @@ options:
   --no-auth                serve with no token at all (only behind something that authenticates)
   --all                    comments: include resolved ones
   --json                   list: print as JSON (for agents)
+  --session <id>           list: only what that session started
   --rotate                 token: replace the stored token
 `;
 
@@ -82,7 +84,19 @@ if (positional[0] === 'list') {
   // `currentToken`, not `resolveToken`: listing is a read, and a read that generates and
   // stores a secret as a side effect is a surprise. An instance running on a token this
   // caller does not have simply does not answer, and reads as not running.
-  const live = await liveInstances({ token: currentToken() });
+  const all = await liveInstances({ token: currentToken() });
+  /**
+   * Only what one session started.
+   *
+   * The filter is on the registry rather than on `sessions/`, because the registry is
+   * where liveness is decided and `sessions/` is a reverse index for a reader that
+   * cannot afford to ask. Two answers to "is it running" is one too many.
+   */
+  const live = args.session === undefined ? all : all.filter((e) => e.record.origin?.id === args.session);
+  // Reading the registry is the other half of the sweep's rule, and `list` has just
+  // done it. Not `all`: an instance that did not answer may simply be busy, and the
+  // registry keeps it for that reason — deleting its url here would contradict that.
+  sweepSessions(liveEntries());
   // Read once for the whole table rather than per row: every instance is on this host,
   // so the answer is the same for all of them and the routing table is a file read.
   const addresses = localAddresses();
@@ -98,6 +112,10 @@ if (positional[0] === 'list') {
           host: record.host,
           port: record.port,
           url: urlOf(record),
+          // The whole record, so `jq '.[] | select(.origin.id == "…")'` needs nothing
+          // this command did not already know. Null for an entry written before origins
+          // existed, or by a shell with no session to name.
+          origin: record.origin ?? null,
           file: record.file,
           round: status.round,
           unresolved: status.unresolved,
@@ -110,11 +128,14 @@ if (positional[0] === 'list') {
     process.exit(0);
   }
   if (live.length === 0) {
-    console.log('no akapen is running');
+    console.log(args.session === undefined ? 'no akapen is running' : 'that session has none running');
     process.exit(0);
   }
   const rows = live.map(({ record, status }) => ({
     pid: String(record.pid),
+    // Enough of the id to tell five apart, which is what the column is for. The whole of
+    // it is in `--json`, for anything that has to match rather than read.
+    session: record.origin?.id?.slice(0, 8) ?? '-',
     // The bind address is what the registry holds, and `0.0.0.0:4300` is not somewhere
     // to go. The column is the URL for the same reason the startup line is.
     url: urlOf(record),
@@ -128,16 +149,17 @@ if (positional[0] === 'list') {
     Math.max(head.length, ...rows.map((r) => pick(r).length));
   const w = {
     pid: width((r) => r.pid, 'PID'),
+    session: width((r) => r.session, 'SESSION'),
     url: width((r) => r.url, 'URL'),
     round: width((r) => r.round, 'ROUND'),
     unresolved: width((r) => r.unresolved, 'UNRESOLVED'),
   };
   console.log(
-    `${'PID'.padEnd(w.pid)}  ${'URL'.padEnd(w.url)}  ${'ROUND'.padEnd(w.round)}  ${'UNRESOLVED'.padEnd(w.unresolved)}  FILE`,
+    `${'PID'.padEnd(w.pid)}  ${'SESSION'.padEnd(w.session)}  ${'URL'.padEnd(w.url)}  ${'ROUND'.padEnd(w.round)}  ${'UNRESOLVED'.padEnd(w.unresolved)}  FILE`,
   );
   for (const r of rows) {
     console.log(
-      `${r.pid.padEnd(w.pid)}  ${r.url.padEnd(w.url)}  ${r.round.padEnd(w.round)}  ${r.unresolved.padEnd(w.unresolved)}  ${r.file}`,
+      `${r.pid.padEnd(w.pid)}  ${r.session.padEnd(w.session)}  ${r.url.padEnd(w.url)}  ${r.round.padEnd(w.round)}  ${r.unresolved.padEnd(w.unresolved)}  ${r.file}`,
     );
   }
   process.exit(0);
@@ -244,6 +266,7 @@ const { server, stop, storeDir, round } = startServer({
   token,
   tokenPinned: tokenIsPinned(args.token),
   author: args.author ?? process.env['USER'] ?? 'user',
+  advertised,
   // exactOptionalPropertyTypes: `?:` means "may be absent", not "may be undefined".
   // With no value given, drop the key entirely.
   ...(args.css ? { cssPath: resolve(args.css) } : {}),

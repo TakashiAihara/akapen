@@ -339,6 +339,40 @@ Instances find each other by asking, and the request carries the same token, so 
 
 Only instances sharing an `AKAPEN_HOME` see each other, and only on one host. Reaching across hosts is a different thing and is not built.
 
+### Finding your own again
+
+An agent that starts akapen leaves the url in the scrollback of the session that ran it, and nowhere else. Once that has scrolled away the review is running and unreachable, and on a host with five of them there is nothing saying which is which.
+
+So every instance records who started it. Nothing has to be passed in — Claude Code exports `CLAUDE_CODE_SESSION_ID` to what it runs, and akapen reads it there.
+
+```bash
+akapen list --session "$CLAUDE_CODE_SESSION_ID"          # only what this session started
+akapen list --json --session "$CLAUDE_CODE_SESSION_ID"   # the same, with the whole origin
+```
+
+`AKAPEN_ORIGIN_LABEL` is carried alongside it and never read: a pane id, a ticket, whatever identifies the instance in a setup akapen knows nothing about.
+
+There is also a reverse index, for a statusline that wants to show the url and cannot afford to fork on every redraw.
+
+```text
+~/.akapen/sessions/<session-id>/<pid>      # one url, on one line
+```
+
+```bash
+for f in "$HOME/.akapen/sessions/$session_id"/*; do
+  [[ -r $f ]] || continue
+  pid=${f##*/}
+  kill -0 "$pid" 2>/dev/null || continue
+  read -r url < "$f"
+done
+```
+
+Pathname expansion, `kill` and `read` are all builtins, so that loop forks nothing. `kill -0` sends no signal and only asks whether the process is there; `/proc` would do as well on linux and never answer on darwin, which akapen also ships for. The pid check is a cheap way to skip an instance that has gone; what actually removes the file is `akapen list`, or the next instance to start, neither of which trusts a pid on its own — pids come round again, and an entry standing behind an unrelated process would keep a dead url on screen.
+
+The url has no token on it. It is the one to come back to, and coming back is what the cookie already covers; a secret printed on every redraw would end up in the scrollback of everything else that terminal did. Recorded at startup it is a guess at which of this machine's addresses you will use, and a login corrects it: a cookie is scoped to scheme, host and port together, so a wrong guess is exactly one whose cookie is not sent — which forces the login that rewrites it.
+
+After `akapen token --rotate` the existing cookies are void, so a bare url answers 401 until you open the startup line once more. That is what rotating is for.
+
 ### Where comments are stored
 
 The markdown file is never touched.
@@ -352,7 +386,9 @@ The markdown file is never touched.
     002/content.md
     002/comments.json
 ~/.akapen/instances/
-  <pid>.json           # one running akapen: pid, address, file, start time
+  <pid>.json           # one running akapen: pid, address, file, start time, origin
+~/.akapen/sessions/
+  <session-id>/<pid>   # the url that instance can be reached at, one line
 ~/.akapen/token        # the shared secret, mode 0600
 ```
 

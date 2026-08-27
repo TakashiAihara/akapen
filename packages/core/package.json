@@ -8,6 +8,7 @@
     "./blocks": "./src/blocks.ts",
     "./hosts": "./src/hosts.ts",
     "./instances": "./src/instances.ts",
+    "./sessions": "./src/sessions.ts",
     "./store": "./src/store.ts",
     "./token": "./src/token.ts"
   },
