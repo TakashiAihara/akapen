@@ -627,13 +627,15 @@ describe('cutting a round while the file is being written', () => {
         // so. Refusing costs one gap per try: measured, this refusal takes upwards of
         // six seconds, and the same refusal on the shipped 50ms takes 365ms.
         //
-        // Three gaps rather than one. One gap would also be cleared by the 50ms server
-        // if the runner stalled for two thirds of a second, which is exactly the kind of
-        // stall this test exists to survive — the check would then pass while measuring
-        // the stall instead of the interval. Three gaps cannot be reached that way: a
-        // stall long enough to inflate a 365ms refusal to three seconds is a stall that
-        // stopped the writer, and the status assertion above fails first.
-        expect(took).toBeGreaterThan(SETTLE_MS * 3);
+        // Five gaps, against a floor of six. One would also be cleared by the 50ms server
+        // on a runner that stalled two thirds of a second, and this is measured from here
+        // rather than inside the server, so a stall after the reply arrives counts toward
+        // it just as much as the reading did. That is the honest limit of this check: it
+        // catches an interval that never arrived, which is the way this breaks — a name
+        // the server no longer reads, a variable that never reached the process — and it
+        // is not proof, because a stall of several seconds landing in the right place
+        // would clear it too.
+        expect(took).toBeGreaterThan(SETTLE_MS * 5);
       } finally {
         clearInterval(writer);
       }
