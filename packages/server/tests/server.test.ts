@@ -559,41 +559,46 @@ async function moveFile(path: string): Promise<{ stop: () => Promise<void> }> {
   proc.stderr?.on('data', collect);
 
   /**
-   * Whether there is anything left to wait for, recorded as it happens.
+   * The one event that says there is nothing left to wait for, recorded as it happens.
    *
-   * From listeners attached here rather than read off `exitCode` later: a spawn that never
-   * reached a process leaves both `exitCode` and `signalCode` null, and emits `error` and
-   * `close` and no `exit` at all (measured — a missing binary gives exactly that). Waiting
-   * on `exit` there waits for something that is never coming.
+   * `close` and not `exit`: a spawn that never reached a process emits `error` and `close`
+   * and no `exit` at all, leaving both `exitCode` and `signalCode` null (measured — a
+   * missing binary gives exactly that, in that order). Waiting on `exit` there waits for
+   * something that is never coming, and reading the codes afterwards cannot tell that
+   * apart from a process still running. `close` is also the one that fires after the pipes
+   * have drained, so what the writer said on its way out is in `out` by the time anyone
+   * prints it.
    *
-   * `close` rather than `exit` for the same reason the output is collected at all: it is
-   * the one that fires once the pipes have drained, so what the writer said on its way out
-   * is in `out` by the time the failure below is written.
-   *
-   * An `error` with nobody listening is thrown rather than delivered, which vitest reports
-   * as an unhandled error and warns may have turned some test green for the wrong reason.
-   * It did: before this listener, the missing-binary case failed on that thrown error and
-   * not on the wait below, while `stop` sat waiting for an `exit` that never came.
+   * `error` is only a source of text. It is not a second way of being over — it can reach
+   * a process that is still running, and treating it as the end would leave that one alive
+   * — and `close` follows it anyway in the case that matters. The listener exists because
+   * an `error` nobody is listening for is thrown rather than delivered: vitest reports that
+   * as an unhandled error, with its own warning that a test may have come out the way it
+   * did for the wrong reason. This one had. The missing-binary control was reaching its
+   * verdict through that thrown error rather than through the wait below, which sat there
+   * for an `exit` that never came. `on`, not `once`, so a second one cannot be thrown
+   * either.
    */
   let over = false;
-  proc.once('close', () => {
-    over = true;
-  });
-  proc.once('error', (err: Error) => {
+  proc.on('error', (err: Error) => {
     out += `${err}\n`;
+  });
+  proc.once('close', () => {
     over = true;
   });
 
   // Awaited, not fired and forgotten: whatever is written next would race a writer that is
   // still alive, and the test would go on to assert against that file. One that is already
-  // over is not waited for at all — before that check, a writer that died early hung here
-  // for the whole test timeout and reported that instead of whatever killed it. Measured:
-  // 30s, against 6s now.
+  // over is not waited for at all: the first version of this waited on an `exit` that had
+  // already been and gone, which hung out the whole test timeout and reported that instead
+  // of whatever killed the writer. Measured: 30s, against 6s now.
   const stop = () =>
     new Promise<void>((done) => {
       if (over) return done();
       proc.once('close', () => done());
-      proc.once('error', () => done());
+      // Returns false rather than throwing for a process that is already gone, so there is
+      // nothing here to unwind — checked on this runtime, both for one that exited and one
+      // that never started.
       proc.kill();
     });
 
