@@ -398,7 +398,7 @@ The markdown file is never touched.
 ~/.akapen/token        # the shared secret, mode 0600
 ```
 
-`AKAPEN_HOME` replaces `~/.akapen` (the tests use it to avoid touching the real store).
+`AKAPEN_HOME` replaces `~/.akapen` (the tests use it to avoid touching the real store). `AKAPEN_SETTLE_MS` replaces the 50ms gap between the two reads that decide the file has stopped moving; the test that asserts a moving file is refused hands over a long one, because at 50ms the assertion rested on its writer outrunning that gap and lost the race on CI ([#135](https://github.com/TakashiAihara/akapen/issues/135)).
 
 ## Checks
 

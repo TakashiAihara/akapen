@@ -574,6 +574,20 @@ describe('cutting a round while the file is being written', () => {
     }
   }, 30_000);
 
+  /**
+   * The gap this server leaves between the two reads that decide the file has settled.
+   *
+   * Twenty times the shipped 50ms, and the whole of the fix for #135. The assertion below
+   * needs a write to land inside every one of those gaps; the writer is a timer in this
+   * process and the reader is a timer in another, and nothing couples them, so all the
+   * assertion ever had was that one timer outran the other. At 50ms the room was five
+   * writes, and a runner that stalled the vitest worker past a single gap took the two
+   * reads back to matching and answered 200 — twice on CI, once on `main`. Widening the
+   * gap does not remove the race, it moves what losing it would take from a stall this
+   * suite produces to one that would fail every other test in the file too.
+   */
+  const SETTLE_MS = 1_000;
+
   it('refuses while the file is still moving, rather than freezing what it caught', async () => {
     /**
      * Non-empty the whole time, so the empty guard cannot be what refuses this. Only
@@ -584,22 +598,42 @@ describe('cutting a round while the file is being written', () => {
      * is answered "the file is empty right now" — a correct refusal for the other reason,
      * which leaves this test passing or failing on timing and pinning neither path. It
      * failed that way on CI, which is what #119 was about.
+     *
+     * On its own server and its own file: the interval is handed over at startup, and the
+     * shared one in `beforeEach` was started without it. A separate file also keeps this
+     * churn out of the shared server's watcher.
      */
-    let i = 0;
-    const writer = setInterval(() => {
-      const tmp = `${work}.writing`;
-      writeFileSync(tmp, `# still writing ${i++}\n`);
-      renameSync(tmp, work);
-    }, 10);
+    const file = join(sandbox, 'moving.md');
+    writeFileSync(file, SOURCE);
+    const other = await start(file, join(sandbox, 'moving-home'), [], {
+      env: { AKAPEN_SETTLE_MS: String(SETTLE_MS) },
+    });
     try {
-      const res = await post('/api/rounds');
-      expect(res.status).toBe(409);
-      expect(await res.text()).toMatch(/still being written/);
+      let i = 0;
+      const writer = setInterval(() => {
+        const tmp = `${file}.writing`;
+        writeFileSync(tmp, `# still writing ${i++}\n`);
+        renameSync(tmp, file);
+      }, 10);
+      try {
+        const started = Date.now();
+        const res = await fetch(`${other.url}/api/rounds`, { method: 'POST' });
+        const took = Date.now() - started;
+        expect(res.status).toBe(409);
+        expect(await res.text()).toMatch(/still being written/);
+        // The margin above only exists if the server took the interval it was handed. A
+        // variable that never reached the process, or a name it does not read, silently
+        // returns it to the shipped 50ms and brings the flake back with nothing saying
+        // so. Refusing costs one gap per try, so a refusal this slow cannot be that.
+        expect(took).toBeGreaterThan(SETTLE_MS);
+      } finally {
+        clearInterval(writer);
+      }
+      writeFileSync(file, SOURCE);
+      expect((await fetch(`${other.url}/api/rounds`, { method: 'POST' })).ok).toBe(true);
     } finally {
-      clearInterval(writer);
+      other.stop();
     }
-    writeFileSync(work, SOURCE);
-    expect((await post('/api/rounds')).ok).toBe(true);
   }, 30_000);
 });
 

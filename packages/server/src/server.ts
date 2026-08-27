@@ -84,6 +84,29 @@ const COOKIE = 'akapen_token';
 /** Methods that only read. A cross-origin one of these cannot be read back without CORS. */
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
+/**
+ * How long to wait between the two reads that decide the file has stopped moving.
+ *
+ * 50ms everywhere, and `AKAPEN_SETTLE_MS` for the one test that asserts a moving file is
+ * refused. That test has to land a write inside every one of these gaps, from a timer in
+ * another process, and at 50ms it has five writes of room — which a loaded CI runner
+ * loses to a stall, reporting it as the guard not firing (#135). Handing that test a long
+ * interval costs it a few seconds and buys a margin no plausible stall reaches.
+ *
+ * Deliberately not a flag. Nobody reviewing a document is served by choosing this, and
+ * the only caller that needs it is one that spawns the process.
+ *
+ * A value that is not a positive whole number of milliseconds falls back to the shipped
+ * one rather than refusing to start: a typo in an environment variable should not be
+ * able to end a review that is running. The test that depends on the long interval
+ * asserts the refusal took long enough to have used it, so a typo there fails loudly
+ * instead of quietly restoring the flake.
+ */
+const SETTLE_MS = ((): number => {
+  const asked = Number(process.env['AKAPEN_SETTLE_MS']);
+  return Number.isInteger(asked) && asked > 0 ? asked : 50;
+})();
+
 export function startServer(opts: ServeOptions) {
   const file = resolve(opts.file);
   // Read once. It cannot change while the process runs, and the login handler below
@@ -170,7 +193,6 @@ export function startServer(opts: ServeOptions) {
    * still be caught mid-way. `looksEmptied` below is the guard for the case that
    * actually happened, and it stands behind this one.
    */
-  const SETTLE_MS = 50;
   const SETTLE_TRIES = 6;
   const readSettled = async (): Promise<
     { ok: true; content: string } | { ok: false; reason: 'unreadable' | 'unsettled' }

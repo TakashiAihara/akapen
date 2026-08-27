@@ -84,6 +84,7 @@ row の状態。重なって付く。
 | ラウンドを切る | 実ファイルを次のラウンドとして凍結する。人だけが行い、エージェントの保存では起きない | 「End this round」、`#nextRound`、`openRound` |
 | 繰り越し | 過去ラウンドの未解決コメント。新しいラウンドには何も引き継がれないので、「画面から消えた」が「対応済み」と読まれないよう別枠で見せる | `carriedOver`、`#railCarried` |
 | レビューストア | コメントの置き場所。markdown ファイルの外 | `~/.akapen/reviews/<basename>-<hash>/`、`AKAPEN_HOME` |
+| 静止した (settled) | 間隔を空けて 2 回読んだ実ファイルの内容が一致した状態。ラウンドを切るときはこれを待つので、書き込みの途中にあるファイルは中途半端に凍結されず拒否される | `readSettled`、`AKAPEN_SETTLE_MS` |
 | dirty | 実ファイルが現在のラウンドのスナップショットと一致しなくなった状態 | `ChangedState.dirty` |
 
 ```text

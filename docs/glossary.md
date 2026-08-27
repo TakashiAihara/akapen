@@ -85,6 +85,7 @@ Row states, which stack:
 | cutting a round | freezing the live file as the next round. Only a person does this; an agent's save never does | the "End this round" control, `#nextRound`, `openRound` |
 | carried over | unresolved comments from earlier rounds. Nothing carries into a new round; they are shown apart so that gone from the screen does not read as dealt with | `carriedOver`, `#railCarried` |
 | review store | where comments live, outside the markdown file | `~/.akapen/reviews/<basename>-<hash>/`, `AKAPEN_HOME` |
+| settled | the live file read twice, a gap apart, the same both times. Cutting a round waits for this, so a file in the middle of being written is refused rather than frozen half-written | `readSettled`, `AKAPEN_SETTLE_MS` |
 | dirty | the live file no longer matches the current round's snapshot | `ChangedState.dirty` |
 
 ```text
