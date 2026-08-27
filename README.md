@@ -373,6 +373,12 @@ The url has no token on it. It is the one to come back to, and coming back is wh
 
 After `akapen token --rotate` the existing cookies are void, so a bare url answers 401 until you open the startup line once more. That is what rotating is for.
 
+### What the tab is called
+
+The tab said `akapen` for every review, which is the one name that cannot tell two of them apart — and the way akapen is read is with several open at once, one note per tab. The document already carries something that names it: its first `# ` heading. That is what the tab is called, with the brand after it, so the part that identifies the review survives a narrow tab and the part that says which tool it is falls off first. A document with no top-level heading is named by its file, not by the brand.
+
+The name is taken from the rendered heading rather than the source line, so `# The **rail**` is a tab called `The rail`. It follows the round on screen, history included, because the heading is part of the snapshot like everything else.
+
 ### Where comments are stored
 
 The markdown file is never touched.
