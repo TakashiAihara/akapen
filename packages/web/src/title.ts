@@ -3,7 +3,7 @@
  *
  * The tab said `akapen` for every review, which is the one name that cannot tell two
  * of them apart — and akapen is read with several open at once, one per note. The
- * document already carries something that names it: its first `# ` heading.
+ * document already carries something that names it: its first top-level heading.
  *
  * Derived from the rendered HTML rather than the source line, so `# The **rail**` is a
  * tab called `The rail` and not `The **rail**`. That leaves entities to undo, which is
@@ -39,7 +39,7 @@ function plain(html: string): string {
 }
 
 /**
- * The first `# ` heading.
+ * The first top-level heading — `#` or the setext form, whichever the document uses.
  *
  * A document with two of them is unusual enough not to be designed for; taking the
  * first is what a reader would call the document anyway.
@@ -55,7 +55,7 @@ function fileName(path: string): string {
 }
 
 /**
- * A heading, or the file name when there is none — a document with no `# ` heading is
+ * A heading, or the file name when there is none — a document with no top-level heading is
  * ordinary, and falling back to the brand would put us back where we started.
  */
 export function pageTitle(doc: Doc): string {
