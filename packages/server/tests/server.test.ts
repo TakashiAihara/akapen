@@ -527,8 +527,13 @@ function frozen(home: string): string[] {
  * file really is empty in between, and a read landing in that window is refused for being
  * empty — the other guard, a correct refusal, and one that leaves this test pinning
  * neither path. That is what #119 was about.
+ *
+ * Resolves once the first write has landed. Nothing downstream asserts a writer that
+ * never started — the file would sit still, the round would be cut, and it would read as
+ * the guard being gone — so that is checked here, where the process output is still to
+ * hand to say why.
  */
-function moveFile(path: string): { stop: () => Promise<void> } {
+async function moveFile(path: string): Promise<{ stop: () => Promise<void> }> {
   const proc = spawn(
     'bun',
     [
@@ -541,16 +546,37 @@ function moveFile(path: string): { stop: () => Promise<void> } {
          renameSync(file + '.writing', file);
        }, 10);`,
     ],
-    { env: { ...process.env, AKAPEN_TEST_MOVING_FILE: path }, stdio: 'ignore' },
+    // Piped rather than ignored, for the same reason `start` pipes: a writer that dies on
+    // startup says why on stderr, and dropping it turns every such failure into a bare
+    // timeout on the wait below.
+    { env: { ...process.env, AKAPEN_TEST_MOVING_FILE: path }, stdio: ['ignore', 'pipe', 'pipe'] },
   );
-  return {
-    // Awaited, not fired and forgotten: whatever is written next would race a writer
-    // that is still alive, and the test would go on to assert against that file.
-    stop: async () => {
-      proc.kill();
-      await new Promise<void>((done) => proc.on('exit', () => done()));
-    },
+  let out = '';
+  const collect = (chunk: Buffer) => {
+    out += chunk.toString();
   };
+  proc.stdout?.on('data', collect);
+  proc.stderr?.on('data', collect);
+
+  // Awaited, not fired and forgotten: whatever is written next would race a writer that is
+  // still alive, and the test would go on to assert against that file. One that is already
+  // gone is not waited for at all — `exit` has been and gone by then, a listener attached
+  // afterwards never fires, and this would hang out the whole test timeout rather than
+  // report whatever killed it. Measured before the check was here: 30s, against 6s now.
+  const stop = () =>
+    new Promise<void>((done) => {
+      if (proc.exitCode !== null || proc.signalCode !== null) return done();
+      proc.once('exit', () => done());
+      proc.kill();
+    });
+
+  try {
+    await until(() => readFileSync(path, 'utf8').startsWith('# still writing'));
+  } catch {
+    await stop();
+    throw new Error(`the writer never wrote to ${path}:\n${out}`);
+  }
+  return { stop };
 }
 
 describe('cutting a round while the file is being written', () => {
@@ -642,12 +668,8 @@ describe('cutting a round while the file is being written', () => {
       env: { AKAPEN_SETTLE_MS: String(SETTLE_MS) },
     });
     try {
-      const writer = moveFile(file);
+      const writer = await moveFile(file);
       try {
-        // Nothing asserts a writer that never started: the file would sit still, the round
-        // would be cut, and the failure would read as the guard being gone. Wait for the
-        // first write to land, so a writer that cannot start times out saying so instead.
-        await until(() => readFileSync(file, 'utf8').startsWith('# still writing'));
         const started = Date.now();
         const res = await fetch(`${other.url}/api/rounds`, { method: 'POST' });
         const took = Date.now() - started;
