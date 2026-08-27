@@ -16,6 +16,7 @@ import {
   type RoundState,
 } from '@akapen/shared';
 import { bindKeys, loadKeymap } from './keys.ts';
+import { pageTitle } from './title.ts';
 
 /** Elements index.html is expected to have. Missing one fails at startup so it is noticed. */
 function must<T extends HTMLElement = HTMLElement>(id: string): T {
@@ -872,6 +873,9 @@ function render() {
   if (!doc) return;
   const focus = captureFocus();
   filePathEl.textContent = doc.path;
+  // Several reviews are open at once, one per note, and the tab is the only place they
+  // are told apart before being clicked.
+  document.title = pageTitle(doc);
   renderRoundControls();
   updateCount();
 

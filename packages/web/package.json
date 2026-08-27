@@ -16,5 +16,8 @@
     "@akapen/shared": "workspace:*",
     "mermaid": "^11.16.1",
     "valibot": "^1.4.2"
+  },
+  "devDependencies": {
+    "@akapen/core": "workspace:*"
   }
 }
