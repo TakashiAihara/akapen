@@ -53,6 +53,26 @@ describe('pageTitle', () => {
     expect(pageTitle(doc('#\n\nA paragraph.\n'))).toBe('20-auth.md — akapen');
   });
 
+  it('reads an image in the heading by its alt text', () => {
+    expect(pageTitle(doc('# ![Project Logo](logo.png)\n'))).toBe('Project Logo — akapen');
+  });
+
+  it('keeps the alt text in place among the words around it', () => {
+    expect(pageTitle(doc('# ![Logo](logo.png) and the rail\n'))).toBe('Logo and the rail — akapen');
+  });
+
+  it('restores characters the renderer escaped inside an alt text', () => {
+    expect(pageTitle(doc('# ![a & b](logo.png)\n'))).toBe('a & b — akapen');
+  });
+
+  it('falls back to the file name for an image with no alt text', () => {
+    expect(pageTitle(doc('# ![](logo.png)\n'))).toBe('20-auth.md — akapen');
+  });
+
+  it('names the file on a path written with backslashes', () => {
+    expect(pageTitle(doc('A paragraph.\n', 'C:\\Users\\me\\notes\\20-auth.md'))).toBe('20-auth.md — akapen');
+  });
+
   it('names the file, not the path it sits at', () => {
     expect(pageTitle(doc('A paragraph.\n', '/a/very/long/path/note.md'))).toBe('note.md — akapen');
   });

@@ -30,9 +30,19 @@ const ENTITIES: readonly (readonly [RegExp, string])[] = [
   [/&amp;/g, '&'],
 ];
 
-/** The text of rendered inline HTML. Tags carry no title, only what sits between them. */
+/**
+ * The text of rendered inline HTML. Tags carry no title, only what sits between them —
+ * except an image, whose text is its alt. Dropping the tag with the rest took the name
+ * off `# ![Project Logo](logo.png)` entirely, and a heading that is only an image then
+ * fell through to the file name as if it had no heading at all.
+ *
+ * markdown-it always writes `alt` in double quotes and escapes any it finds inside, so
+ * the value cannot close the attribute early. What it leaves behind is entities, which
+ * the pass below is already there to undo.
+ */
 function plain(html: string): string {
-  let out = html.replace(/<[^>]*>/g, '');
+  let out = html.replace(/<img\b[^>]*\balt="([^"]*)"[^>]*>/gi, '$1');
+  out = out.replace(/<[^>]*>/g, '');
   for (const [pattern, char] of ENTITIES) out = out.replace(pattern, char);
   // A heading can be written across two lines (`Title` over `=====`), and a tab is one line.
   return out.replace(/\s+/g, ' ').trim();
