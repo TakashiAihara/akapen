@@ -20,7 +20,7 @@
     },
     "packages/cli": {
       "name": "@akapen/cli",
-      "version": "0.1.0-rc.2",
+      "version": "0.1.0-rc.3",
       "bin": {
         "akapen": "./src/cli.ts",
       },
@@ -32,7 +32,7 @@
     },
     "packages/core": {
       "name": "@akapen/core",
-      "version": "0.1.0-rc.2",
+      "version": "0.1.0-rc.3",
       "dependencies": {
         "@akapen/shared": "workspace:*",
         "highlight.js": "^11.12.0",
@@ -41,7 +41,7 @@
     },
     "packages/server": {
       "name": "@akapen/server",
-      "version": "0.1.0-rc.2",
+      "version": "0.1.0-rc.3",
       "dependencies": {
         "@akapen/core": "workspace:*",
         "@akapen/shared": "workspace:*",
@@ -53,14 +53,14 @@
     },
     "packages/shared": {
       "name": "@akapen/shared",
-      "version": "0.1.0-rc.2",
+      "version": "0.1.0-rc.3",
       "dependencies": {
         "valibot": "^1.4.2",
       },
     },
     "packages/web": {
       "name": "@akapen/web",
-      "version": "0.1.0-rc.2",
+      "version": "0.1.0-rc.3",
       "dependencies": {
         "@akapen/shared": "workspace:*",
         "mermaid": "^11.17.0",
