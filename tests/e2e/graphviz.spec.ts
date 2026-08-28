@@ -105,3 +105,26 @@ test('puts nothing executable in the document, and the check would notice if it 
   });
   expect(await live('#sanitizer-probe')).toEqual(['text@onclick', 'a@xlink:href=javascript:']);
 });
+
+test('repaints the default black-on-white for a dark page', async ({ page, akapen }) => {
+  // graphviz paints in absolute colours, so a figure left alone is a white sheet in the
+  // middle of a dark document. Only its defaults are remapped, by value, so a graph that
+  // names its own colour keeps it.
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await show(page, akapen, GRAPH);
+  await expect(page.locator('.graphviz-block svg')).toBeVisible();
+
+  const paint = await page.evaluate(() => {
+    const white = document.querySelector('.graphviz-block svg [fill="white"]');
+    const named = document.querySelector('.graphviz-block svg [fill="none"]');
+    return {
+      remapped: white ? getComputedStyle(white).fill : 'no element painted white',
+      untouched: named ? getComputedStyle(named).fill : null,
+    };
+  });
+
+  // --ak-bg in the dark palette. Not white, which is the whole point.
+  expect(paint.remapped).toBe('rgb(13, 17, 23)');
+  // A value the rules do not name is left exactly as graphviz set it.
+  if (paint.untouched !== null) expect(paint.untouched).toBe('none');
+});
