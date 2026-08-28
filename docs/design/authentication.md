@@ -136,7 +136,7 @@ sequenceDiagram
 - That last part is worth being explicit about, because an earlier draft of this document claimed the `Sec-Fetch-Site` check covered it. It does not. That check separates origins; rebinding works by making them the same origin. Nothing but refusing the name closes it.
 - The set is rebuilt when a name is not recognised, at most once a second. Under a wildcard bind it is the machine's own addresses, and those change underneath a running process — joining a VPN or moving network gives it one it did not have at startup, and every request to that address would otherwise be a 403 with nothing wrong.
 - It stays on under `--no-auth`, because it answers a different question from "who may connect".
-- A missing `Host` is refused. It cannot happen today — Bun answers a Host-less HTTP/1.1 request with a 500 before any of this runs — so there is no test for it; one would pass with the branch removed and pin nothing.
+- A missing `Host` is refused. It cannot happen today — Bun answers a Host-less HTTP/1.1 request with a 400 before any of this runs — so there is no test for it; one would pass with the branch removed and pin nothing. Measured over a raw socket on 1.3.14 and on the Rust-rewritten 1.4.0; both answer 400.
 - `SameSite=Lax` covers the ordinary cross-site case beneath it: another site's `fetch` or form post carries no cookie.
 
 ## Writes have to come from akapen's own page
