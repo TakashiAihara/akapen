@@ -331,6 +331,21 @@ body.rail-overlay .marker { display: inline-flex; align-items: center; justify-c
 .row:has(.table-separator) { display: none; }
 
 .mermaid-block { border: 1px solid var(--ak-border); border-radius: 8px; padding: 12px; margin: 6px 0; text-align: center; }
+.graphviz-block { border: 1px solid var(--ak-border); border-radius: 8px; padding: 12px; margin: 6px 0; text-align: center; overflow-x: auto; }
+.graphviz-block svg { max-width: 100%; height: auto; }
+.figure-error { color: var(--ak-fg-muted); font-family: var(--ak-mono, monospace); font-size: 0.85em; margin: 0 0 8px; text-align: left; white-space: pre-wrap; }
+
+/*
+ * Graphviz paints in absolute colours: white paper, black ink, whatever the page is.
+ * Only its defaults are remapped, by value, so a graph that names its own colour keeps
+ * it. A document that says color=black does get moved with the defaults; that is the
+ * price of not maintaining a parallel palette, and it reads correctly either way.
+ */
+@media (prefers-color-scheme: dark) {
+  .graphviz-block svg [fill="white"], .graphviz-block svg [fill="#ffffff"] { fill: var(--ak-bg); }
+  .graphviz-block svg [stroke="black"], .graphviz-block svg [stroke="#000000"] { stroke: var(--ak-fg); }
+  .graphviz-block svg text[fill="black"], .graphviz-block svg text[fill="#000000"] { fill: var(--ak-fg); }
+}
 
 .row.quoted .body { border-left: 3px solid var(--ak-border); padding-left: 12px; color: var(--ak-fg-muted); }
 

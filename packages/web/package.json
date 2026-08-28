@@ -6,14 +6,16 @@
   "exports": {
     "./dist/app.js": "./dist/app.js",
     "./dist/mermaid.js": "./dist/mermaid.js",
+    "./dist/graphviz.js": "./dist/graphviz.js",
     "./index.html": "./index.html",
     "./style.css": "./style.css"
   },
   "scripts": {
-    "build": "bun build src/app.ts src/mermaid.ts --target browser --outdir dist --minify --external '/mermaid.js'"
+    "build": "bun build src/app.ts src/mermaid.ts src/graphviz.ts --target browser --outdir dist --minify --external '/mermaid.js' --external '/graphviz.js'"
   },
   "dependencies": {
     "@akapen/shared": "workspace:*",
+    "@hpcc-js/wasm-graphviz": "^1.28.0",
     "mermaid": "^11.16.1",
     "valibot": "^1.4.2"
   },

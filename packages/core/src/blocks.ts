@@ -148,6 +148,24 @@ function renderInline(token: Token | undefined): string {
   return md.renderer.renderInline(token.children ?? [], md.options, {});
 }
 
+/**
+ * Fences drawn as a figure instead of split into lines.
+ *
+ * One table rather than a branch per notation: adding one is a row, and the block a
+ * notation produces stays the same shape as every other notation's. The browser finds
+ * the work to do by the class on the `pre`, so nothing downstream needs a new case.
+ *
+ * A figure is one block over the whole fence. That is the cost of drawing it — a comment
+ * lands on the figure, not on the line that draws a particular edge (#82).
+ */
+const FIGURE_FENCES: Record<string, { kind: BlockKind; cls: string }> = {
+  mermaid: { kind: 'mermaid', cls: 'mermaid' },
+  // Both spellings: `dot` is the language everyone writes and what GitHub highlights,
+  // `graphviz` is the engine, and people reach for either.
+  dot: { kind: 'dot', cls: 'graphviz' },
+  graphviz: { kind: 'dot', cls: 'graphviz' },
+};
+
 /** Split a fence into one block per line, keeping line numbers while the code still looks like one unit. */
 function walkFence(token: Token, ctx: Ctx): void {
   const [start, end] = token.map ?? [0, 0];
@@ -159,12 +177,13 @@ function walkFence(token: Token, ctx: Ctx): void {
   // about why. hljs.getLanguage already folds case, so this only has to hold here.
   const info = ((token.info || '').trim().split(/\s+/)[0] ?? '').toLowerCase();
 
-  if (info === 'mermaid') {
+  const figure = FIGURE_FENCES[info];
+  if (figure) {
     push(ctx, {
       startLine,
       endLine,
-      kind: 'mermaid',
-      html: `<div class="mermaid-block"><pre class="mermaid">${esc(token.content.replace(/\n$/, ''))}</pre></div>`,
+      kind: figure.kind,
+      html: `<div class="${figure.cls}-block"><pre class="${figure.cls}">${esc(token.content.replace(/\n$/, ''))}</pre></div>`,
       flags: [],
     });
     return;

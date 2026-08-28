@@ -95,11 +95,27 @@ describe('fence info strings', () => {
     },
   );
 
-  it.each([['ts'], ['TypeScript'], [''], ['mermaidjs'], ['not-mermaid']])('leaves ```%s as code', (info) => {
-    // Only the whole first word counts. A fence that merely starts with the letters
-    // must not be swallowed.
-    expect(kindsOf(fence(info))).toEqual(['code']);
+  it.each([['dot'], ['DOT'], ['graphviz'], ['Graphviz'], ['dot rankdir=LR']])(
+    'renders ```%s as a graphviz figure',
+    (info) => {
+      expect(kindsOf(fence(info))).toEqual(['dot']);
+    },
+  );
+
+  it('gives graphviz and mermaid different kinds, so the browser draws each with its own engine', () => {
+    // Both are figures, and one block each. If they shared a kind the page would hand a
+    // DOT graph to mermaid, which draws nothing and says nothing about why.
+    expect(kindsOf(fence('dot'))).not.toEqual(kindsOf(fence('mermaid')));
   });
+
+  it.each([['ts'], ['TypeScript'], [''], ['mermaidjs'], ['not-mermaid'], ['dotenv'], ['graphviz-dot']])(
+    'leaves ```%s as code',
+    (info) => {
+      // Only the whole first word counts. A fence that merely starts with the letters
+      // must not be swallowed.
+      expect(kindsOf(fence(info))).toEqual(['code']);
+    },
+  );
 
   it('highlights a language whatever case it is written in', () => {
     // hljs.getLanguage folds case itself, so this is a guard rather than a fix.

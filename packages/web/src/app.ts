@@ -1,4 +1,5 @@
 import * as v from 'valibot';
+import { sanitizeSvg } from './svg';
 import {
   CommentsPayloadSchema,
   DocPayloadSchema,
@@ -82,6 +83,7 @@ let focusLine: number | null = null; // the line the keyboard is on (its first l
 let draft: Draft | null = null;
 let active: string | null = null; // the selected bubble (a comment id, or 'draft')
 let mermaidLib: MermaidLib | null = null;
+let renderDot: ((source: string) => Promise<string>) | null = null;
 /**
  * The round the server is on, as last heard — from a payload or from the stream.
  *
@@ -886,6 +888,40 @@ function render() {
   else layoutRail();
   restoreFocus(focus);
   renderMermaid();
+  renderGraphviz();
+}
+
+/**
+ * Draw every graphviz figure that has not been drawn yet.
+ *
+ * A failure leaves the source on screen with the message above it. Blanking the block
+ * would take away the thing a comment about a broken graph has to point at, and a graph
+ * is at its most worth reviewing when it does not compile.
+ */
+async function renderGraphviz() {
+  const pending = docEl.querySelectorAll<HTMLPreElement>('pre.graphviz:not(.figure-failed)');
+  if (!pending.length) return;
+  if (!renderDot) {
+    // Same shape as mermaid below: build output, assembled at runtime so the bundler
+    // leaves it alone, never fetched by a document with no figure in it.
+    const url = '/graphviz.js';
+    const mod = (await import(/* @vite-ignore */ url)) as { default: (source: string) => Promise<string> };
+    renderDot = mod.default;
+  }
+  for (const pre of pending) {
+    try {
+      const svg = sanitizeSvg(await renderDot(pre.textContent ?? ''));
+      if (!svg) throw new Error('graphviz returned something that is not an SVG');
+      pre.replaceWith(svg);
+    } catch (err) {
+      pre.classList.add('figure-failed');
+      const message = document.createElement('p');
+      message.className = 'figure-error';
+      message.textContent = err instanceof Error ? err.message : String(err);
+      pre.before(message);
+    }
+  }
+  layoutRail(); // drawing changes the document height, so always realign
 }
 
 async function renderMermaid() {
