@@ -384,7 +384,7 @@ A heading inside a blockquote is left out: a quote is someone else's document co
 
 It goes down to `h3`, and `down to h6` at the foot of the panel opens the rest. A note whose headings are all deeper than that says so rather than showing an empty panel. A skipped level indents by one step and not by two: `# One` followed by `### Three` has no `## Two` for the space to stand for.
 
-A panel and not a column of its own, because the columns are meant to be source, document and comments left to right ([#148](https://github.com/TakashiAihara/akapen/issues/148)). What a column gives away for free is where you are, so the panel works that out the moment it opens — the last heading at or above the line a jump lands on. That distance is written once, in `--ak-jump-offset`, and both the jump and the panel read it: any shorter on one side and the heading just jumped to would not be the one the panel calls current on the way back in.
+A panel and not a column of its own, because the columns are meant to be source, document and comments left to right ([#76](https://github.com/TakashiAihara/akapen/issues/76)). What a column gives away for free is where you are, so the panel works that out the moment it opens — the last heading at or above the line a jump lands on. That distance is written once, in `--ak-jump-offset`, and both the jump and the panel read it: any shorter on one side and the heading just jumped to would not be the one the panel calls current on the way back in.
 
 ### What the tab is called
 
