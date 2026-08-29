@@ -93,6 +93,37 @@ test('puts nothing executable in the document, and the check would notice if it 
 
   expect(await live('.graphviz-block')).toEqual([]);
 
+  // The scan above only knows the shapes it was told to look for, so it would miss an
+  // <iframe> or an <object> arriving by some route nobody predicted. What is on the page
+  // is therefore also checked against the list of what may be there.
+  const elements = await page.evaluate(() =>
+    [
+      ...new Set(
+        [...document.querySelectorAll('.graphviz-block svg, .graphviz-block svg *')].map((e) => e.localName),
+      ),
+    ].toSorted(),
+  );
+  const allowed = new Set([
+    'svg',
+    'g',
+    'title',
+    'a',
+    'path',
+    'polygon',
+    'polyline',
+    'line',
+    'rect',
+    'circle',
+    'ellipse',
+    'text',
+    'tspan',
+    'defs',
+    'linearGradient',
+    'radialGradient',
+    'stop',
+  ]);
+  expect(elements.filter((name) => !allowed.has(name))).toEqual([]);
+
   // The positive control. Without it, the empty result above is indistinguishable from a
   // check that walks nothing — which is the failure this whole test exists to avoid.
   await page.evaluate(() => {
@@ -114,17 +145,29 @@ test('repaints the default black-on-white for a dark page', async ({ page, akape
   await show(page, akapen, GRAPH);
   await expect(page.locator('.graphviz-block svg')).toBeVisible();
 
-  const paint = await page.evaluate(() => {
-    const white = document.querySelector('.graphviz-block svg [fill="white"]');
-    const named = document.querySelector('.graphviz-block svg [fill="none"]');
-    return {
-      remapped: white ? getComputedStyle(white).fill : 'no element painted white',
-      untouched: named ? getComputedStyle(named).fill : null,
-    };
-  });
+  const ink = 'rgb(230, 237, 243)'; // --ak-fg, dark
+  const paper = 'rgb(13, 17, 23)'; // --ak-bg, dark
 
-  // --ak-bg in the dark palette. Not white, which is the whole point.
-  expect(paint.remapped).toBe('rgb(13, 17, 23)');
-  // A value the rules do not name is left exactly as graphviz set it.
-  if (paint.untouched !== null) expect(paint.untouched).toBe('none');
+  const paint = await page.evaluate(() =>
+    (
+      [
+        // The sheet graphviz draws the graph on
+        ['sheet', '.graphviz-block svg polygon[fill="white"]'],
+        // An arrowhead: a polygon *filled* black, not merely stroked
+        ['arrowhead', '.graphviz-block svg polygon[fill="black"]'],
+        // A node label, which graphviz gives no fill attribute at all
+        ['label', '.graphviz-block svg text:not([fill])'],
+        // A value the rules do not name
+        ['outline', '.graphviz-block svg ellipse[fill="none"]'],
+      ] as const
+    ).map(([name, selector]) => {
+      const el = document.querySelector(selector);
+      return `${name}=${el ? getComputedStyle(el).fill : 'no such element'}`;
+    }),
+  );
+
+  // One assertion over all four, so a failure names every one that moved rather than the
+  // first. The arrowhead and the label were both black against a dark page until the
+  // rules covering them existed, and an assertion on the sheet alone said nothing.
+  expect(paint).toEqual([`sheet=${paper}`, `arrowhead=${ink}`, `label=${ink}`, 'outline=none']);
 });

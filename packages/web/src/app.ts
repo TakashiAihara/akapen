@@ -899,8 +899,13 @@ function render() {
  * is at its most worth reviewing when it does not compile.
  */
 async function renderGraphviz() {
-  const pending = docEl.querySelectorAll<HTMLPreElement>('pre.graphviz:not(.figure-failed)');
+  const pending = docEl.querySelectorAll<HTMLPreElement>('pre.graphviz:not(.figure-claimed)');
   if (!pending.length) return;
+  // Claimed before the first await. This runs again on every render, and laying out a
+  // graph takes long enough for a second pass to start while the first is still waiting
+  // — both would then draw the same figure, and the loser would be holding a node that
+  // is no longer in the document, where replaceWith does nothing and says nothing.
+  for (const pre of pending) pre.classList.add('figure-claimed');
   if (!renderDot) {
     // Same shape as mermaid below: build output, assembled at runtime so the bundler
     // leaves it alone, never fetched by a document with no figure in it.
@@ -914,7 +919,6 @@ async function renderGraphviz() {
       if (!svg) throw new Error('graphviz returned something that is not an SVG');
       pre.replaceWith(svg);
     } catch (err) {
-      pre.classList.add('figure-failed');
       const message = document.createElement('p');
       message.className = 'figure-error';
       message.textContent = err instanceof Error ? err.message : String(err);

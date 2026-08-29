@@ -102,11 +102,15 @@ describe('fence info strings', () => {
     },
   );
 
-  it('gives graphviz and mermaid different kinds, so the browser draws each with its own engine', () => {
-    // Both are figures, and one block each. If they shared a kind the page would hand a
-    // DOT graph to mermaid, which draws nothing and says nothing about why.
-    expect(kindsOf(fence('dot'))).not.toEqual(kindsOf(fence('mermaid')));
-  });
+  it.each([['constructor'], ['toString'], ['valueOf'], ['hasOwnProperty'], ['__proto__']])(
+    'leaves ```%s as code, rather than finding it on Object.prototype',
+    (info) => {
+      // The lookup is by a name taken straight from the document. Against an object
+      // literal, `constructor` and its siblings are found on the prototype: the fence
+      // becomes a figure whose kind is undefined, which is not a kind the contract has.
+      expect(kindsOf(fence(info))).toEqual(['code']);
+    },
+  );
 
   it.each([['ts'], ['TypeScript'], [''], ['mermaidjs'], ['not-mermaid'], ['dotenv'], ['graphviz-dot']])(
     'leaves ```%s as code',
