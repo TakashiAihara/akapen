@@ -23,24 +23,44 @@ const SCHEMA = [
   '}',
 ].join('\n');
 
-/** A server for one file of our choosing, since the shared fixture is markdown. */
-async function open(page: import('@playwright/test').Page, name: string, content: string) {
+/**
+ * A server for one file of our choosing, since the shared fixture is markdown.
+ *
+ * `before` runs with the URL in hand and the page still on about:blank, which is the only
+ * place a request listener can be attached and see the opening navigation. Attached after
+ * `goto` returns, it watches an already-loaded page and reports nothing — which looks
+ * exactly like a page that asked for nothing.
+ */
+async function open(
+  page: import('@playwright/test').Page,
+  name: string,
+  content: string,
+  before?: (url: string) => void,
+) {
   const home = mkdtempSync(join(tmpdir(), 'akapen-e2e-dbml-'));
   const peer = await startPeer(home, name, [], content);
   const url = `http://127.0.0.1:${peer.port}`;
-  await page.context().addCookies([{ name: 'akapen_token', value: TOKEN, url }]);
-  await page.goto(url);
+  // From here the process exists, so a failure has to stop it. Otherwise a navigation
+  // that throws leaves a bun process holding the port for the rest of the run.
+  try {
+    await page.context().addCookies([{ name: 'akapen_token', value: TOKEN, url }]);
+    before?.(url);
+    await page.goto(url);
+  } catch (err) {
+    await peer.stop();
+    throw err;
+  }
   return { url, stop: peer.stop };
 }
 
 test('draws the schema, from a file akapen was pointed straight at', async ({ page }) => {
-  const { url, stop } = await open(page, 'schema.dbml', SCHEMA);
-  try {
-    const offSite: string[] = [];
+  const offSite: string[] = [];
+  const { stop } = await open(page, 'schema.dbml', SCHEMA, (url) => {
     page.on('request', (r) => {
       if (!r.url().startsWith(url)) offSite.push(r.url());
     });
-
+  });
+  try {
     await expect(page.locator('.dbml-block svg')).toBeVisible();
     const labels = await page.locator('.dbml-block svg text').allTextContents();
     expect(labels.map((t) => t.trim())).toEqual(expect.arrayContaining(['users', 'teams']));
