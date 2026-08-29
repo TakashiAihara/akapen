@@ -148,6 +148,33 @@ function renderInline(token: Token | undefined): string {
   return md.renderer.renderInline(token.children ?? [], md.options, {});
 }
 
+/**
+ * Fences drawn as a figure instead of split into lines.
+ *
+ * One table rather than a branch per notation, so adding one is a row here rather than
+ * another arm of this function. It is not free elsewhere: a notation still needs a kind
+ * in the contract, its own bundle entry, and the browser code that drives its engine.
+ * What the table buys is that the block a notation produces has the same shape as every
+ * other notation's, so rounds, storage and the rail never learn about any of them.
+ *
+ * A figure is one block over the whole fence. That is the cost of drawing it — a comment
+ * lands on the figure, not on the line that draws a particular edge (#82).
+ */
+const FIGURE_FENCES: Record<string, { kind: BlockKind; cls: string }> = Object.assign(
+  // Null-prototype, for the reason `ASSETS` in the server is: this is looked up with a
+  // name taken straight from the document. An object literal inherits from
+  // Object.prototype, so ```constructor and ```__proto__ find something truthy there and
+  // become a figure whose `kind` is undefined — which is not a kind the contract has.
+  Object.create(null) as Record<string, { kind: BlockKind; cls: string }>,
+  {
+    mermaid: { kind: 'mermaid', cls: 'mermaid' },
+    // Both spellings: `dot` is the language everyone writes and what GitHub highlights,
+    // `graphviz` is the engine, and people reach for either.
+    dot: { kind: 'dot', cls: 'graphviz' },
+    graphviz: { kind: 'dot', cls: 'graphviz' },
+  },
+);
+
 /** Split a fence into one block per line, keeping line numbers while the code still looks like one unit. */
 function walkFence(token: Token, ctx: Ctx): void {
   const [start, end] = token.map ?? [0, 0];
@@ -159,12 +186,13 @@ function walkFence(token: Token, ctx: Ctx): void {
   // about why. hljs.getLanguage already folds case, so this only has to hold here.
   const info = ((token.info || '').trim().split(/\s+/)[0] ?? '').toLowerCase();
 
-  if (info === 'mermaid') {
+  const figure = FIGURE_FENCES[info];
+  if (figure) {
     push(ctx, {
       startLine,
       endLine,
-      kind: 'mermaid',
-      html: `<div class="mermaid-block"><pre class="mermaid">${esc(token.content.replace(/\n$/, ''))}</pre></div>`,
+      kind: figure.kind,
+      html: `<div class="${figure.cls}-block"><pre class="${figure.cls}">${esc(token.content.replace(/\n$/, ''))}</pre></div>`,
       flags: [],
     });
     return;

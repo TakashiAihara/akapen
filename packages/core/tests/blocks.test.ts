@@ -95,11 +95,31 @@ describe('fence info strings', () => {
     },
   );
 
-  it.each([['ts'], ['TypeScript'], [''], ['mermaidjs'], ['not-mermaid']])('leaves ```%s as code', (info) => {
-    // Only the whole first word counts. A fence that merely starts with the letters
-    // must not be swallowed.
-    expect(kindsOf(fence(info))).toEqual(['code']);
-  });
+  it.each([['dot'], ['DOT'], ['graphviz'], ['Graphviz'], ['dot rankdir=LR']])(
+    'renders ```%s as a graphviz figure',
+    (info) => {
+      expect(kindsOf(fence(info))).toEqual(['dot']);
+    },
+  );
+
+  it.each([['constructor'], ['toString'], ['valueOf'], ['hasOwnProperty'], ['__proto__']])(
+    'leaves ```%s as code, rather than finding it on Object.prototype',
+    (info) => {
+      // The lookup is by a name taken straight from the document. Against an object
+      // literal, `constructor` and its siblings are found on the prototype: the fence
+      // becomes a figure whose kind is undefined, which is not a kind the contract has.
+      expect(kindsOf(fence(info))).toEqual(['code']);
+    },
+  );
+
+  it.each([['ts'], ['TypeScript'], [''], ['mermaidjs'], ['not-mermaid'], ['dotenv'], ['graphviz-dot']])(
+    'leaves ```%s as code',
+    (info) => {
+      // Only the whole first word counts. A fence that merely starts with the letters
+      // must not be swallowed.
+      expect(kindsOf(fence(info))).toEqual(['code']);
+    },
+  );
 
   it('highlights a language whatever case it is written in', () => {
     // hljs.getLanguage folds case itself, so this is a guard rather than a fix.

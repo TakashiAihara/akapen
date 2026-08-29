@@ -283,8 +283,24 @@ There are two outputs, since `bun build --compile` embeds them by name.
 |---|---|
 | `packages/web/dist/app.js` | 23KB |
 | `packages/web/dist/mermaid.js` | 3.4MB, **fetched only when the document has a diagram** |
+| `packages/web/dist/graphviz.js` | 0.8MB, likewise |
 
-Bundling mermaid into `app.js` makes that 3.3MB, parsed on every load even with no diagram. `--splitting` emits a hundred-odd hash-named chunks, which does not fit embedding by name. Two entries satisfy both.
+Bundling mermaid into `app.js` makes that 3.3MB, parsed on every load even with no diagram. `--splitting` emits a hundred-odd hash-named chunks, which does not fit embedding by name. Separate entries satisfy both.
+
+### Figures, and where akapen differs from GitHub
+
+Two fences are drawn rather than shown as code.
+
+| Fence | Engine | GitHub |
+|---|---|---|
+| ` ```mermaid ` | mermaid | draws it too |
+| ` ```dot `, ` ```graphviz ` | graphviz, compiled to wasm | **highlights it, does not draw it** |
+
+The second row is a difference worth knowing before you rely on it. GitHub renders four things from a fence — mermaid, geoJSON, topoJSON and ASCII STL — and DOT is not among them, though Linguist knows the language well enough to colour it. So a document with a `dot` fence is a figure here and a code block there.
+
+That is accepted rather than overlooked. DOT is what tooling already emits (`go mod graph`, `cargo tree`, profilers, ORM schema dumps), and mermaid's layout gives up on a graph of forty nodes long before graphviz does — neither of which GitHub's list changes. But a document written to be read in both places should stay on `mermaid`.
+
+Neither engine is bundled into `app.js`: a document with no figure in it fetches neither, and nothing is fetched from the network — the wasm is inlined into `graphviz.js` rather than loaded at run time, which is what keeps a private document private.
 
 ### The right rail
 

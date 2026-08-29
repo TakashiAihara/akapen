@@ -30,6 +30,7 @@ export const BlockKindSchema = v.picklist([
   'table-row',
   'code',
   'mermaid',
+  'dot',
   'hr',
 ]);
 export type BlockKind = v.InferOutput<typeof BlockKindSchema>;
