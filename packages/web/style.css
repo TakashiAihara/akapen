@@ -203,16 +203,20 @@ a.peer-file:hover { text-decoration: underline; }
   left: 0;
   right: 0;
   z-index: 11;
-  /* A long document has more headings than fit above the fold, so the panel scrolls rather than the page */
+  /* A long document has more headings than fit above the fold, so the list scrolls rather
+     than the page. The panel itself does not: the depth control has to stay reachable, and
+     the control that reveals the deeper headings is the last thing that should need
+     scrolling past a hundred of them to find */
+  display: flex;
+  flex-direction: column;
   max-height: 60vh;
-  overflow-y: auto;
   padding: 8px 16px 10px;
   background: var(--ak-bg);
   border-bottom: 1px solid var(--ak-border);
   box-shadow: 0 6px 16px rgba(0, 0, 0, 0.12);
 }
 .outline[hidden] { display: none; }
-.outline-list { display: flex; flex-direction: column; }
+.outline-list { display: flex; flex-direction: column; min-height: 0; overflow-y: auto; }
 .outline-empty { margin: 2px 0 6px; color: var(--ak-fg-muted); font-size: 12px; }
 .outline-empty[hidden] { display: none; }
 
@@ -245,6 +249,7 @@ a.peer-file:hover { text-decoration: underline; }
 
 .outline-depth {
   display: block;
+  flex: none;
   margin-top: 8px;
   padding-top: 6px;
   border-top: 1px solid var(--ak-border);
