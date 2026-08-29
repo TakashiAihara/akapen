@@ -16,6 +16,14 @@ import {
   type RoundState,
 } from '@akapen/shared';
 import { bindKeys, loadKeymap } from './keys.ts';
+import {
+  DEEPEST_LEVEL,
+  DEFAULT_DEEPEST,
+  type OutlineEntry,
+  buildOutline,
+  flattenOutline,
+  headingCount,
+} from './outline.ts';
 import { pageTitle } from './title.ts';
 
 /** Elements index.html is expected to have. Missing one fails at startup so it is noticed. */
@@ -47,6 +55,11 @@ const showLines = must<HTMLInputElement>('showLines');
 const peersToggleEl = must<HTMLButtonElement>('peersToggle');
 const peersEl = must('peers');
 const peersListEl = must('peersList');
+const outlineToggleEl = must<HTMLButtonElement>('outlineToggle');
+const outlineEl = must('outline');
+const outlineListEl = must('outlineList');
+const outlineEmptyEl = must('outlineEmpty');
+const outlineDeepEl = must<HTMLInputElement>('outlineDeep');
 
 /**
  * A comment being written: its range and text, kept alive across re-renders.
@@ -880,6 +893,7 @@ function render() {
   updateCount();
 
   renderDoc();
+  renderOutline();
   paintSelection();
   renderRail();
   if (active) setActive(active);
@@ -988,6 +1002,159 @@ function renderRoundControls() {
   }
 }
 
+/* ===== The outline ===== */
+
+/**
+ * The document's headings, hanging from the header.
+ *
+ * A column of its own would be the better place to read one from, and there is no room:
+ * the columns are meant to be source, document and comments, left to right (#148). What
+ * a permanently visible column gives away for free is where you are, so a panel has to
+ * answer that the moment it opens — which is what markCurrent is for.
+ *
+ * Nothing here asks the server anything. Every heading, its level and its line are
+ * already on the blocks the document was drawn from.
+ */
+const DEEPEST_KEY = 'akapen.outline.deepest';
+
+/**
+ * How deep this reader wants the outline. Stored per browser: it is a preference, and
+ * the document has no opinion about it.
+ */
+function readDeepest(): number {
+  try {
+    return Number(localStorage.getItem(DEEPEST_KEY)) === DEEPEST_LEVEL ? DEEPEST_LEVEL : DEFAULT_DEEPEST;
+  } catch {
+    // Storage can be denied outright. That is worth the default depth, not a dead outline.
+    return DEFAULT_DEEPEST;
+  }
+}
+
+let deepest = readDeepest();
+
+const outlineOpen = (): boolean => !outlineEl.hidden;
+
+function setOutlineOpen(open: boolean) {
+  outlineEl.hidden = !open;
+  outlineToggleEl.setAttribute('aria-expanded', String(open));
+}
+
+function closeOutline() {
+  setOutlineOpen(false);
+}
+
+function outlineRow(entry: OutlineEntry): HTMLButtonElement {
+  const row = el('button', 'outline-entry', escapeHtml(entry.text));
+  row.type = 'button';
+  // The written level styles the row; the depth in the tree indents it. They disagree
+  // wherever the document skips a level, and each is being used for what it means.
+  row.dataset['level'] = String(entry.level);
+  row.style.setProperty('--depth', String(entry.depth));
+  setLine(row, 'start', entry.line);
+  row.addEventListener('click', () => goToHeading(entry.line));
+  return row;
+}
+
+function renderOutline() {
+  const doc = state.doc;
+  outlineListEl.textContent = '';
+
+  const total = doc ? headingCount(doc) : 0;
+  // A document with no headings has no outline to open, so the control goes away rather
+  // than opening on nothing. The same shape the switcher takes when nothing else is running.
+  outlineToggleEl.hidden = total === 0;
+  if (total === 0) {
+    closeOutline();
+    return;
+  }
+
+  const entries = doc ? flattenOutline(buildOutline(doc, deepest)) : [];
+  for (const entry of entries) outlineListEl.append(outlineRow(entry));
+
+  // Every heading is deeper than the depth in force — a note written entirely in h4s.
+  // Saying so beats an empty panel, and what reaches them is the line underneath.
+  const hiddenCount = total - entries.length;
+  outlineEmptyEl.hidden = entries.length > 0;
+  outlineEmptyEl.textContent = `${hiddenCount} heading${hiddenCount === 1 ? '' : 's'}, all of them deeper than h${deepest}`;
+
+  if (outlineOpen()) markCurrent();
+}
+
+/**
+ * Mark the heading the reader is under.
+ *
+ * Taken when the panel opens and not before. A shut panel cannot be read, so watching
+ * the scroll while it is shut is work nobody ever sees.
+ *
+ * The last heading at or above the header is the one whose section is being read. When
+ * none is — the frontmatter, or an introduction above the first heading — the first row
+ * is marked, because that is the section the reader is about to be in.
+ */
+function markCurrent() {
+  const rows = [...outlineListEl.querySelectorAll<HTMLElement>('.outline-entry')];
+  // Where a jump puts a heading, read from the one place that distance is written. Take
+  // anything shorter and the heading just jumped to sits below the line, so coming back
+  // into the panel would report the section before it.
+  const offset = getComputedStyle(document.documentElement).getPropertyValue('--ak-jump-offset');
+  const edge = (Number.parseFloat(offset) || 0) + 1;
+  let current: HTMLElement | null = null;
+  for (const row of rows) {
+    const target = rowFor(getLine(row, 'start'));
+    if (target && target.getBoundingClientRect().top <= edge) current = row;
+  }
+  current ??= rows[0] ?? null;
+  for (const row of rows) row.classList.toggle('current', row === current);
+  current?.scrollIntoView({ block: 'nearest' });
+}
+
+function goToHeading(line: number) {
+  closeOutline();
+  const row = rowFor(line);
+  if (!row) return;
+  // The state a click on the row itself would leave. Without it, pressing c after a jump
+  // comments on wherever the focus was before — the mouse and the keyboard drifting apart.
+  focusLine = line;
+  sel = { start: line, end: getLine(row, 'end') };
+  paintSelection();
+  row.scrollIntoView({ block: 'start', behavior: 'smooth' });
+}
+
+function toggleOutline() {
+  if (outlineOpen()) {
+    closeOutline();
+    return;
+  }
+  if (outlineToggleEl.hidden) return;
+  // Both panels hang from the same edge of the header, so they would sit on top of each other
+  closePeers();
+  setOutlineOpen(true);
+  markCurrent();
+}
+
+outlineToggleEl.addEventListener('click', (e) => {
+  // The document-wide handler below would otherwise close it in the same click
+  e.stopPropagation();
+  toggleOutline();
+});
+
+document.addEventListener('click', (e) => {
+  if (!outlineOpen()) return;
+  const target = targetEl(e);
+  if (target && (outlineEl.contains(target) || outlineToggleEl.contains(target))) return;
+  closeOutline();
+});
+
+outlineDeepEl.checked = deepest === DEEPEST_LEVEL;
+outlineDeepEl.addEventListener('change', () => {
+  deepest = outlineDeepEl.checked ? DEEPEST_LEVEL : DEFAULT_DEEPEST;
+  try {
+    localStorage.setItem(DEEPEST_KEY, String(deepest));
+  } catch {
+    // A denied write costs the preference on the next visit, not the outline on this one
+  }
+  renderOutline();
+});
+
 /* ===== Other akapen on this host ===== */
 
 /**
@@ -1079,6 +1246,7 @@ async function togglePeers(): Promise<void> {
     return;
   }
   const request = ++peersRequest;
+  closeOutline();
   // Refreshed on the way open. An instance that stopped an hour ago must not be a row
   // that is still there to be clicked.
   await loadPeers();
@@ -1128,13 +1296,15 @@ const ACTIONS: Record<string, () => boolean | void> = {
     return undefined;
   },
   'comment.cancel': () => {
-    // The switcher first: it is the thing most recently opened over everything else.
-    // Closing covers one that is still opening as well — letting that request land would
-    // reopen what this key press just dismissed. The key is only consumed when the panel
-    // was really open, so Escape goes on meaning "cancel the draft" the rest of the time.
-    const switcherWasOpen = peersOpen();
+    // A panel from the header first: it is the thing most recently opened over everything
+    // else. Closing covers a switcher that is still opening as well — letting that request
+    // land would reopen what this key press just dismissed. The key is only consumed when
+    // a panel was really open, so Escape goes on meaning "cancel the draft" the rest of
+    // the time.
+    const panelWasOpen = peersOpen() || outlineOpen();
     closePeers();
-    if (switcherWasOpen) return undefined;
+    closeOutline();
+    if (panelWasOpen) return undefined;
     const btn = railEl.querySelector<HTMLButtonElement>('.bubble.draft button:not(.primary)');
     if (btn) btn.click();
     else if (document.body.classList.contains('rail-open')) railCloseEl.click();
@@ -1149,6 +1319,9 @@ const ACTIONS: Record<string, () => boolean | void> = {
   // The same path the button takes, so the two cannot diverge (W-2)
   'instances.toggle': () => {
     void togglePeers();
+  },
+  'outline.toggle': () => {
+    toggleOutline();
   },
 };
 

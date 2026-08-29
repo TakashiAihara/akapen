@@ -25,6 +25,9 @@ export const DEFAULT_KEYMAP: Keymap = {
   'lines.toggle': ['l'],
   // o for "others": the akapen running beside this one
   'instances.toggle': ['o'],
+  // t for "table of contents". o and t sit next to each other because both open a panel
+  // from the header, and neither is a letter the document itself needs.
+  'outline.toggle': ['t'],
 };
 
 // Arrow keys are not bound by default. Taking them breaks page scrolling, which
