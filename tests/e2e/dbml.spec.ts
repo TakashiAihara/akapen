@@ -80,7 +80,11 @@ test('shows the schema as written, not as markdown would rewrite it', async ({ p
 test('leaves something to point at when the schema does not parse', async ({ page }) => {
   const { stop } = await open(page, 'broken.dbml', 'Table users {\n  id integer [pk\n');
   try {
-    await expect(page.locator('.figure-error')).toBeVisible();
+    // The parser's own message, not merely some message. Any failure at all — a missing
+    // asset, a bundle that did not load — puts a box on the screen too, and asserting
+    // only that one appeared would pass without the parser ever having run.
+    await expect(page.locator('.figure-error')).toContainText(/line \d+/);
+
     await expect(page.locator('.dbml-block pre.dbml')).toContainText('Table users {');
     await expect(page.locator('.dbml-block svg')).toHaveCount(0);
   } finally {

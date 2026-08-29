@@ -10,7 +10,10 @@
  * which is why they are listed as external here: the import that reaches them is written
  * as a path so the bundler leaves it alone.
  */
-const stub = new URL('./src/viz-stub.ts', import.meta.url).pathname;
+import { fileURLToPath } from 'node:url';
+
+// `.pathname` would hand back `/C:/...` on Windows, which resolves as a path nowhere.
+const stub = fileURLToPath(new URL('./src/viz-stub.ts', import.meta.url));
 
 const built = await Bun.build({
   entrypoints: ['./src/app.ts', './src/mermaid.ts', './src/graphviz.ts', './src/dbml.ts'],

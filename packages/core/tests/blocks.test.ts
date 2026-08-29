@@ -161,20 +161,36 @@ describe('a document that is not markdown', () => {
     expect(buildDoc(path, SCHEMA).blocks.map((b) => b.kind)).toEqual(['dbml']);
   });
 
-  it.each([['/tmp/note.md'], ['/tmp/schema.dbml.md'], ['/tmp/dbml'], ['/tmp/schema.dbmlx']])(
+  /**
+   * What markdown makes of the same text, which is what every path below has to produce.
+   *
+   * `every(kind !== 'dbml')` was the assertion here first, and it pinned nothing: a
+   * lookup that finds something without a `kind` produces one block whose kind is
+   * `undefined`, and `undefined !== 'dbml'` passes while the document has been replaced
+   * by a single corrupted figure. Comparing against markdown's own output is what makes
+   * these fail when the branch is wrong.
+   */
+  const asMarkdown = buildDoc('/tmp/note.md', SCHEMA).blocks.map((b) => b.kind);
+
+  it.each([['/tmp/schema.dbml.md'], ['/tmp/dbml'], ['/tmp/schema.dbmlx'], ['/tmp/schema.dbm']])(
     'still reads %s as markdown',
     (path) => {
       // The extension is the whole of it. A name that merely contains the letters is a
       // markdown file, and reading it as a schema would show one unaddressable figure
       // where a document belongs.
-      expect(buildDoc(path, SCHEMA).blocks.every((b) => b.kind !== 'dbml')).toBe(true);
+      expect(buildDoc(path, SCHEMA).blocks.map((b) => b.kind)).toEqual(asMarkdown);
     },
   );
 
-  it.each([['/tmp/constructor'], ['/tmp/x.constructor'], ['/tmp/x.__proto__']])(
-    'does not find %s on Object.prototype',
+  it.each([['/tmp/constructor'], ['/tmp/x.constructor'], ['/tmp/x.__proto__'], ['/tmp/x.toString']])(
+    'reads %s as markdown, whatever the name resembles',
     (path) => {
-      expect(buildDoc(path, SCHEMA).blocks.every((b) => b.kind !== 'dbml')).toBe(true);
+      // Named for what it checks. It was written as a prototype-pollution test, by
+      // analogy with the fence table where ```constructor really does find something on
+      // Object.prototype — and then a negative control showed it pinning nothing either
+      // way, because `extname` returns '' or '.something' and no prototype key has that
+      // shape. The paths are worth keeping; the claim was not.
+      expect(buildDoc(path, SCHEMA).blocks.map((b) => b.kind)).toEqual(asMarkdown);
     },
   );
 });

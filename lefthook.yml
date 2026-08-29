@@ -16,6 +16,12 @@ pre-commit:
 
 pre-push:
   jobs:
+    # Before the tests, because some of them read build output. CI's unit job builds
+    # first for the same reason; without it here, a clean checkout fails the suite on
+    # a missing `dist` rather than on anything that is wrong with the code.
+    - name: build the browser bundles
+      run: bun run build:web
+
     - name: typecheck
       run: bun run typecheck
 

@@ -31,8 +31,9 @@ const dist = fileURLToPath(new URL('../../packages/web/dist/', import.meta.url))
 describe('browser bundles', () => {
   test.each(Object.entries(CEILINGS))('%s stays under its ceiling', (name, ceiling) => {
     const path = `${dist}${name}`;
-    // Built by `bun run build:web`, which the pre-push hook and CI both run before this.
-    // Skipping when absent would make a missing build look like a passing check.
+    // Built by `bun run build:web`, which CI's unit job and the pre-push hook both run
+    // ahead of the suite. Skipping when it is absent would turn a missing build into a
+    // passing check, so this says so instead.
     expect(existsSync(path), `${name} is not built; run bun run build:web`).toBe(true);
     expect(statSync(path).size).toBeLessThan(ceiling);
   });

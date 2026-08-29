@@ -418,8 +418,12 @@ function walk(tokens: Token[], ctx: Ctx): void {
  * markdown-it rewrites what it finds, so `__pending__` in a DBML note reaches the screen
  * as bold text and the document under review is no longer the document on disk.
  *
- * Null-prototype for the reason `FIGURE_FENCES` is: the key is an extension taken from
- * a path somebody chose.
+ * Null-prototype to match `FIGURE_FENCES`, though not for the same reason. There the
+ * key is a fence's info string, so ```constructor really does find something on
+ * Object.prototype. Here the key comes from `extname`, which returns either an empty
+ * string or one beginning with a dot, and no prototype key looks like that — measured,
+ * after a test written to pin it turned out to pin nothing. It stays because a lookup
+ * keyed by a name somebody else chose should not depend on that argument holding.
  */
 const DOCUMENT_FIGURES: Record<string, { kind: BlockKind; cls: string }> = Object.assign(
   Object.create(null) as Record<string, { kind: BlockKind; cls: string }>,

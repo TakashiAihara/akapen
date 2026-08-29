@@ -941,7 +941,10 @@ async function drawFigures(selector: string, toDot?: (source: string) => Promise
 /** Both notations graphviz lays out: dot fences, and a DBML document opened on its own. */
 async function renderGraphviz(): Promise<void> {
   await drawFigures('pre.graphviz');
-  // Loaded before the claim, so a document that holds no DBML never fetches the parser.
+  // The query is what keeps a document with no DBML in it from fetching the parser.
+  // Loading before the call, rather than inside it, is a separate point: `drawFigures`
+  // claims what it is given before its first await, so a parser that fails to load there
+  // would leave every figure claimed and undrawn with nothing said about why.
   if (docEl.querySelector('pre.dbml:not(.figure-claimed)')) {
     dbmlToDot ??= await loadEntry<(source: string) => Promise<string>>('/dbml.js');
     await drawFigures('pre.dbml', dbmlToDot);
