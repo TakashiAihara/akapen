@@ -23,9 +23,11 @@ async function jumpLanded(page: Page, heading: Locator): Promise<void> {
   const offset = await page.evaluate(() =>
     Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--ak-jump-offset')),
   );
+  // A band around the offset rather than "at or above" it: the looser form is also
+  // satisfied by a jump that left the heading at the very top, under the sticky header.
   await expect
-    .poll(() => heading.evaluate((n) => n.getBoundingClientRect().top))
-    .toBeLessThanOrEqual(offset + 1);
+    .poll(async () => Math.abs((await heading.evaluate((n) => n.getBoundingClientRect().top)) - offset))
+    .toBeLessThanOrEqual(1.5);
 }
 
 const TOGGLE = '#outlineToggle';
@@ -53,12 +55,34 @@ test('lists the headings in the order the document has them', async ({ page }) =
   ]);
 });
 
-test('indents by the level, so the tree is visible and not only the order', async ({ page }) => {
+/** Where a row's text starts, which is what the indent is. */
+const indentOf = (page: Page, text: string) =>
+  page
+    .locator(ROW)
+    .filter({ hasText: text })
+    .first()
+    .evaluate((n) => Number.parseFloat(getComputedStyle(n).paddingLeft));
+
+test('indents by how deep the heading sits, not by the level it is written at', async ({ page, akapen }) => {
+  // A document that skips a level, because that is the only shape the two disagree on.
+  // Without one, indenting by the written level and indenting by the depth in the tree
+  // draw the same picture, and this would pass either way.
+  akapen.append('\n# Appendix\n\n### Skipped to h3\n\nA paragraph.\n');
+  await page.locator('#nextRound').click();
+  await expect(page.locator('#round')).toHaveText('R002');
+
   await page.locator(TOGGLE).click();
-  const rows = page.locator(ROW);
-  const h1 = await rows.first().evaluate((n) => getComputedStyle(n).paddingLeft);
-  const h2 = await rows.nth(1).evaluate((n) => getComputedStyle(n).paddingLeft);
-  expect(parseFloat(h2)).toBeGreaterThan(parseFloat(h1));
+  const top = await indentOf(page, 'Heading');
+  const oneStep = await indentOf(page, 'What is settled');
+  const appendix = await indentOf(page, 'Appendix');
+  const skipped = await indentOf(page, 'Skipped to h3');
+
+  const step = oneStep - top;
+  expect(step).toBeGreaterThan(0);
+  expect(appendix).toBe(top);
+  // One step past the h1 it sits under. By the written level it would be two steps in,
+  // leaving room for an h2 the document never had.
+  expect(skipped - appendix).toBe(step);
 });
 
 test('takes the reader to the heading, and clear of the header that would cover it', async ({ page }) => {
