@@ -65,11 +65,14 @@ export async function startPeer(
   home: string,
   name: string,
   extra: string[] = [],
+  /** Contents, when the test needs something other than the markdown fixture — a file
+   *  of another kind, say, which akapen opens as a figure rather than as a document. */
+  content?: string,
 ): Promise<{ port: number; stop: () => Promise<void> }> {
   const port = nextPort++;
   const sandbox = mkdtempSync(join(tmpdir(), 'akapen-e2e-peer-'));
   const file = join(sandbox, name);
-  writeFileSync(file, readFileSync(FIXTURE_MD, 'utf8'));
+  writeFileSync(file, content ?? readFileSync(FIXTURE_MD, 'utf8'));
 
   const proc: ChildProcess = spawn(
     'bun',

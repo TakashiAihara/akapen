@@ -131,3 +131,50 @@ describe('fence info strings', () => {
     );
   });
 });
+
+describe('a document that is not markdown', () => {
+  const SCHEMA = ['Table users {', '  id integer [pk]', '  note varchar [note: "__pending__"]', '}'].join(
+    '\n',
+  );
+
+  it('opens a .dbml file as one figure over the whole file', () => {
+    const built = buildDoc('/tmp/schema.dbml', SCHEMA);
+    expect(built.blocks).toHaveLength(1);
+    expect(built.blocks[0]?.kind).toBe('dbml');
+    // Lines 1..N of the file as it is on disk. Built over a synthesised fence instead,
+    // the opening fence would take line 1 and every comment would be off by one against
+    // the file its writer is editing.
+    expect([built.blocks[0]?.startLine, built.blocks[0]?.endLine]).toEqual([1, 4]);
+    expect(built.lineCount).toBe(4);
+  });
+
+  it('does not let markdown rewrite the source on the way to the screen', () => {
+    // `__pending__` in a note is the document's text, not emphasis. Read as markdown it
+    // arrives as <strong>pending</strong>, and what is under review is no longer what is
+    // on disk.
+    const html = buildDoc('/tmp/schema.dbml', SCHEMA).blocks[0]?.html ?? '';
+    expect(html).not.toContain('<strong>');
+    expect(html).toContain('__pending__');
+  });
+
+  it.each([['/tmp/schema.DBML'], ['/tmp/a.b.dbml']])('recognises %s by its extension', (path) => {
+    expect(buildDoc(path, SCHEMA).blocks.map((b) => b.kind)).toEqual(['dbml']);
+  });
+
+  it.each([['/tmp/note.md'], ['/tmp/schema.dbml.md'], ['/tmp/dbml'], ['/tmp/schema.dbmlx']])(
+    'still reads %s as markdown',
+    (path) => {
+      // The extension is the whole of it. A name that merely contains the letters is a
+      // markdown file, and reading it as a schema would show one unaddressable figure
+      // where a document belongs.
+      expect(buildDoc(path, SCHEMA).blocks.every((b) => b.kind !== 'dbml')).toBe(true);
+    },
+  );
+
+  it.each([['/tmp/constructor'], ['/tmp/x.constructor'], ['/tmp/x.__proto__']])(
+    'does not find %s on Object.prototype',
+    (path) => {
+      expect(buildDoc(path, SCHEMA).blocks.every((b) => b.kind !== 'dbml')).toBe(true);
+    },
+  );
+});

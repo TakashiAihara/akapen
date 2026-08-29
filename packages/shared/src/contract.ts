@@ -31,6 +31,7 @@ export const BlockKindSchema = v.picklist([
   'code',
   'mermaid',
   'dot',
+  'dbml',
   'hr',
 ]);
 export type BlockKind = v.InferOutput<typeof BlockKindSchema>;

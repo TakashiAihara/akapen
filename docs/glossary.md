@@ -23,6 +23,7 @@ apart. Use the qualified form; the bare word is the one that causes the confusio
 | draft | a comment being written and not yet sent (`.bubble.draft`, `startDraft`) | a GitHub pull request that is not ready for review | Inside the product, a draft is an unsent comment. The other belongs to how the repository is worked on, not to akapen. |
 | document / file / snapshot | the live file — what is on disk right now | the snapshot — the round's frozen copy (`rounds/NNN/content.md`) | What is on screen is the snapshot, never the live file. `Doc` is the parsed form of the snapshot (`/api/doc`); `#doc` is the element it is rendered into. |
 | doc / document | `Doc` — the parsed snapshot handed to the browser (`/api/doc`) | the document — the rendered snapshot on screen (`#doc`), and, loosely, the markdown being reviewed | `Doc` is the payload, the document is what is read. Do not shorten "document" to "doc" in prose. |
+| document / markdown | a file akapen is reviewing, of whichever kind | markdown specifically, which is most of them but no longer all | Say "markdown document" or "dbml document" where the kind matters. Bare "document" is whichever one is open. |
 | review | `Review` — the contents of `review.json`: round metadata and the current round number | the activity of reading and leaving feedback | Say "review.json" or "the review store" (`~/.akapen/reviews/`) for the data. |
 | inline review | feedback attached to a place in the document, which is what akapen is for | comments written inline into the markdown file, which akapen never does | The comments are inline with respect to the reading, not to the file. The file is never touched. |
 
@@ -74,6 +75,16 @@ Row states, which stack:
 | range | a pair of line numbers a comment covers. One row is a range whose ends are its block's | `startLine`/`endLine` on `Comment` |
 | anchor text | the snapshot text a comment was written against. This, not the line number, is what carries the location across rounds | `Comment.anchor` |
 | line mapping | turning the markdown source into blocks so that what is rendered can be pointed at by line | `packages/core/src/blocks.ts` |
+
+### Kinds of document
+
+| Term | What it is | Where it exists |
+|---|---|---|
+| document kind | what akapen reads a file as, decided by its extension. Only the choice of parser reads it; nothing downstream knows a document has a kind | `DOCUMENT_FIGURES` in `blocks.ts` |
+| dbml document | a `.dbml` file, opened as one figure over the whole file. It never reaches markdown-it, because markdown rewrites what it finds and the document under review would stop being the document on disk | `buildDoc`, `figureDoc` |
+| figure | a block drawn as a picture instead of shown as lines: a `mermaid` or `dot` fence, or a whole dbml document | `Block.kind` of `mermaid`, `dot` or `dbml` |
+
+A figure is one block, so it takes one comment. Pointing at the line that draws a particular edge is #82.
 
 ## Rounds and storage
 

@@ -71,6 +71,18 @@ The examples below use `bun run packages/cli/src/cli.ts`; read that as `akapen` 
 | `--token <s>` | use this token instead of the stored one (`AKAPEN_TOKEN` does the same without appearing in `ps`) |
 | `--no-auth` | serve with no token at all, for running behind something that authenticates |
 
+### A schema, not a document
+
+```sh
+akapen schema.dbml
+```
+
+A `.dbml` file is opened as the diagram it describes, drawn where it lives rather than pasted into a scratch document first.
+
+It is one figure over the whole file, so it takes one comment — the whole schema, not the line that declares a particular table. That is the honest limit of the first version of this; #82 is what makes it a line.
+
+It does not go through markdown. That is the point rather than an omission: markdown rewrites what it finds, so a note reading `__pending__` would arrive on screen as **pending**, and what you were reviewing would no longer be what is on disk. A schema that fails to parse shows the parser's message and keeps its source, because a schema is at its most worth reviewing when it does not compile.
+
 Use `--host 0.0.0.0` to run it on a remote machine and read it from a local browser. A wildcard bind is not an address anything connects to, so what gets printed is the machine's own addresses — the section below says which, and how to pin one. An address, not a name: akapen serves literal addresses and `localhost` only, because a name is the one thing another machine on the network can claim and rebind.
 
 ### Authentication
@@ -284,6 +296,7 @@ There are two outputs, since `bun build --compile` embeds them by name.
 | `packages/web/dist/app.js` | 23KB |
 | `packages/web/dist/mermaid.js` | 3.4MB, **fetched only when the document has a diagram** |
 | `packages/web/dist/graphviz.js` | 0.8MB, likewise |
+| `packages/web/dist/dbml.js` | 97KB, fetched only when a dbml document is open |
 
 Bundling mermaid into `app.js` makes that 3.3MB, parsed on every load even with no diagram. `--splitting` emits a hundred-odd hash-named chunks, which does not fit embedding by name. Separate entries satisfy both.
 
@@ -299,6 +312,8 @@ Two fences are drawn rather than shown as code.
 The second row is a difference worth knowing before you rely on it. GitHub renders four things from a fence — mermaid, geoJSON, topoJSON and ASCII STL — and DOT is not among them, though Linguist knows the language well enough to colour it. So a document with a `dot` fence is a figure here and a code block there.
 
 That is accepted rather than overlooked. DOT is what tooling already emits (`go mod graph`, `cargo tree`, profilers, ORM schema dumps), and mermaid's layout gives up on a graph of forty nodes long before graphviz does — neither of which GitHub's list changes. But a document written to be read in both places should stay on `mermaid`.
+
+`dbml.js` is a parser, not an engine: it turns DBML into DOT and hands it to the graphviz above. It is 97KB rather than 1.37MB because the DBML renderer requires `@viz-js/viz` at module scope — reaching it only for SVG, which this entry never asks for — and `packages/web/build.ts` resolves that import to a stub so a second copy of graphviz stays out. A test holds the size, since nothing about the product would look any different with the engine in there twice.
 
 Neither engine is bundled into `app.js`: a document with no figure in it fetches neither, and nothing is fetched from the network — the wasm is inlined into `graphviz.js` rather than loaded at run time, which is what keeps a private document private.
 
