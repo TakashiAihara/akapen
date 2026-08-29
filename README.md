@@ -376,7 +376,7 @@ After `akapen token --rotate` the existing cookies are void, so a bare url answe
 
 ### The outline
 
-The headings, as the tree they already describe, from a panel in the header. Everything it needs is on the blocks the document is drawn from: a heading is a block, its level is one of its flags, and where to go is its first line. Nothing is added to the payload and nothing is parsed twice.
+The headings are shown as the tree they already describe, from a panel in the header. Everything it needs is on the blocks the document is drawn from: a heading is a block, its level is one of its flags, and where to go is its first line. Nothing is added to the payload and nothing is parsed twice.
 
 It points at a line rather than at an anchor derived from the heading text, so two sections called `Open` are two rows that go to two places. Deriving an id from the text is what makes those collide everywhere else.
 
