@@ -25,6 +25,10 @@
   --ak-accent: #0969da;
   --ak-accent-subtle: #ddf4ff;
   --ak-warn: #bc4c00;
+  /* How far below the top of the window a jumped-to heading lands, clear of the sticky
+     header. The outline reads this too: anything smaller there and the heading just
+     jumped to would not be the one the panel calls current on the way back in */
+  --ak-jump-offset: 52px;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -175,6 +179,87 @@ a.peer-file:hover { text-decoration: underline; }
 /* Listed, but with no link: it answers here and nowhere the reader's browser can reach */
 .peer-unreachable { color: var(--ak-fg-muted); font-style: italic; }
 
+
+/* The outline. Same pill and same dropdown as the switcher, because they are the same kind of control */
+.outline-toggle {
+  font: inherit;
+  font-size: 12px;
+  flex: none;
+  white-space: nowrap;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--ak-border);
+  background: var(--ak-bg);
+  color: var(--ak-fg-muted);
+  cursor: pointer;
+}
+.outline-toggle[hidden] { display: none; }
+.outline-toggle:hover { border-color: var(--ak-accent); color: var(--ak-accent); }
+.outline-toggle[aria-expanded='true'] { border-color: var(--ak-accent); color: var(--ak-accent); }
+
+.outline {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 11;
+  /* A long document has more headings than fit above the fold, so the list scrolls rather
+     than the page. The panel itself does not: the depth control has to stay reachable, and
+     the control that reveals the deeper headings is the last thing that should need
+     scrolling past a hundred of them to find */
+  display: flex;
+  flex-direction: column;
+  max-height: 60vh;
+  padding: 8px 16px 10px;
+  background: var(--ak-bg);
+  border-bottom: 1px solid var(--ak-border);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.12);
+}
+.outline[hidden] { display: none; }
+.outline-list { display: flex; flex-direction: column; min-height: 0; overflow-y: auto; }
+.outline-empty { margin: 2px 0 6px; color: var(--ak-fg-muted); font-size: 12px; }
+.outline-empty[hidden] { display: none; }
+
+.outline-entry {
+  font: inherit;
+  text-align: left;
+  border: 0;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  padding: 3px 6px;
+  border-radius: 4px;
+  /* Indented by how many headings it sits under, so a document that skips a level does
+     not leave a step of empty space standing for a heading nobody wrote */
+  padding-left: calc(6px + var(--depth) * 16px);
+  /* One row per heading whatever the heading's length: a wrapped row breaks the indent as a column */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* h1 and h2 carry the shape of the document; below that is detail */
+.outline-entry[data-level='1'] { font-weight: 600; }
+.outline-entry[data-level='2'] { font-weight: 500; }
+.outline-entry[data-level='4'],
+.outline-entry[data-level='5'],
+.outline-entry[data-level='6'] { color: var(--ak-fg-muted); }
+.outline-entry:hover { background: var(--ak-bg-subtle); color: var(--ak-accent); }
+/* Where the reader is now, worked out when the panel opens */
+.outline-entry.current { color: var(--ak-accent); box-shadow: inset 2px 0 0 var(--ak-accent); }
+
+.outline-depth {
+  display: block;
+  flex: none;
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px solid var(--ak-border);
+  color: var(--ak-fg-muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+/* A jump lands the heading below the sticky header instead of underneath it */
+.row.heading { scroll-margin-top: var(--ak-jump-offset); }
 
 /* Earlier unresolved comments. No anchor in this round, so they stack in normal flow */
 .rail-carried { margin-top: var(--ak-bubble-gap); border-top: 1px dashed var(--ak-border); padding-top: 10px; }

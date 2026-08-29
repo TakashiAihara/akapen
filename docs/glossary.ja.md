@@ -45,6 +45,8 @@ akapen が自分の部品を呼ぶときの言葉と、そのうち二つの意�
 | ドラフト吹き出し | 書きかけのコメント | `.bubble.draft` |
 | 返信 | コメントに付くメッセージ。1 段だけで、返信に返信はできない | `Reply`、`.reply` |
 | トップバー | 画面上端のバー。名前・ファイルパス・ラウンドバッジ・件数・操作 | `.topbar` |
+| 目次 (outline) | 文書の見出しをツリーにしたもの。トップバーのパネルから開く。レベル・文字列・飛び先の行を持つ | `buildOutline`、`#outline`、`#outlineToggle`、`outline.toggle` キー |
+| 現在の節 (current section) | いま読んでいる見出しに当たる目次の行。パネルを開いた時点で求め、閉じている間は追わない | `.outline-entry.current`、`markCurrent` |
 | タブタイトル | ブラウザのタブに出る名前。文書の最初のトップレベル見出し（`#` または setext）、無ければファイル名 | `document.title`、`pageTitle` |
 | バナー | スナップショット以降に実ファイルが変わったことを告げる行 | `#banner`、`ChangedState` |
 | 履歴バー | 過去ラウンドを見ていることを告げる行。文書に対しては読み取り専用 | `#historyBar` |

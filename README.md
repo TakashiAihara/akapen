@@ -234,6 +234,7 @@ While skimming you are scrolling, so a hover-based path is needed. While writing
 | `Esc` | cancel (switcher, then draft, then rail, then selection) | `comment.cancel` |
 | `l` | toggle line numbers | `lines.toggle` |
 | `o` | the other akapen on this host | `instances.toggle` |
+| `t` | the outline | `outline.toggle` |
 
 The assignment is provisional and will be revisited as a whole. It is defined in one place: `packages/web/src/keys.ts`.
 
@@ -372,6 +373,18 @@ Pathname expansion, `kill` and `read` are all builtins, so that loop forks nothi
 The url has no token on it. It is the one to come back to, and coming back is what the cookie already covers; a secret printed on every redraw would end up in the scrollback of everything else that terminal did. Recorded at startup it is a guess at which of this machine's addresses you will use, and a login corrects it: a cookie is scoped to scheme, host and port together, so a wrong guess is exactly one whose cookie is not sent — which forces the login that rewrites it.
 
 After `akapen token --rotate` the existing cookies are void, so a bare url answers 401 until you open the startup line once more. That is what rotating is for.
+
+### The outline
+
+The headings are shown as the tree they already describe, from a panel in the header. Everything it needs is on the blocks the document is drawn from: a heading is a block, its level is one of its flags, and where to go is its first line. Nothing is added to the payload and nothing is parsed twice.
+
+It points at a line rather than at an anchor derived from the heading text, so two sections called `Open` are two rows that go to two places. Deriving an id from the text is what makes those collide everywhere else.
+
+A heading inside a blockquote is left out: a quote is someone else's document copied in, so its sections are not this document's. One written inside a list item is left out too, and for a sharper reason — `- # Buried` is a heading to CommonMark, and taking it would make it a root with every real section after it hanging underneath, so the outline would be describing a structure the document does not have.
+
+It goes down to `h3`, and `down to h6` at the foot of the panel opens the rest. A note whose headings are all deeper than that says so rather than showing an empty panel. A skipped level indents by one step and not by two: `# One` followed by `### Three` has no `## Two` for the space to stand for.
+
+A panel and not a column of its own, because the columns are meant to be source, document and comments left to right ([#148](https://github.com/TakashiAihara/akapen/issues/148)). What a column gives away for free is where you are, so the panel works that out the moment it opens — the last heading at or above the line a jump lands on. That distance is written once, in `--ak-jump-offset`, and both the jump and the panel read it: any shorter on one side and the heading just jumped to would not be the one the panel calls current on the way back in.
 
 ### What the tab is called
 
