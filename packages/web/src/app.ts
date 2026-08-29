@@ -84,6 +84,7 @@ let draft: Draft | null = null;
 let active: string | null = null; // the selected bubble (a comment id, or 'draft')
 let mermaidLib: MermaidLib | null = null;
 let renderDot: ((source: string) => Promise<string>) | null = null;
+let dbmlToDot: ((source: string) => Promise<string>) | null = null;
 /**
  * The round the server is on, as last heard — from a payload or from the stream.
  *
@@ -892,30 +893,39 @@ function render() {
 }
 
 /**
- * Draw every graphviz figure that has not been drawn yet.
+ * A build-output entry, fetched the first time something on screen needs it.
+ *
+ * The URL is assembled at run time so the bundler leaves it alone, which is what keeps
+ * a document with no figure in it from paying for an engine it never calls.
+ */
+async function loadEntry<T>(url: string): Promise<T> {
+  return ((await import(/* @vite-ignore */ url)) as { default: T }).default;
+}
+
+/**
+ * Draw every figure of one notation that has not been drawn yet.
+ *
+ * `toDot` is the only part that differs between them: a dot fence already is DOT, and a
+ * DBML document has to be turned into it first. Everything after that — the engine, the
+ * sanitiser, and what a failure leaves on screen — is the same, and stays one path.
  *
  * A failure leaves the source on screen with the message above it. Blanking the block
- * would take away the thing a comment about a broken graph has to point at, and a graph
- * is at its most worth reviewing when it does not compile.
+ * would take away the thing a comment about a broken figure has to point at, and a
+ * figure is at its most worth reviewing when it does not compile.
  */
-async function renderGraphviz() {
-  const pending = docEl.querySelectorAll<HTMLPreElement>('pre.graphviz:not(.figure-claimed)');
+async function drawFigures(selector: string, toDot?: (source: string) => Promise<string>): Promise<void> {
+  const pending = docEl.querySelectorAll<HTMLPreElement>(`${selector}:not(.figure-claimed)`);
   if (!pending.length) return;
   // Claimed before the first await. This runs again on every render, and laying out a
   // graph takes long enough for a second pass to start while the first is still waiting
   // — both would then draw the same figure, and the loser would be holding a node that
   // is no longer in the document, where replaceWith does nothing and says nothing.
   for (const pre of pending) pre.classList.add('figure-claimed');
-  if (!renderDot) {
-    // Same shape as mermaid below: build output, assembled at runtime so the bundler
-    // leaves it alone, never fetched by a document with no figure in it.
-    const url = '/graphviz.js';
-    const mod = (await import(/* @vite-ignore */ url)) as { default: (source: string) => Promise<string> };
-    renderDot = mod.default;
-  }
+  renderDot ??= await loadEntry<(source: string) => Promise<string>>('/graphviz.js');
   for (const pre of pending) {
     try {
-      const svg = sanitizeSvg(await renderDot(pre.textContent ?? ''));
+      const source = pre.textContent ?? '';
+      const svg = sanitizeSvg(await renderDot(toDot ? await toDot(source) : source));
       if (!svg) throw new Error('graphviz returned something that is not an SVG');
       pre.replaceWith(svg);
     } catch (err) {
@@ -926,6 +936,19 @@ async function renderGraphviz() {
     }
   }
   layoutRail(); // drawing changes the document height, so always realign
+}
+
+/** Both notations graphviz lays out: dot fences, and a DBML document opened on its own. */
+async function renderGraphviz(): Promise<void> {
+  await drawFigures('pre.graphviz');
+  // The query is what keeps a document with no DBML in it from fetching the parser.
+  // Loading before the call, rather than inside it, is a separate point: `drawFigures`
+  // claims what it is given before its first await, so a parser that fails to load there
+  // would leave every figure claimed and undrawn with nothing said about why.
+  if (docEl.querySelector('pre.dbml:not(.figure-claimed)')) {
+    dbmlToDot ??= await loadEntry<(source: string) => Promise<string>>('/dbml.js');
+    await drawFigures('pre.dbml', dbmlToDot);
+  }
 }
 
 async function renderMermaid() {

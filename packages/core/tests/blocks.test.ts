@@ -131,3 +131,66 @@ describe('fence info strings', () => {
     );
   });
 });
+
+describe('a document that is not markdown', () => {
+  const SCHEMA = ['Table users {', '  id integer [pk]', '  note varchar [note: "__pending__"]', '}'].join(
+    '\n',
+  );
+
+  it('opens a .dbml file as one figure over the whole file', () => {
+    const built = buildDoc('/tmp/schema.dbml', SCHEMA);
+    expect(built.blocks).toHaveLength(1);
+    expect(built.blocks[0]?.kind).toBe('dbml');
+    // Lines 1..N of the file as it is on disk. Built over a synthesised fence instead,
+    // the opening fence would take line 1 and every comment would be off by one against
+    // the file its writer is editing.
+    expect([built.blocks[0]?.startLine, built.blocks[0]?.endLine]).toEqual([1, 4]);
+    expect(built.lineCount).toBe(4);
+  });
+
+  it('does not let markdown rewrite the source on the way to the screen', () => {
+    // `__pending__` in a note is the document's text, not emphasis. Read as markdown it
+    // arrives as <strong>pending</strong>, and what is under review is no longer what is
+    // on disk.
+    const html = buildDoc('/tmp/schema.dbml', SCHEMA).blocks[0]?.html ?? '';
+    expect(html).not.toContain('<strong>');
+    expect(html).toContain('__pending__');
+  });
+
+  it.each([['/tmp/schema.DBML'], ['/tmp/a.b.dbml']])('recognises %s by its extension', (path) => {
+    expect(buildDoc(path, SCHEMA).blocks.map((b) => b.kind)).toEqual(['dbml']);
+  });
+
+  /**
+   * What markdown makes of the same text, which is what every path below has to produce.
+   *
+   * `every(kind !== 'dbml')` was the assertion here first, and it pinned nothing: a
+   * lookup that finds something without a `kind` produces one block whose kind is
+   * `undefined`, and `undefined !== 'dbml'` passes while the document has been replaced
+   * by a single corrupted figure. Comparing against markdown's own output is what makes
+   * these fail when the branch is wrong.
+   */
+  const asMarkdown = buildDoc('/tmp/note.md', SCHEMA).blocks.map((b) => b.kind);
+
+  it.each([['/tmp/schema.dbml.md'], ['/tmp/dbml'], ['/tmp/schema.dbmlx'], ['/tmp/schema.dbm']])(
+    'still reads %s as markdown',
+    (path) => {
+      // The extension is the whole of it. A name that merely contains the letters is a
+      // markdown file, and reading it as a schema would show one unaddressable figure
+      // where a document belongs.
+      expect(buildDoc(path, SCHEMA).blocks.map((b) => b.kind)).toEqual(asMarkdown);
+    },
+  );
+
+  it.each([['/tmp/constructor'], ['/tmp/x.constructor'], ['/tmp/x.__proto__'], ['/tmp/x.toString']])(
+    'reads %s as markdown, whatever the name resembles',
+    (path) => {
+      // Named for what it checks. It was written as a prototype-pollution test, by
+      // analogy with the fence table where ```constructor really does find something on
+      // Object.prototype — and then a negative control showed it pinning nothing either
+      // way, because `extname` returns '' or '.something' and no prototype key has that
+      // shape. The paths are worth keeping; the claim was not.
+      expect(buildDoc(path, SCHEMA).blocks.map((b) => b.kind)).toEqual(asMarkdown);
+    },
+  );
+});

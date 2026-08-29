@@ -1,5 +1,6 @@
 // markdown-it 15 ships its own types. The old @types/markdown-it subpath
 // ('markdown-it/lib/token.mjs') does not resolve, so take Token from the package.
+import { extname } from 'node:path';
 import MarkdownIt, { type Token } from 'markdown-it';
 import type { Block, BlockKind, Doc } from '@akapen/shared';
 import hljs from 'highlight.js';
@@ -410,7 +411,62 @@ function walk(tokens: Token[], ctx: Ctx): void {
   }
 }
 
+/**
+ * Extensions opened as a figure rather than read as markdown.
+ *
+ * A file of one of these kinds is not markdown and must not be parsed as if it were:
+ * markdown-it rewrites what it finds, so `__pending__` in a DBML note reaches the screen
+ * as bold text and the document under review is no longer the document on disk.
+ *
+ * Null-prototype to match `FIGURE_FENCES`, though not for the same reason. There the
+ * key is a fence's info string, so ```constructor really does find something on
+ * Object.prototype. Here the key comes from `extname`, which returns either an empty
+ * string or one beginning with a dot, and no prototype key looks like that — measured,
+ * after a test written to pin it turned out to pin nothing. It stays because a lookup
+ * keyed by a name somebody else chose should not depend on that argument holding.
+ */
+const DOCUMENT_FIGURES: Record<string, { kind: BlockKind; cls: string }> = Object.assign(
+  Object.create(null) as Record<string, { kind: BlockKind; cls: string }>,
+  {
+    '.dbml': { kind: 'dbml', cls: 'dbml' },
+  },
+);
+
+/**
+ * A whole file as one figure.
+ *
+ * One block over lines 1..N of the source as it is on disk. Not a synthesised fence
+ * handed to `buildDoc`: an opening fence would take line 1 and every line of the file
+ * would then report one higher than it sits, so a comment's anchor would be off by one
+ * against the file the writer is editing.
+ *
+ * One block means one comment, on the figure rather than on the line that draws a
+ * particular table. That is what #82 changes.
+ */
+function figureDoc(path: string, source: string, figure: { kind: BlockKind; cls: string }): Doc {
+  const lines = source.split('\n');
+  return {
+    path,
+    lineCount: lines.length,
+    blocks: [
+      {
+        startLine: 1,
+        endLine: Math.max(lines.length, 1),
+        kind: figure.kind,
+        html: `<div class="${figure.cls}-block"><pre class="${figure.cls}">${esc(source.replace(/\n$/, ''))}</pre></div>`,
+        text: source,
+        depth: 0,
+        quoted: false,
+        flags: [],
+      },
+    ],
+  };
+}
+
 export function buildDoc(path: string, source: string): Doc {
+  const figure = DOCUMENT_FIGURES[extname(path).toLowerCase()];
+  if (figure) return figureDoc(path, source, figure);
+
   const lines = source.split('\n');
   const fm = frontmatterRange(lines);
   const out: Block[] = [];

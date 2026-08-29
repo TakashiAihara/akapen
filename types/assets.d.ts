@@ -30,6 +30,11 @@ declare module '@akapen/web/dist/graphviz.js' {
   export default path;
 }
 
+declare module '@akapen/web/dist/dbml.js' {
+  const path: string;
+  export default path;
+}
+
 declare module '@akapen/web/style.css' {
   const path: string;
   export default path;

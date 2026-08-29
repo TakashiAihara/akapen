@@ -331,8 +331,8 @@ body.rail-overlay .marker { display: inline-flex; align-items: center; justify-c
 .row:has(.table-separator) { display: none; }
 
 .mermaid-block { border: 1px solid var(--ak-border); border-radius: 8px; padding: 12px; margin: 6px 0; text-align: center; }
-.graphviz-block { border: 1px solid var(--ak-border); border-radius: 8px; padding: 12px; margin: 6px 0; text-align: center; overflow-x: auto; }
-.graphviz-block svg { max-width: 100%; height: auto; }
+:is(.graphviz-block, .dbml-block) { border: 1px solid var(--ak-border); border-radius: 8px; padding: 12px; margin: 6px 0; text-align: center; overflow-x: auto; }
+:is(.graphviz-block, .dbml-block) svg { max-width: 100%; height: auto; }
 .figure-error { color: var(--ak-fg-muted); font-family: var(--ak-mono, monospace); font-size: 0.85em; margin: 0 0 8px; text-align: left; white-space: pre-wrap; }
 
 /*
@@ -353,10 +353,10 @@ body.rail-overlay .marker { display: inline-flex; align-items: center; justify-c
  * defaults, because at this level it is not distinguishable from them.
  */
 @media (prefers-color-scheme: dark) {
-  .graphviz-block svg polygon[fill="white"], .graphviz-block svg polygon[fill="#ffffff"] { fill: var(--ak-bg); }
-  .graphviz-block svg [stroke="black"], .graphviz-block svg [stroke="#000000"] { stroke: var(--ak-fg); }
-  .graphviz-block svg [fill="black"], .graphviz-block svg [fill="#000000"] { fill: var(--ak-fg); }
-  .graphviz-block svg text:not([fill]) { fill: var(--ak-fg); }
+  :is(.graphviz-block, .dbml-block) svg :is(polygon[fill="white"], polygon[fill="#ffffff"]) { fill: var(--ak-bg); }
+  :is(.graphviz-block, .dbml-block) svg :is([stroke="black"], [stroke="#000000"]) { stroke: var(--ak-fg); }
+  :is(.graphviz-block, .dbml-block) svg :is([fill="black"], [fill="#000000"]) { fill: var(--ak-fg); }
+  :is(.graphviz-block, .dbml-block) svg text:not([fill]) { fill: var(--ak-fg); }
 }
 
 .row.quoted .body { border-left: 3px solid var(--ak-border); padding-left: 12px; color: var(--ak-fg-muted); }

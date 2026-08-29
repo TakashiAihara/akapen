@@ -1,7 +1,7 @@
 /**
  * The static files we serve.
  *
- * app.js, mermaid.js and graphviz.js are build output (`bun run build:web` → web/dist). The
+ * app.js and the engine entries are build output (`bun run build:web` → web/dist). The
  * browser side is TypeScript too, so the raw web/*.ts cannot be served.
  *
  * Importing with `with { type: 'file' }` embeds the contents into the binary at
@@ -18,6 +18,7 @@ import styleCss from '@akapen/web/style.css' with { type: 'file' };
 import appJs from '@akapen/web/dist/app.js' with { type: 'file' };
 import mermaidJs from '@akapen/web/dist/mermaid.js' with { type: 'file' };
 import graphvizJs from '@akapen/web/dist/graphviz.js' with { type: 'file' };
+import dbmlJs from '@akapen/web/dist/dbml.js' with { type: 'file' };
 
 /**
  * URL path → a path readable at runtime.
@@ -36,6 +37,7 @@ export const ASSETS: Record<string, string> = Object.assign(Object.create(null) 
   'app.js': appJs,
   'mermaid.js': mermaidJs,
   'graphviz.js': graphvizJs,
+  'dbml.js': dbmlJs,
 });
 
 export const MIME: Record<string, string> = {
