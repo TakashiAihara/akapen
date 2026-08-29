@@ -234,7 +234,7 @@ Order to be decided once the list is complete.
 
 Kept so the same argument is not had twice.
 
-- A markdown source pane on the left (three panes) — withdrawn: unnecessary unless editing is the premise. Line numbers stay off the document and toggle with `l`.
+- A markdown source pane on the left (three panes) — withdrawn: unnecessary unless editing is the premise. Line numbers stay off the document and toggle with `l`. Overtaken by #76, which puts a source pane on the left to show the diff against the previous round — not because editing became the premise, but because reading what changed needs the source beside the preview. The withdrawal stays written down so the reason it stopped applying is on the record next to it.
 - Centralise every document on one shared host and review there — rejected because a review cannot work that way (see "Handling multiple hosts"). Centralising purely for reading is technically possible, but the working tree is invisible, so reading on each host is more accurate.
 - Start a new agent for every comment — fixing without context produces patchwork. An existing session watches instead (W-8).
 - Strengthen re-anchoring (similarity matching, position relative to headings) — made unnecessary by adopting rounds.
