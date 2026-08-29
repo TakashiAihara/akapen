@@ -1008,7 +1008,7 @@ function renderRoundControls() {
  * The document's headings, hanging from the header.
  *
  * A column of its own would be the better place to read one from, and there is no room:
- * the columns are meant to be source, document and comments, left to right (#148). What
+ * the columns are meant to be source, document and comments, left to right (#76). What
  * a permanently visible column gives away for free is where you are, so a panel has to
  * answer that the moment it opens — which is what markCurrent is for.
  *
