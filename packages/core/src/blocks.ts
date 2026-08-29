@@ -14,6 +14,12 @@ import hljs from 'highlight.js';
  *
  * Leaving a hole for non-markdown to slip into a markdown reader buys less than
  * closing it.
+ *
+ * A second thing rests on this now. `plainText` in packages/web/src/inline-text.ts
+ * takes the markup off a heading with a regex that ends a tag at the first `>`,
+ * without tracking quotes. It is sound only because markdown-it never writes a raw
+ * `>` inside an attribute — it emits `&gt;`, or `%3E` in a URL. Turn html on and one
+ * gets through, and the tab title and the outline row both stop at it mid-heading.
  */
 const md = new MarkdownIt({ html: false, linkify: true, typographer: false });
 

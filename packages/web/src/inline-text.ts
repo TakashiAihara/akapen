@@ -8,6 +8,12 @@
  *
  * DOM-free on purpose, so what the string ends up being can be tested without a browser.
  * The whole point is the string.
+ *
+ * Tags are ended at the first `>`, quotes untracked. That holds because every tag
+ * reaching here was written by markdown-it, configured `html: false` in
+ * packages/core/src/blocks.ts, which puts `&gt;` or `%3E` in an attribute rather than
+ * a raw `>`. The two settle together: reopen that decision and this needs a real
+ * scanner first.
  */
 
 /**
