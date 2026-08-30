@@ -16,6 +16,13 @@ pre-commit:
 
 pre-push:
   jobs:
+    # Before the checks, not as one of them. packages/server/src/assets.ts imports
+    # @akapen/web/dist/app.js, so without this every test that starts a server fails
+    # to resolve the module — 91 failures that say nothing about the change being
+    # pushed. CI builds first for the same reason; this is the local half of that.
+    - name: build:web
+      run: bun run build:web
+
     - name: typecheck
       run: bun run typecheck
 
