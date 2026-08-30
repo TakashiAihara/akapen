@@ -1,9 +1,9 @@
-import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, test } from 'vitest';
 
 /**
- * What the pre-push hook is allowed to run, and in what order.
+ * What the pre-push hook runs, in what order, and what a failure stops.
  *
  * `packages/server/src/assets.ts` imports `@akapen/web/dist/app.js`, so on a tree where
  * nothing has built it yet every test that starts a server fails to resolve the module.
@@ -16,63 +16,56 @@ import { describe, expect, test } from 'vitest';
  * type error would take the test results with it. The checks therefore sit in one group,
  * which is a single step of the pipe.
  *
- * Read as YAML rather than by regular expression: the nesting is the thing being checked,
- * and a regex over indentation would pass on a file that nests differently.
+ * The structure comes from `lefthook dump`, which is lefthook parsing its own config, and
+ * not from reading the file. Two reasons. Reading it line by line means comparing
+ * indentation, and a job indented past its sibling then looks the same as a job inside a
+ * group — the one distinction this file exists to make. And a YAML parser would only tell
+ * us what YAML says, while what matters is what lefthook does with it: `dump` is the
+ * merged config, extensions and defaults included, which is the thing that will run.
  */
-const yaml = readFileSync(fileURLToPath(new URL('../../lefthook.yml', import.meta.url)), 'utf8');
+type Job = { name?: string; run?: string; group?: { parallel?: boolean; piped?: boolean; jobs?: Job[] } };
+type Hook = { piped?: boolean; parallel?: boolean; jobs?: Job[] };
 
-/**
- * A minimal reader for the shape this file has: two levels of `- name:` entries, each
- * with `run:` or `group:`. Enough to say what runs and what it sits inside, and small
- * enough not to add a YAML parser nothing else here needs (`tests/repo/toolchain.test.ts`
- * makes the same trade the other way, and says so).
- */
-function prePushJobs(): { name: string; indent: number; kind: 'run' | 'group' }[] {
-  const lines = yaml.split('\n');
-  const start = lines.findIndex((l) => l.startsWith('pre-push:'));
-  expect(start).toBeGreaterThanOrEqual(0);
-  const out: { name: string; indent: number; kind: 'run' | 'group' }[] = [];
-  for (let i = start + 1; i < lines.length; i++) {
-    const line = lines[i]!;
-    if (/^\S/.test(line)) break; // the next top-level key ends the hook
-    const named = /^(\s*)- name:\s*(\S+)/.exec(line);
-    if (!named) continue;
-    const rest = lines.slice(i + 1, i + 4).join('\n');
-    out.push({
-      name: named[2]!,
-      indent: named[1]!.length,
-      kind: /^\s*group:/m.test(rest) ? 'group' : 'run',
-    });
-  }
-  return out;
-}
+const config = JSON.parse(
+  execFileSync('bunx', ['lefthook', 'dump', '-f', 'json'], {
+    cwd: fileURLToPath(new URL('../..', import.meta.url)),
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'ignore'],
+  }),
+) as Record<string, Hook>;
+
+const prePush = config['pre-push'] as Hook;
+const jobs = () => prePush.jobs ?? [];
+const byName = (name: string) => jobs().find((j) => j.name === name);
 
 describe('the pre-push hook', () => {
   test('stops when a step fails, so a build error is not read under its own fallout', () => {
-    const prePush = yaml.slice(yaml.indexOf('pre-push:'));
-    expect(prePush).toMatch(/^\s{2}piped:\s*true$/m);
+    expect(prePush.piped).toBe(true);
   });
 
-  test('builds the web bundle before anything that starts a server', () => {
-    const jobs = prePushJobs();
-    expect(jobs[0]?.name).toBe('build:web');
-    expect(jobs[0]?.indent).toBe(4);
+  test('builds the web bundle first, and builds it rather than merely being called that', () => {
+    // The name is not the assertion: a first job called build:web that ran something else
+    // would leave the tests resolving a module nothing wrote
+    expect(jobs()[0]?.name).toBe('build:web');
+    expect(jobs()[0]?.run).toBe('bun run build:web');
   });
 
   test('keeps the checks in one group, so the pipe does not cut between them', () => {
-    const jobs = prePushJobs();
-    const group = jobs.find((j) => j.kind === 'group');
-    expect(group?.name).toBe('checks');
+    const checks = byName('checks');
+    expect(checks?.group).toBeDefined();
+    expect(checks?.group?.jobs?.map((j) => j.name)).toEqual(['typecheck', 'test']);
+    expect(checks?.group?.jobs?.map((j) => j.run)).toEqual(['bun run typecheck', 'bun run test']);
 
-    // Nested deeper than the top-level jobs: that nesting is what makes them one step
-    const nested = jobs.filter((j) => j.indent > (group?.indent ?? 0)).map((j) => j.name);
-    expect(nested).toEqual(['typecheck', 'test']);
+    // and nowhere else: a check hoisted out of the group is back on the pipe
+    expect(jobs().map((j) => j.name)).toEqual(['build:web', 'checks']);
   });
 
   test('runs the checks against each other in parallel, not as a second pipe', () => {
-    // A piped group would put typecheck and test back on the same boundary this avoids
-    const group = yaml.slice(yaml.indexOf('group:'));
-    expect(group).toMatch(/^\s*parallel:\s*true$/m);
-    expect(group).not.toMatch(/^\s*piped:\s*true$/m);
+    const checks = byName('checks');
+    expect(checks?.group?.parallel).toBe(true);
+    expect(checks?.group?.piped).toBeUndefined();
+    // Nothing here guards `piped` written on the job itself, one level out from the group.
+    // lefthook 2.1.10 drops the key — it is not part of a job — and `dump` never shows it,
+    // so that shape changes nothing and there is nothing to pin. Measured, not assumed.
   });
 });
