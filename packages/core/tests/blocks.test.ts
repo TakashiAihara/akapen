@@ -111,3 +111,32 @@ describe('fence info strings', () => {
     );
   });
 });
+
+/**
+ * `plainText` (packages/web/src/inline-text.ts) ends a tag at the first `>` without
+ * tracking quotes, so a raw one inside an attribute would cut a tab title and an
+ * outline row off mid-heading. Nothing on the browser side checks for that. What
+ * rules it out is `html: false` here, which nothing else was holding in place.
+ */
+describe('attribute values', () => {
+  const CASES = [
+    '# a <span data-x="a>b">c</span> d',
+    '# ![a > b](x.png)',
+    '# [t](https://x.test "a > b")',
+    '# See [it](https://x.test/a>b)',
+    '# a > b',
+  ];
+
+  it.each(CASES)('leaves no raw > inside an attribute of %s', (src) => {
+    const html = buildDoc('t.md', src)
+      .blocks.map((b) => b.html)
+      .join('');
+    const tags = html.match(/<[^>]*>/g) ?? [];
+    expect(tags.length).toBeGreaterThan(0);
+    for (const tag of tags) {
+      // A `>` inside a quoted value ends the match early, leaving the opening quote of
+      // that value without its partner. Counting them is how the truncation is seen.
+      expect((tag.match(/"/g) ?? []).length % 2, `unbalanced quotes in ${tag}`).toBe(0);
+    }
+  });
+});
