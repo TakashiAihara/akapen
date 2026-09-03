@@ -5,39 +5,96 @@
  * - every dimension is a variable, so custom.css can override it
  */
 :root {
-  --ak-content-width: 900px;
-  --ak-rail-width: 320px;
+  --ak-content-width: 996px;
+  --ak-rail-width: 300px;
   --ak-rail-gap: 24px;
   --ak-bubble-gap: 8px;
-  --ak-line-height: 1.65;
-  --ak-block-gap: 2px;
-  /* The hand-off between the gutter and the text. The gutter pays it back in negative
-     margin to reach the text, so the two must move together or the dead gap comes back */
+  --ak-line-height: 1.8;
+  --ak-block-gap: 3px;
   --ak-gutter-gap: 8px;
-  --ak-para-gap: 6px;
+  --ak-para-gap: 7px;
   --ak-font: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", "Hiragino Sans", "Noto Sans JP", sans-serif;
   --ak-mono: "JetBrains Mono", "SFMono-Regular", Menlo, Consolas, monospace;
-  --ak-fg: #1f2328;
-  --ak-fg-muted: #656d76;
-  --ak-bg: #ffffff;
-  --ak-bg-subtle: #f6f8fa;
-  --ak-border: #d0d7de;
-  --ak-accent: #0969da;
-  --ak-accent-subtle: #ddf4ff;
-  --ak-warn: #bc4c00;
+  /*
+   * Headings only. No webfont is added: the binary embeds its assets by name and a CJK
+   * face is megabytes, so what the OS already has is taken and the body sans stands in
+   * where there is none.
+   *
+   * The Linux minchos are named explicitly. Generic `serif` resolves through fontconfig,
+   * which hands back a gothic on a stock install — the heading would quietly look like
+   * body text and nothing would say so.
+   */
+  --ak-serif:
+    ui-serif, Georgia, "Hiragino Mincho ProN", "Hiragino Mincho Pro", "Yu Mincho", YuMincho,
+    "Noto Serif JP", "Source Han Serif JP", "IPAexMincho", "IPAMincho", "IPA明朝", "Songti SC", serif;
+  /* Where the banner comes to rest. Matches the real height of the bar (#93 follows it) */
+  --ak-topbar-h: 41px;
+
+  /* Paper, ink, and the red pen. The accent is only ever what a person wrote */
+  --ak-desk: oklch(88% 0.014 78);
+  --ak-bg: oklch(97.8% 0.009 85);
+  --ak-bg-subtle: oklch(94.5% 0.012 82);
+  --ak-paper-3: oklch(91% 0.014 80);
+  --ak-fg: oklch(22% 0.012 45);
+  --ak-fg-2: oklch(44% 0.012 45);
+  --ak-fg-muted: oklch(48% 0.013 55);
+  --ak-border: oklch(84% 0.014 78);
+  --ak-border-strong: oklch(63% 0.014 70);
+  --ak-accent: oklch(49% 0.195 27);
+  --ak-accent-line: oklch(58% 0.12 28);
+  --ak-accent-subtle: oklch(93% 0.045 30);
+  --ak-bubble-bg: oklch(98.5% 0.012 32);
+  --ak-focus: oklch(48% 0.215 27);
+  --ak-warn: oklch(48% 0.11 62);
+  --ak-sheet-shadow: 0 1px 2px rgba(32,25,22,.10), 0 10px 28px -12px rgba(32,25,22,.22);
 }
 
+/*
+ * Three states, not two: the reader chose light, chose dark, or chose nothing.
+ * Choosing nothing is the default, and there the OS decides — so the default carries no
+ * attribute at all and the media query below simply applies.
+ *
+ * The `:not([data-theme='light'])` guard is what lets a reader's light choice win on a
+ * dark OS. The block after it wins in the other direction.
+ */
 @media (prefers-color-scheme: dark) {
-  :root {
-    --ak-fg: #e6edf3;
-    --ak-fg-muted: #8b949e;
-    --ak-bg: #0d1117;
-    --ak-bg-subtle: #161b22;
-    --ak-border: #30363d;
-    --ak-accent: #4493f8;
-    --ak-accent-subtle: #121d2f;
-    --ak-warn: #db6d28;
+  :root:not([data-theme='light']) {
+    --ak-desk: oklch(10% 0.008 50);
+    --ak-bg: oklch(26% 0.011 55);
+    --ak-bg-subtle: oklch(30% 0.012 55);
+    --ak-paper-3: oklch(34% 0.013 55);
+    --ak-fg: oklch(91% 0.011 80);
+    --ak-fg-2: oklch(72% 0.01 70);
+    --ak-fg-muted: oklch(69% 0.012 60);
+    --ak-border: oklch(40% 0.013 55);
+    --ak-border-strong: oklch(57% 0.013 55);
+    --ak-accent: oklch(68% 0.175 30);
+    --ak-accent-line: oklch(58% 0.13 30);
+    --ak-accent-subtle: oklch(29% 0.055 30);
+    --ak-bubble-bg: oklch(29% 0.02 32);
+    --ak-focus: oklch(72% 0.2 30);
+    --ak-warn: oklch(75% 0.115 70);
+    --ak-sheet-shadow: 0 1px 2px rgba(0,0,0,.55), 0 12px 32px -12px rgba(0,0,0,.75);
   }
+}
+
+:root[data-theme='dark'] {
+  --ak-desk: oklch(10% 0.008 50);
+  --ak-bg: oklch(26% 0.011 55);
+  --ak-bg-subtle: oklch(30% 0.012 55);
+  --ak-paper-3: oklch(34% 0.013 55);
+  --ak-fg: oklch(91% 0.011 80);
+  --ak-fg-2: oklch(72% 0.01 70);
+  --ak-fg-muted: oklch(69% 0.012 60);
+  --ak-border: oklch(40% 0.013 55);
+  --ak-border-strong: oklch(57% 0.013 55);
+  --ak-accent: oklch(68% 0.175 30);
+  --ak-accent-line: oklch(58% 0.13 30);
+  --ak-accent-subtle: oklch(29% 0.055 30);
+  --ak-bubble-bg: oklch(29% 0.02 32);
+  --ak-focus: oklch(72% 0.2 30);
+  --ak-warn: oklch(75% 0.115 70);
+  --ak-sheet-shadow: 0 1px 2px rgba(0,0,0,.55), 0 12px 32px -12px rgba(0,0,0,.75);
 }
 
 * { box-sizing: border-box; }
@@ -47,7 +104,8 @@ body {
   font-family: var(--ak-font);
   line-height: var(--ak-line-height);
   color: var(--ak-fg);
-  background: var(--ak-bg);
+  /* The desk. The paper belongs to .doc */
+  background: var(--ak-desk);
 }
 
 .topbar {
@@ -58,14 +116,37 @@ body {
   align-items: center;
   gap: 12px;
   padding: 8px 16px;
-  background: var(--ak-bg);
-  border-bottom: 1px solid var(--ak-border);
+  /* A surface on the desk, not the paper. Sharing the document's ground hides where the sheet starts */
+  background: var(--ak-bg-subtle);
+  border-bottom: 1px solid var(--ak-border-strong);
   font-size: 13px;
 }
 .brand { font-weight: 700; letter-spacing: 0.02em; }
 .file { font-family: var(--ak-mono); color: var(--ak-fg-muted); }
 .spacer { flex: 1; }
 .toggle { color: var(--ak-fg-muted); user-select: none; }
+/*
+ * auto / light / dark, in that order, returning to auto.
+ *
+ * The label is the state, not an icon: an icon cannot tell "dark because I chose it" from
+ * "dark because the OS is", and that difference is the reason the button exists. It sits
+ * in the bar for now; #163 gives the settings a place of their own.
+ */
+.theme-toggle {
+  font: inherit;
+  font-size: 12px;
+  font-family: var(--ak-mono);
+  flex: none;
+  min-width: 4.5em;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--ak-border-strong);
+  background: var(--ak-bg);
+  color: var(--ak-fg-muted);
+  cursor: pointer;
+}
+.theme-toggle:hover { border-color: var(--ak-accent); color: var(--ak-accent); }
+.theme-toggle:focus-visible { outline: 2px solid var(--ak-focus); outline-offset: 1px; }
 .count { color: var(--ak-fg-muted); }
 .round {
   font-family: var(--ak-mono);
@@ -77,7 +158,7 @@ body {
 
 .banner {
   position: sticky;
-  top: 37px;
+  top: var(--ak-topbar-h);
   z-index: 9;
   display: flex;
   align-items: center;
@@ -102,9 +183,26 @@ body {
   gap: var(--ak-rail-gap);
   justify-content: center;
   align-items: start;
-  padding: 28px 16px 160px 56px; /* the left pad is for the gutter, which sits outside the text */
+  padding: 32px 16px 200px;
 }
-.doc { min-width: 0; }
+
+/*
+ * The sheet. A document on a desk, not text on a background.
+ *
+ * There is no page break: markdown is continuous, and no position to cut it at would mean
+ * anything. One sheet, however long.
+ *
+ * The left padding is the gutter's home. The gutter reaches out of the text with a
+ * negative margin, so without it the + hangs off the edge of the paper.
+ */
+.doc {
+  min-width: 0;
+  background: var(--ak-bg);
+  border: 1px solid var(--ak-border);
+  border-radius: 2px;
+  box-shadow: var(--ak-sheet-shadow);
+  padding: 44px 44px 56px 52px;
+}
 
 .rail { min-width: 0; }
 .rail-anchored { position: relative; }
@@ -177,7 +275,7 @@ a.peer-file:hover { text-decoration: underline; }
 
 
 /* Earlier unresolved comments. No anchor in this round, so they stack in normal flow */
-.rail-carried { margin-top: var(--ak-bubble-gap); border-top: 1px dashed var(--ak-border); padding-top: 10px; }
+.rail-carried { margin-top: var(--ak-bubble-gap); border-top: 1px dashed var(--ak-accent-line); padding-top: 10px; }
 .rail-carried[hidden] { display: none; }
 .rail-carried > h2 { margin: 0 0 6px; font-size: 0.78rem; color: var(--ak-fg-muted); font-weight: 600; }
 .rail-carried .bubble { position: static; width: auto; margin-bottom: var(--ak-bubble-gap); }
@@ -201,18 +299,23 @@ body.viewing-history .add { display: none; }
   padding: 0 0 var(--ak-block-gap) 0;
   scroll-margin-top: 60px;
 }
-.row:hover { background: var(--ak-accent-subtle); }
-.row.selected, .row.in-range { background: var(--ak-accent-subtle); }
+/*
+ * A row's state is shown in the shade of the paper, never in the accent. The accent is
+ * kept for what a person wrote — a commented row, the marker counting those comments, the
+ * + that starts one. Spend it on hover too and it stops meaning anything.
+ */
+.row:hover { background: var(--ak-bg-subtle); }
+.row.selected, .row.in-range { background: var(--ak-paper-3); }
 /* The anchor mark changes neither height nor position: a moving document breaks the reading */
 .row.has-comment { box-shadow: inset 2px 0 0 var(--ak-accent); }
 .row.linked { background: var(--ak-accent-subtle); box-shadow: inset 3px 0 0 var(--ak-accent); }
 /* The row j/k is on. A leading mark distinguishes it from the selection (in-range) */
-.row.focused { background: var(--ak-accent-subtle); }
+.row.focused { background: var(--ak-bg-subtle); }
 .row.focused .gutter::before {
   content: "\25B8";
   position: absolute;
   left: -14px;
-  color: var(--ak-accent);
+  color: var(--ak-fg-muted);
   font-size: 11px;
 }
 .row:focus { outline: none; }
@@ -250,7 +353,7 @@ body.show-lines .lineno { display: inline; }
   border-radius: 4px;
   border: none;
   background: var(--ak-accent);
-  color: #fff;
+  color: var(--ak-bg);
   font-size: 13px;
   line-height: 1;
   cursor: pointer;
@@ -287,13 +390,37 @@ body.rail-overlay .marker { display: inline-flex; align-items: center; justify-c
 
 /* ===== markdown ===== */
 .body p { margin: 0 0 var(--ak-para-gap); }
-.body h1, .body h2, .body h3, .body h4, .body h5, .body h6 { margin: 18px 0 4px; line-height: 1.3; }
-.body h1 { font-size: 1.7rem; border-bottom: 1px solid var(--ak-border); padding-bottom: 6px; }
-.body h2 { font-size: 1.35rem; border-bottom: 1px solid var(--ak-border); padding-bottom: 4px; }
-.body h3 { font-size: 1.15rem; }
+/*
+ * Prose is held to its own measure; tables, code and diagrams keep the full width of the
+ * sheet. On paper a figure may be wider than the column beside it, and a glossary is
+ * mostly figures — narrowing the sheet to suit the prose crushes them.
+ */
+.body p, .li { max-width: 42em; }
+/*
+ * The levels are separated by space, not by rules. The space before a heading is large and
+ * the space after it small, so a heading belongs to what follows it.
+ */
+.body h1, .body h2, .body h3, .body h4, .body h5, .body h6 {
+  font-family: var(--ak-serif);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 1.4;
+}
+/* The title keeps the one rule: it separates the document from the bar above it */
+.body h1 { font-size: 2.05rem; margin: 0 0 4px; border-bottom: 1px solid var(--ak-border); padding-bottom: 12px; }
+.body h2 { font-size: 1.5rem; margin: 42px 0 2px; }
+.body h3 { font-size: 1.2rem; margin: 30px 0 2px; }
+.body h4, .body h5, .body h6 { font-size: 1rem; margin: 22px 0 2px; }
 .row:first-child .body h1, .row:first-child .body h2 { margin-top: 0; }
-.body a { color: var(--ak-accent); text-decoration: none; }
-.body a:hover { text-decoration: underline; }
+/* Ink, not accent. A link in the accent colour reads as something a person wrote */
+.body a {
+  color: var(--ak-fg);
+  text-decoration: underline;
+  text-decoration-color: var(--ak-border-strong);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.18em;
+}
+.body a:hover { text-decoration-color: var(--ak-accent); text-decoration-thickness: 2px; }
 .body code {
   font-family: var(--ak-mono);
   font-size: 0.88em;
@@ -302,7 +429,7 @@ body.rail-overlay .marker { display: inline-flex; align-items: center; justify-c
   border-radius: 4px;
   padding: 1px 5px;
 }
-.body hr { border: none; border-top: 1px solid var(--ak-border); margin: 16px 0; }
+.body hr { border: none; border-top: 1px solid var(--ak-border); margin: 34px 0; }
 
 .li { display: flex; gap: 6px; padding-left: calc(var(--depth, 0) * 22px); }
 .li-marker { flex: 0 0 auto; color: var(--ak-fg-muted); }
@@ -325,14 +452,15 @@ body.rail-overlay .marker { display: inline-flex; align-items: center; justify-c
 .row.code-last .code-line { border-bottom: 1px solid var(--ak-border); border-radius: 0 0 6px 6px; padding-bottom: 6px; }
 
 .split-table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 0.93rem; }
-.split-table td, .split-table th { padding: 5px 10px; border-bottom: 1px solid var(--ak-border); text-align: left; vertical-align: top; }
-.row.table-header .split-table th, .row.table-header .split-table td { font-weight: 600; background: var(--ak-bg-subtle); }
+.split-table td, .split-table th { padding: 7px 10px; border-bottom: 1px solid var(--ak-border); text-align: left; vertical-align: top; }
+/* Carried by a heavier rule under it, not by a filled band */
+.row.table-header .split-table th, .row.table-header .split-table td { font-weight: 700; border-bottom: 2px solid var(--ak-fg-2); }
 .table-separator { height: 0; overflow: hidden; }
 .row:has(.table-separator) { display: none; }
 
 .mermaid-block { border: 1px solid var(--ak-border); border-radius: 8px; padding: 12px; margin: 6px 0; text-align: center; }
 
-.row.quoted .body { border-left: 3px solid var(--ak-border); padding-left: 12px; color: var(--ak-fg-muted); }
+.row.quoted .body { border-left: 2px solid var(--ak-border-strong); padding-left: 14px; color: var(--ak-fg-2); }
 
 /* ===== Frontmatter ===== */
 .row.frontmatter { background: var(--ak-bg-subtle); }
@@ -352,39 +480,48 @@ body.rail-overlay .marker { display: inline-flex; align-items: center; justify-c
   position: absolute;
   left: 0;
   width: 100%;
-  border: 1px solid var(--ak-border);
-  border-radius: 8px;
-  background: var(--ak-bg-subtle);
-  font-size: 0.88rem;
+  /*
+   * A note in the margin, not a card. The frame is on the document; the rail sits on the
+   * desk beside the sheet, so a comment reads as something written next to the page.
+   *
+   * Do not put a border on .rail-anchored. layoutRail measures its border box to place
+   * each bubble, but an absolutely positioned child resolves against the padding box, so
+   * a border there shifts every bubble by its width. Padding is harmless for that reason.
+   */
+  border: none;
+  border-left: 3px solid var(--ak-accent);
+  border-radius: 0;
+  background: none;
+  font-size: 0.86rem;
   transition: top 0.12s ease-out;
 }
 .bubble.resolved { opacity: 0.55; }
-.bubble.active { border-color: var(--ak-accent); box-shadow: 0 0 0 2px var(--ak-accent-subtle); }
+.bubble.active { border-left-width: 4px; background: var(--ak-accent-subtle); }
 .bubble-head {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 10px;
-  border-bottom: 1px solid var(--ak-border);
-  color: var(--ak-fg-muted);
-  font-size: 0.78rem;
+  padding: 2px 10px 0;
+  color: var(--ak-accent);
+  font-weight: 500;
+  font-size: 0.74rem;
 }
 .bubble-head .at { font-family: var(--ak-mono); }
 /* Collapse long bodies: one comment filling the rail hides all the others */
 .bubble-body {
-  padding: 8px 10px;
+  padding: 3px 10px 8px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   max-height: 12em;
   overflow-y: auto;
 }
 .bubble.active .bubble-body, .bubble:focus-within .bubble-body { max-height: none; }
-.bubble:focus-visible, .row:focus-visible { outline: 2px solid var(--ak-accent); outline-offset: 1px; }
+.bubble:focus-visible, .row:focus-visible { outline: 2px solid var(--ak-focus); outline-offset: 1px; }
 .bubble-error { padding: 0 10px 8px; color: var(--ak-warn); font-size: 0.8rem; }
 
 /* The thread under a comment. One level, so there is no depth to indent for. */
-.replies { border-top: 1px solid var(--ak-border); }
-.reply { padding: 6px 10px; border-bottom: 1px solid var(--ak-border); }
+.replies { border-top: 1px dotted var(--ak-accent-line); margin-left: 10px; }
+.reply { padding: 5px 0; }
 .reply .who { font-size: 0.75rem; color: var(--ak-fg-muted); }
 /* Named rather than only coloured: a custom.css that drops the colour must not take
    the distinction with it, and telling a person from an agent is the point of #12. */
@@ -423,7 +560,7 @@ body.rail-overlay .marker { display: inline-flex; align-items: center; justify-c
   display: flex;
 }
 
-.bubble.draft { background: var(--ak-bg); border-color: var(--ak-accent); }
+.bubble.draft { background: var(--ak-bg); border: none; border-left: 4px solid var(--ak-accent); }
 .bubble textarea {
   display: block;
   width: calc(100% - 20px);
@@ -445,16 +582,22 @@ body.rail-overlay .marker { display: inline-flex; align-items: center; justify-c
   font-size: 0.8rem;
   padding: 3px 10px;
   border-radius: 6px;
-  border: 1px solid var(--ak-border);
+  border: 1px solid var(--ak-border-strong);
   background: var(--ak-bg);
   color: var(--ak-fg);
   cursor: pointer;
 }
-.bubble button.primary, .banner button.primary { background: var(--ak-accent); color: #fff; border-color: var(--ak-accent); }
+.bubble button.primary, .banner button.primary { background: var(--ak-accent); color: var(--ak-bg); border-color: var(--ak-accent); }
 
 /* ===== Collapse the rail when width runs out (only markers remain in the document) ===== */
+/* The motion here is spatial — the rail slides, bubbles follow their row. Both simply arrive */
+@media (prefers-reduced-motion: reduce) {
+  .bubble { transition: none; }
+}
+
 @media (max-width: 1199px) {
-  .stage { grid-template-columns: minmax(0, 1fr); padding-left: 56px; }
+  .stage { grid-template-columns: minmax(0, 1fr); padding: 20px 12px 160px; }
+  .doc { padding: 28px 20px 36px 48px; }
   .rail {
     position: fixed;
     top: 0;
@@ -465,8 +608,9 @@ body.rail-overlay .marker { display: inline-flex; align-items: center; justify-c
     height: auto !important;
     padding: 44px 12px 24px;
     overflow-y: auto;
+    /* Folded away, the rail is a surface of its own rather than the desk beside the sheet */
     background: var(--ak-bg);
-    border-left: 1px solid var(--ak-border);
+    border-left: 1px solid var(--ak-border-strong);
     transform: translateX(100%);
     visibility: hidden;
     transition: transform 0.15s ease-out, visibility 0s linear 0.15s;

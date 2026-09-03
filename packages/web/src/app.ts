@@ -16,6 +16,7 @@ import {
   type RoundState,
 } from '@akapen/shared';
 import { bindKeys, loadKeymap } from './keys.ts';
+import { applyTheme, nextTheme, readTheme, saveTheme, type Theme, type ThemeStore } from './theme.ts';
 
 /** Elements index.html is expected to have. Missing one fails at startup so it is noticed. */
 function must<T extends HTMLElement = HTMLElement>(id: string): T {
@@ -43,6 +44,7 @@ const movedBarEl = must('movedBar');
 const movedTextEl = must('movedText');
 const loadCurrentBtn = must<HTMLButtonElement>('loadCurrent');
 const showLines = must<HTMLInputElement>('showLines');
+const themeToggleEl = must<HTMLButtonElement>('themeToggle');
 const peersToggleEl = must<HTMLButtonElement>('peersToggle');
 const peersEl = must('peers');
 const peersListEl = must('peersList');
@@ -250,6 +252,46 @@ loadCurrentBtn.addEventListener('click', () => showCurrent());
 
 showLines.addEventListener('change', () => {
   document.body.classList.toggle('show-lines', showLines.checked);
+});
+
+/**
+ * Light / dark, and the OS.
+ *
+ * The button is the only way to override the OS for this browser, so its label has to say
+ * which of the three states is in effect — an icon alone cannot distinguish "dark because
+ * I chose it" from "dark because the OS is". The cycle returns to `auto`, so an accidental
+ * press is undone by two more.
+ *
+ * The choice is per browser, not per instance: the origin is shared by every akapen on
+ * this host, which is what a reader expects from a preference about their own eyes.
+ */
+/**
+ * localStorage, or nothing.
+ *
+ * Reaching for `window.localStorage` throws outright on an origin the browser has blocked
+ * — not just reading from it — so the access itself has to be guarded.
+ */
+function themeStore(): ThemeStore | null {
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+function paintTheme(theme: Theme): void {
+  applyTheme(document.documentElement, theme);
+  themeToggleEl.textContent = theme;
+  themeToggleEl.title = `Theme: ${theme}. Click to change.`;
+}
+
+let theme: Theme = readTheme(themeStore());
+paintTheme(theme);
+
+themeToggleEl.addEventListener('click', () => {
+  theme = nextTheme(theme);
+  paintTheme(theme);
+  saveTheme(themeStore(), theme);
 });
 
 function el<K extends keyof HTMLElementTagNameMap>(
