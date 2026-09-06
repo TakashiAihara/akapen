@@ -122,12 +122,11 @@ body {
  * The rail was not the cause — hiding it changed neither number. The bar is a flex row
  * that never wrapped and simply ran off the edge, and the path is the one item with no
  * bound on its length.
+ *
+ * No `overflow-x: clip` here. It was tried, and it only hid the symptom: with it in place
+ * the page stopped scrolling while items still sat past the right edge, which is how this
+ * went unnoticed in the first place. Once the bar actually fits, it does nothing.
  */
-html,
-body {
-  /* clip, not hidden: hidden on a scroll container would kill the sticky bar */
-  overflow-x: clip;
-}
 .topbar {
   position: sticky;
   top: 0;
@@ -135,6 +134,17 @@ body {
   display: flex;
   align-items: center;
   gap: 12px;
+  /*
+   * Wrapping is allowed, and on a phone it happens: what is left after the path has given
+   * way still needs about 550px, and no amount of shrinking fits that into 375. What made
+   * wrapping unusable before was that the bar's height was written down as 41px in two
+   * other places; it publishes its real height now, so the rules below it follow.
+   *
+   * Fewer items in the bar is the actual answer (#163). Until then two lines beats running
+   * off the edge — which is what was happening, hidden by the clip above.
+   */
+  flex-wrap: wrap;
+  row-gap: 6px;
   padding: 8px 16px;
   /* A surface on the desk, not the paper. Sharing the document's ground hides where the sheet starts */
   background: var(--ak-bg-subtle);

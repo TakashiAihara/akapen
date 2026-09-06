@@ -25,31 +25,62 @@ test.beforeEach(async ({ page, akapen }) => {
 for (const width of WIDTHS) {
   test(`stays inside the window at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 800 });
-    const over = await page.evaluate(
-      () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
-    );
-    expect(over).toBe(0);
+    const seen = await page.evaluate(() => {
+      const de = document.documentElement;
+      const bar = document.querySelector('.topbar') as HTMLElement;
+      const items = [...bar.children].filter(
+        (el): el is HTMLElement => el instanceof HTMLElement && !el.hidden && el.offsetParent !== null,
+      );
+      return {
+        scrolled: de.scrollWidth - de.clientWidth,
+        // What `overflow-x: clip` would hide: an item placed past the right edge
+        past: items
+          .filter((el) => Math.round(el.getBoundingClientRect().right) > de.clientWidth)
+          .map((el) => el.className || el.tagName.toLowerCase()),
+      };
+    });
+
+    // The page does not scroll sideways...
+    expect(seen.scrolled).toBe(0);
+    // ...and that is because everything is inside the window, not because `overflow-x:
+    // clip` hid it. The clip makes the first assertion hold on its own even while items
+    // sit past the right edge, so this is the one that pins the fix.
+    expect(seen.past).toEqual([]);
   });
 
   test(`tells the banner where the bar ends at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 800 });
-    const { barHeight, offset } = await page.evaluate(() => ({
-      barHeight: Math.round(document.querySelector('.topbar')!.getBoundingClientRect().height),
-      offset: Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--ak-topbar-h')),
-    }));
-    expect(offset).toBe(barHeight);
+    // Polled, not read once: the observer runs after the resize, so a single read can
+    // catch the value from the previous width
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const bar = Math.round(document.querySelector('.topbar')!.getBoundingClientRect().height);
+          const offset = Number.parseFloat(
+            getComputedStyle(document.documentElement).getPropertyValue('--ak-topbar-h'),
+          );
+          return offset - bar;
+        }),
+      )
+      .toBe(0);
   });
 }
 
 test('keeps the jump offset clear of the bar, as a number the outline can read', async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 800 });
-  const { barHeight, jump } = await page.evaluate(() => ({
-    barHeight: Math.round(document.querySelector('.topbar')!.getBoundingClientRect().height),
-    // parseFloat is how app.ts reads it. A calc() would arrive here as a string and be 0
-    jump: Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--ak-jump-offset')),
-  }));
-  expect(Number.isNaN(jump)).toBe(false);
-  expect(jump).toBeGreaterThan(barHeight);
+  // Polled for the same reason as the offset above: the observer runs after the resize
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const bar = Math.round(document.querySelector('.topbar')!.getBoundingClientRect().height);
+        // parseFloat is how app.ts reads it. A calc() would arrive here as a string and be 0
+        const jump = Number.parseFloat(
+          getComputedStyle(document.documentElement).getPropertyValue('--ak-jump-offset'),
+        );
+        return Number.isNaN(jump) ? null : jump > bar;
+      }),
+    )
+    .toBe(true);
 });
 
 test('shortens the path rather than the bar, and keeps the whole of it reachable', async ({
@@ -58,9 +89,14 @@ test('shortens the path rather than the bar, and keeps the whole of it reachable
 }) => {
   await page.setViewportSize({ width: 320, height: 800 });
   const file = page.locator('#filePath');
-  // Truncated on screen...
-  const clipped = await file.evaluate((el) => el.scrollWidth > el.clientWidth);
-  expect(clipped).toBe(true);
-  // ...but not lost: the bar is the only thing naming the document being read
+  // One line, whatever its length. This is the fault #93 opened on: an absolute path
+  // wrapped to seven lines and ate a third of the screen before the document began
+  const lines = await file.evaluate((el) => {
+    const line = Number.parseFloat(getComputedStyle(el).lineHeight) || 20;
+    return Math.round(el.getBoundingClientRect().height / line);
+  });
+  expect(lines).toBe(1);
+  // Shortened on screen, so the whole of it has to live somewhere: the bar is the only
+  // thing naming the document being read
   await expect(file).toHaveAttribute('title', akapen.file);
 });
