@@ -9,7 +9,7 @@
 <link rel="stylesheet" href="/custom.css">
 </head>
 <body>
-<header class="topbar">
+<header class="topbar" id="topbar">
   <span class="brand">akapen</span>
   <span class="file" id="filePath"></span>
   <span class="round" id="round"></span>
@@ -20,7 +20,7 @@
   <button type="button" class="peers-toggle" id="peersToggle" hidden aria-expanded="false" aria-controls="peers"></button>
   <span class="spacer"></span>
   <label class="toggle"><input type="checkbox" id="showLines"> Line numbers</label>
-  <!-- OS の設定を上書きしたい人だけが押す。既定は押さない状態 (auto) -->
+  <!-- Only pressed by a reader overriding their OS. Unpressed is the default (auto) -->
   <button type="button" class="theme-toggle" id="themeToggle" aria-live="polite"></button>
   <span class="count" id="count"></span>
   <!-- The headings, as a tree. Inside the header so it follows it while scrolling -->
