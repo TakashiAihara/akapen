@@ -65,8 +65,13 @@ test.describe('on a dark OS', () => {
 
   test('follows the OS while on auto', async ({ page }) => {
     await expect(page.locator(BUTTON)).toHaveText('auto');
-    // Same document, opposite OS: the ground must differ from the light default
-    expect(await bg(page)).not.toBe('rgb(255, 255, 255)');
+    const onDark = await bg(page);
+
+    // The comparison has to be against the same page under the other OS preference.
+    // Asserting the ground is merely "not white" proves nothing: the light ground is the
+    // desk colour, never white, so that assertion holds even with the dark block deleted.
+    await page.emulateMedia({ colorScheme: 'light' });
+    expect(await bg(page)).not.toBe(onDark);
   });
 
   test('lets a light choice beat the OS', async ({ page }) => {
