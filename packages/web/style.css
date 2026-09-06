@@ -50,6 +50,7 @@
   --ak-bubble-bg: oklch(98.5% 0.012 32);
   --ak-focus: oklch(48% 0.215 27);
   --ak-warn: oklch(48% 0.11 62);
+  --ak-sheet-edge: var(--ak-border);
   --ak-sheet-shadow: 0 1px 2px rgba(32,25,22,.10), 0 10px 28px -12px rgba(32,25,22,.22);
 }
 
@@ -78,7 +79,8 @@
     --ak-bubble-bg: oklch(29% 0.02 32);
     --ak-focus: oklch(72% 0.2 30);
     --ak-warn: oklch(75% 0.115 70);
-    --ak-sheet-shadow: 0 1px 2px rgba(0,0,0,.55), 0 12px 32px -12px rgba(0,0,0,.75);
+    --ak-sheet-edge: var(--ak-border-strong);
+  --ak-sheet-shadow: 0 1px 2px rgba(0,0,0,.55), 0 12px 32px -12px rgba(0,0,0,.75);
   }
 }
 
@@ -98,6 +100,7 @@
   --ak-bubble-bg: oklch(29% 0.02 32);
   --ak-focus: oklch(72% 0.2 30);
   --ak-warn: oklch(75% 0.115 70);
+  --ak-sheet-edge: var(--ak-border-strong);
   --ak-sheet-shadow: 0 1px 2px rgba(0,0,0,.55), 0 12px 32px -12px rgba(0,0,0,.75);
 }
 
@@ -202,7 +205,7 @@ body {
 .doc {
   min-width: 0;
   background: var(--ak-bg);
-  border: 1px solid var(--ak-border);
+  border: 1px solid var(--ak-sheet-edge);
   border-radius: 2px;
   box-shadow: var(--ak-sheet-shadow);
   padding: 44px 44px 56px 52px;
@@ -493,9 +496,14 @@ body.rail-overlay .marker { display: inline-flex; align-items: center; justify-c
 }
 /* The title keeps the one rule: it separates the document from the bar above it */
 .body h1 { font-size: 2.05rem; margin: 0 0 4px; border-bottom: 1px solid var(--ak-border); padding-bottom: 12px; }
-.body h2 { font-size: 1.5rem; margin: 42px 0 2px; }
-.body h3 { font-size: 1.2rem; margin: 30px 0 2px; }
-.body h4, .body h5, .body h6 { font-size: 1rem; margin: 22px 0 2px; }
+.body h2 { font-size: 1.5rem; margin: 16px 0 8px; }
+.body h3 { font-size: 1.2rem; margin: 12px 0 6px; }
+.body h4, .body h5, .body h6 { font-size: 1rem; margin: 9px 0 4px; }
+/* A heading directly under another opens no space of its own: the one above already did */
+.row:has(.body h1, .body h2, .body h3, .body h4, .body h5, .body h6)
+  + .row:has(.body h2, .body h3, .body h4, .body h5, .body h6) :is(h2, h3, h4, h5, h6) {
+  margin-top: 6px;
+}
 .row:first-child .body h1, .row:first-child .body h2 { margin-top: 0; }
 /* Ink, not accent. A link in the accent colour reads as something a person wrote */
 .body a {
@@ -514,7 +522,7 @@ body.rail-overlay .marker { display: inline-flex; align-items: center; justify-c
   border-radius: 4px;
   padding: 1px 5px;
 }
-.body hr { border: none; border-top: 1px solid var(--ak-border); margin: 34px 0; }
+.body hr { border: none; border-top: 1px solid var(--ak-border); margin: 18px 0; }
 
 .li { display: flex; gap: 6px; padding-left: calc(var(--depth, 0) * 22px); }
 .li-marker { flex: 0 0 auto; color: var(--ak-fg-muted); }
