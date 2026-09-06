@@ -53,6 +53,7 @@ const movedBarEl = must('movedBar');
 const movedTextEl = must('movedText');
 const loadCurrentBtn = must<HTMLButtonElement>('loadCurrent');
 const showLines = must<HTMLInputElement>('showLines');
+const topbarEl = must('topbar');
 const themeToggleEl = must<HTMLButtonElement>('themeToggle');
 const peersToggleEl = must<HTMLButtonElement>('peersToggle');
 const peersEl = must('peers');
@@ -263,6 +264,30 @@ async function refreshServerRound() {
 }
 
 loadCurrentBtn.addEventListener('click', () => showCurrent());
+
+/**
+ * The bar's real height, published for the rules that sit under it.
+ *
+ * Two distances were written against a 41px bar: where the banner comes to rest, and how
+ * far below the top a jumped-to heading lands. The bar is 87px on a narrow screen, so the
+ * banner overlapped it and a heading jumped to from the outline landed underneath it.
+ * Neither could be fixed in CSS — a stylesheet cannot measure a height.
+ *
+ * Both are written as concrete pixels rather than a calc(). getPropertyValue hands back a
+ * custom property's *specified* value, so a calc() would arrive at the parseFloat in
+ * `currentHeading` as a string and become 0, quietly reporting the wrong section.
+ */
+const JUMP_CLEARANCE = 11;
+
+function publishBarHeight() {
+  const h = Math.round(topbarEl.getBoundingClientRect().height);
+  const root = document.documentElement.style;
+  root.setProperty('--ak-topbar-h', `${h}px`);
+  root.setProperty('--ak-jump-offset', `${h + JUMP_CLEARANCE}px`);
+}
+
+publishBarHeight();
+new ResizeObserver(publishBarHeight).observe(topbarEl);
 
 showLines.addEventListener('change', () => {
   document.body.classList.toggle('show-lines', showLines.checked);
@@ -928,6 +953,8 @@ function render() {
   if (!doc) return;
   const focus = captureFocus();
   filePathEl.textContent = doc.path;
+  // The path is truncated to keep the bar on one line, so the whole of it lives here
+  filePathEl.title = doc.path;
   // Several reviews are open at once, one per note, and the tab is the only place they
   // are told apart before being clicked.
   document.title = pageTitle(doc);

@@ -115,6 +115,18 @@ body {
   background: var(--ak-desk);
 }
 
+/*
+ * Nothing in the bar wraps, and the path gives way first.
+ *
+ * Measured on a 320px screen: the bar grew to 87px and the page scrolled 357px sideways.
+ * The rail was not the cause — hiding it changed neither number. The bar is a flex row
+ * that never wrapped and simply ran off the edge, and the path is the one item with no
+ * bound on its length.
+ *
+ * No `overflow-x: clip` here. It was tried, and it only hid the symptom: with it in place
+ * the page stopped scrolling while items still sat past the right edge, which is how this
+ * went unnoticed in the first place. Once the bar actually fits, it does nothing.
+ */
 .topbar {
   position: sticky;
   top: 0;
@@ -122,6 +134,17 @@ body {
   display: flex;
   align-items: center;
   gap: 12px;
+  /*
+   * Wrapping is allowed, and on a phone it happens: what is left after the path has given
+   * way still needs about 550px, and no amount of shrinking fits that into 375. What made
+   * wrapping unusable before was that the bar's height was written down as 41px in two
+   * other places; it publishes its real height now, so the rules below it follow.
+   *
+   * Fewer items in the bar is the actual answer (#163). Until then two lines beats running
+   * off the edge — which is what was happening, hidden by the clip above.
+   */
+  flex-wrap: wrap;
+  row-gap: 6px;
   padding: 8px 16px;
   /* A surface on the desk, not the paper. Sharing the document's ground hides where the sheet starts */
   background: var(--ak-bg-subtle);
@@ -129,9 +152,18 @@ body {
   font-size: 13px;
 }
 .brand { font-weight: 700; letter-spacing: 0.02em; }
-.file { font-family: var(--ak-mono); color: var(--ak-fg-muted); }
+.file {
+  font-family: var(--ak-mono);
+  color: var(--ak-fg-muted);
+  /* Shrinks, never grows: the spacer is what pushes the right-hand items over */
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .spacer { flex: 1; }
-.toggle { color: var(--ak-fg-muted); user-select: none; }
+.toggle { color: var(--ak-fg-muted); user-select: none; white-space: nowrap; }
 /*
  * auto / light / dark, in that order, returning to auto.
  *
@@ -154,7 +186,7 @@ body {
 }
 .theme-toggle:hover { border-color: var(--ak-accent); color: var(--ak-accent); }
 .theme-toggle:focus-visible { outline: 2px solid var(--ak-focus); outline-offset: 1px; }
-.count { color: var(--ak-fg-muted); }
+.count { color: var(--ak-fg-muted); white-space: nowrap; }
 .round {
   font-family: var(--ak-mono);
   color: var(--ak-fg-muted);
