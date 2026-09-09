@@ -22,14 +22,14 @@
   "devDependencies": {
     "@akapen/core": "workspace:*",
     "@akapen/server": "workspace:*",
-    "@playwright/test": "^1.62.1",
+    "@playwright/test": "^1.63.0",
     "@total-typescript/ts-reset": "^0.6.1",
     "@tsconfig/bun": "^1.0.11",
     "@tsconfig/strictest": "^2.0.8",
-    "@types/bun": "^1.4.0",
-    "lefthook": "^2.1.10",
-    "oxfmt": "^0.64.0",
-    "oxlint": "^1.79.0",
+    "@types/bun": "^1.4.1",
+    "lefthook": "^2.1.12",
+    "oxfmt": "^0.66.0",
+    "oxlint": "^1.81.0",
     "typescript": "^7.0.2",
     "vitest": "^4.1.11"
   }
