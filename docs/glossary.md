@@ -50,7 +50,7 @@ apart. Use the qualified form; the bare word is the one that causes the confusio
 | current section | the outline row for the heading being read, worked out when the panel opens and not followed while it is shut | `.outline-entry.current`, `markCurrent` |
 | tab title | what the browser tab is called: the document's first top-level heading (`#` or setext), or its file name when it has none | `document.title`, `pageTitle` |
 | banner | the line saying the live file has changed since the snapshot | `#banner`, `ChangedState` |
-| history bar | the line saying an earlier round is being viewed, which is read-only for the document | `#historyBar` |
+| history bar | the line saying an earlier round is being viewed. Comments written there are filed on that round | `#historyBar` |
 | round badge / round selector | the round on screen — the current one, or an earlier one while viewing history — and the picker, which tags the current round | `#round`, `#roundPick` |
 | count | how many comments are open, of how many, plus how many are carried | `#count` |
 
@@ -82,8 +82,8 @@ Row states, which stack:
 | Term | What it is | Where it exists |
 |---|---|---|
 | round | a frozen snapshot of the file contents. Comments attach to lines inside it | `rounds/NNN/content.md` |
-| current round | the round being written to. The only one that takes a new comment; replying to a comment and resolving one work in any round | `Review.currentRound`, `RoundState.n` |
-| viewing a round | reading an earlier round's snapshot and comments. Read-only for the document, not for comment status | `RoundState.viewing`, `#historyBar` |
+| current round | the newest round, and the one a comment is filed on when a client names none. Every round takes new comments, replies and resolving | `Review.currentRound`, `RoundState.n` |
+| viewing a round | reading an earlier round's snapshot and comments. The snapshot never changes; a comment written there is filed on that round | `RoundState.viewing`, `#historyBar` |
 | cutting a round | freezing the live file as the next round. Only a person does this; an agent's save never does | the "End this round" control, `#nextRound`, `openRound` |
 | carried over | unresolved comments from earlier rounds. Nothing carries into a new round; they are shown apart so that gone from the screen does not read as dealt with | `carriedOver`, `#railCarried` |
 | review store | where comments live, outside the markdown file | `~/.akapen/reviews/<basename>-<hash>/`, `AKAPEN_HOME` |

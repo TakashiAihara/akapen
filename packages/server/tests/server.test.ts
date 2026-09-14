@@ -466,15 +466,63 @@ describe('a round moving under another screen', () => {
    * screen keeps the previous round's line numbers, and every comment written on it
    * used to come back as "line range does not point at any text" (#100).
    */
-  it('refuses a comment carrying a round that is no longer current', async () => {
-    expect((await post('/api/comments', { startLine: 5, endLine: 5, body: 'x', round: 1 })).ok).toBe(true);
-    expect((await post('/api/rounds')).ok).toBe(true);
+  /**
+   * A human reviews while an agent keeps writing, so the round moving under a screen is
+   * the normal case. Refusing the comment there throws away a review somebody already
+   * wrote. It goes to the round the screen was showing, and its line numbers keep
+   * pointing into that round's snapshot.
+   */
+  describe('a comment from a screen on an earlier round', () => {
+    const R002 = [
+      '---',
+      'title: t',
+      '---',
+      '',
+      '# Renamed',
+      '',
+      'A paragraph.',
+      '',
+      'added in R002',
+      '',
+    ].join('\n');
 
-    const res = await post('/api/comments', { startLine: 5, endLine: 5, body: 'x', round: 1 });
-    expect(res.status).toBe(409);
-    // Not the blank-line message: a person has to be able to tell "reload" from "that
-    // line has nothing on it", and 400 vs 409 is how the browser tells them apart too.
-    expect(await res.text()).toMatch(/round moved/);
+    beforeEach(async () => {
+      writeFileSync(work, R002);
+      expect((await post('/api/rounds')).ok).toBe(true);
+    }, 30_000);
+
+    it('is filed on that round, not the current one', async () => {
+      const res = await post('/api/comments', { startLine: 5, endLine: 5, body: 'on R001', round: 1 });
+      expect(res.status).toBe(200);
+      const { comment } = v.parse(CommentsPayloadSchema, await res.json());
+
+      const r1 = v.parse(DocPayloadSchema, await (await fetch(`${base}/api/doc?round=1`)).json());
+      expect(r1.comments.map((c) => c.id)).toContain(comment.id);
+      const now = v.parse(DocPayloadSchema, await (await fetch(`${base}/api/doc`)).json());
+      expect(now.comments.map((c) => c.id)).not.toContain(comment.id);
+      expect(now.carried.map((c) => c.id)).toContain(comment.id);
+    });
+
+    it("anchors to that round's text, not the current file's", async () => {
+      const res = await post('/api/comments', { startLine: 5, endLine: 5, body: 'on R001', round: 1 });
+      expect(v.parse(CommentsPayloadSchema, await res.json()).comment.anchor).toBe('# Heading');
+    });
+
+    it("checks the range against that round's document", async () => {
+      // Line 9 exists only in R002, so the same numbers are right on one and point at nothing on the other.
+      expect((await post('/api/comments', { startLine: 9, endLine: 9, body: 'x', round: 1 })).status).toBe(
+        400,
+      );
+      expect((await post('/api/comments', { startLine: 9, endLine: 9, body: 'x', round: 2 })).status).toBe(
+        200,
+      );
+    });
+
+    it('refuses a round that does not exist', async () => {
+      expect((await post('/api/comments', { startLine: 5, endLine: 5, body: 'x', round: 7 })).status).toBe(
+        404,
+      );
+    });
   });
 
   it('still accepts a comment from a screen that is on the current round', async () => {

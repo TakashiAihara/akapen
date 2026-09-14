@@ -308,9 +308,11 @@ Rounds carry no comments over. Instead, what was raised before is kept in two pl
 - **Unresolved comments from earlier rounds** appear at the end of the rail. With nothing carrying over, "gone from the screen" would otherwise read as "dealt with".
 - The round selector at the top, or the `R001` tag on an older comment, **switches to that round's snapshot**. The document and the comments appear exactly as they were.
 
-No comments can be written while viewing a past round. Being able to add feedback to a past document would break the property that round number + `content.md` + line number reproduces where feedback pointed.
+**A comment is never refused because the round moved or because an earlier round is on screen.** akapen is read while an agent keeps writing, so a round being cut under a screen, or going back to an earlier round to say something about it, is the normal way it is used. Refusing the comment there throws away a review somebody already wrote.
 
-**Status, however, does apply to comments from earlier rounds.** "Read-only" is about the snapshot and the line anchors; freezing the status as well would leave no way to close an unresolved comment, and `akapen comments` would emit the same feedback forever.
+A comment is filed on the round its screen shows — the one opened from history, or the one a screen was still on when another screen cut the next. Its line numbers point into that round's `content.md`, so round number + `content.md` + line number still reproduces where it pointed. A screen left on an earlier round says so, and loading the current round is a click nobody is made to take before writing.
+
+Resolving and replying work on comments from every round as well. Freezing them would leave no way to close an unresolved comment, and `akapen comments` would emit the same feedback forever.
 
 ### Rounds
 

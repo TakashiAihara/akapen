@@ -175,10 +175,12 @@ test('freezes the document until a round is cut, and keeps the feedback after', 
   await expect(page.locator('#count')).toContainText('1 earlier');
 });
 
-test('says the round moved when another screen cuts it, and keeps the draft', async ({ page, akapen }) => {
-  // akapen is served on 0.0.0.0 and read from a phone and a laptop at once. The screen
-  // that did not click used to keep the old line numbers with nothing saying so, and
-  // every comment written on it came back refused (#100).
+test('takes a comment on a screen another one moved past, and files it on that round', async ({
+  page,
+  akapen,
+}) => {
+  // A person reviews while an agent writes and rounds are cut elsewhere. A comment written
+  // on a screen left behind is a review somebody already wrote, so it must go through.
   const other = await page.context().newPage();
   await other.goto(akapen.url);
   await expect(other.locator('.row').first()).toBeVisible();
@@ -194,35 +196,65 @@ test('says the round moved when another screen cuts it, and keeps the draft', as
   await expect(page.locator('#doc')).not.toContainText('added while both screens were open');
 
   await openDraft(page);
-  await page.locator(A.ta).fill('written against the old round');
-  await page.locator(`${A.draft} button.primary`).click();
-  await expect(page.locator(A.draft)).toContainText('round moved');
-  await expect(page.locator(A.ta)).toHaveValue('written against the old round');
+  await post(page, 'written against the old round');
+  await expect(page.locator(A.rail)).toHaveCount(1);
+  await expect(page.locator(A.rail)).toContainText('written against the old round');
+  await expect(page.locator('#round')).toHaveText('R001'); // nothing on screen moved to take it
 
-  // Moving on is a click. The text survives it; the range does not, because those line
-  // numbers were read from a document that is no longer on screen.
+  // On the current round it is feedback from an earlier one, like any other.
   await page.locator('#loadCurrent').click();
   await expect(page.locator('#round')).toHaveText('R002');
-  await expect(page.locator('#movedBar')).toBeHidden();
-  await expect(page.locator(A.ta)).toHaveValue('written against the old round');
+  await expect(page.locator('#railCarried .bubble')).toContainText('written against the old round');
+});
+
+test('keeps a draft when the screen moves to another round, and asks for the lines again', async ({
+  page,
+  akapen,
+}) => {
+  const other = await page.context().newPage();
+  await other.goto(akapen.url);
+  await expect(other.locator('.row').first()).toBeVisible();
+  akapen.append('\n## added while both screens were open\n');
+  await other.locator('#nextRound').click();
+  await expect(page.locator('#movedBar')).toBeVisible();
+
+  await openDraft(page);
+  await page.locator(A.ta).fill('half written');
+
+  // The text survives the swap; the range does not, because those line numbers were read
+  // from a document that is no longer on screen.
+  await page.locator('#loadCurrent').click();
+  await expect(page.locator('#round')).toHaveText('R002');
+  await expect(page.locator(A.ta)).toHaveValue('half written');
   await expect(page.locator(A.draft)).toContainText('pick the lines again');
 
-  await page.locator(`${A.draft} button.primary`).click();
-  await expect(page.locator(A.draft)).toHaveCount(1); // still refused, and still nothing sent
-  await expect(page.locator(A.rail)).toHaveCount(1); // the draft, not a stored comment
-
-  // Picking a range again carries the text over, and that goes through.
   await openDraft(page, 2);
-  await expect(page.locator(A.ta)).toHaveValue('written against the old round');
+  await expect(page.locator(A.ta)).toHaveValue('half written');
   await page.locator(`${A.draft} button.primary`).click();
   await expect(page.locator(A.draft)).toHaveCount(0);
   await expect(page.locator(A.rail)).toHaveCount(1);
 });
 
+test('takes a comment while an earlier round is open in history', async ({ page, akapen }) => {
+  akapen.append('\n## Added\n\nmore text.\n');
+  await page.locator('#nextRound').click();
+  await page.locator('#roundPick').selectOption('1');
+  await expect(page.locator('#historyBar')).toBeVisible();
+
+  await openDraft(page);
+  await post(page, 'about R001, from history');
+  await expect(page.locator(A.rail)).toContainText('about R001, from history');
+  await expect(page.locator('#historyBar')).toBeVisible();
+  await expect(page.locator('#round')).toHaveText('R001');
+
+  await page.locator('#backToCurrent').click();
+  await expect(page.locator('#railCarried .bubble')).toContainText('about R001, from history');
+});
+
 test('does not let a slow reply hide a round that moved while it was in flight', async ({ page, akapen }) => {
   // The stream and the replies are separate channels with no order between them. A
   // /api/doc answer that left before a newer round opened must not walk the number back
-  // and quietly hide the notice, leaving a screen that cannot comment and does not say so.
+  // and quietly hide the notice, leaving a screen behind with nothing saying so.
   const other = await page.context().newPage();
   await other.goto(akapen.url);
   await expect(other.locator('.row').first()).toBeVisible();
@@ -248,7 +280,7 @@ test('does not let a slow reply hide a round that moved while it was in flight',
   await expect(other.locator('#round')).toHaveText('R003');
 
   // The answer lands carrying R002, which is what this screen now shows — and the notice
-  // has to stay, because the server is on R003 and comments from here are still refused.
+  // has to stay, because the server is on R003 and comments from here are filed on R002.
   await expect(page.locator('#round')).toHaveText('R002');
   await expect(page.locator('#movedBar')).toBeVisible();
   await expect(page.locator('#movedBar')).toContainText('R003');
@@ -311,7 +343,7 @@ test('replies to a comment, and keeps the thread on a comment carried past a rou
   await expect(carried).toBeVisible();
   await expect(carried.locator('.reply-body')).toHaveText('reworded');
 
-  // A closed round is read-only for the document, not for the conversation. Hover, not
+  // A closed round still takes replies. Hover, not
   // click: clicking a carried bubble opens that round's history, so a form that needed a
   // click to appear could never be reached with a mouse.
   await carried.hover();
@@ -343,7 +375,7 @@ test('replies from the history view without swapping the round on screen', async
   await expect(page.locator('#railAnchored .bubble').first().locator('.reply-body')).toHaveText(
     'answered on the old round',
   );
-  // Still R001, still read-only.
+  // Still R001.
   await expect(page.locator('#historyBar')).toBeVisible();
   await expect(page.locator('#round')).toHaveText('R001');
 });

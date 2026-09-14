@@ -3,7 +3,6 @@ import {
   CommentsPayloadSchema,
   DocPayloadSchema,
   InstancesPayloadSchema,
-  RoundsPayloadSchema,
   ServerEventSchema,
   type Block,
   type ChangedState,
@@ -83,7 +82,7 @@ type MermaidLib = {
 type State = {
   doc: Doc | null;
   comments: Comment[];
-  /** `viewing` is the round on screen. While it differs from the current one, everything is read-only. */
+  /** `viewing` is the earlier round on screen while history is open. The snapshot never changes; comments written on it are filed on that round. */
   round: RoundState | null;
   carried: RoundComment[];
   history: boolean;
@@ -103,7 +102,7 @@ let mermaidLib: MermaidLib | null = null;
  *
  * Kept apart from `state.round`, which is the round this screen was built against.
  * The two differ exactly while another screen has cut a round and this one has not
- * been reloaded, which is the window where every comment written here is refused (#100).
+ * been reloaded. Comments written in that window are filed on the round on screen.
  */
 let serverRound: number | null = null;
 
@@ -112,7 +111,7 @@ let serverRound: number | null = null;
  *
  * Two paths report it — a payload and the stream — and they are not ordered against each
  * other. A reply that was in flight while a newer round opened would otherwise walk the
- * number backwards, hide the notice, and leave the screen quietly unable to comment.
+ * number backwards, hide the notice, and leave the screen behind with nothing saying so.
  */
 function noteServerRound(n: number): void {
   serverRound = Math.max(serverRound ?? 0, n);
@@ -140,8 +139,8 @@ function messageOf(err: unknown): string {
 /**
  * The server's own words, falling back to the status.
  *
- * A refusal now means more than one thing — the range points at nothing, the round
- * moved, the file is mid-write — and "HTTP 409" tells the person none of them.
+ * A refusal means more than one thing — the range points at nothing, the file is
+ * mid-write — and a bare status code tells the person neither.
  */
 async function failureOf(res: Response): Promise<Error> {
   const text = await res.text().catch(() => '');
@@ -215,8 +214,7 @@ function renderBanner(changed: ChangedState | null | undefined) {
  * The document is not swapped here. Rounds exist so that what a comment attaches to
  * moves when a person says so, and a screen rebuilt underneath somebody would take the
  * reading position, the focus and anything half-typed with it. So it says what happened
- * and leaves the click to them — but it does say it, because the alternative was every
- * comment being refused with nothing on screen explaining why (#100).
+ * and leaves the click to them, while comments keep going to the round on screen.
  */
 function renderMoved() {
   const viewing = state.round?.n;
@@ -227,16 +225,21 @@ function renderMoved() {
   }
   movedTextEl.textContent =
     `⟳ the round moved to R${String(serverRound).padStart(3, '0')} on another screen — ` +
-    `this one still shows R${String(viewing).padStart(3, '0')}, so a comment on it is refused`;
+    `comments written here go to R${String(viewing).padStart(3, '0')}`;
   movedBarEl.hidden = false;
+}
+
+/** The round the document on screen was read from, which is where a comment written on it goes. */
+function screenRound(): number | null {
+  return state.round?.viewing ?? state.round?.n ?? null;
 }
 
 /** True once the screen has moved to a round the draft's line numbers do not come from. */
 function draftIsStale(): boolean {
-  return draft?.round != null && state.round !== null && draft.round !== state.round.n;
+  return draft?.round != null && screenRound() !== null && draft.round !== screenRound();
 }
 
-const STALE_DRAFT = 'the round moved — pick the lines again (what is typed here is kept)';
+const STALE_DRAFT = 'the document on screen changed — pick the lines again (what is typed here is kept)';
 
 /**
  * Say it on the bubble as soon as the document under it is replaced.
@@ -249,18 +252,6 @@ function noteStaleDraft() {
   if (!draftIsStale()) return;
   const box = anchoredEl.querySelector<HTMLElement>('.bubble.draft');
   if (box) fail(box, STALE_DRAFT);
-}
-
-/** Ask which round the server is on. Used when a refusal arrives without the stream having said. */
-async function refreshServerRound() {
-  try {
-    const res = await fetch('/api/rounds');
-    if (!res.ok) return;
-    noteServerRound((await decode(res, RoundsPayloadSchema)).current);
-    renderMoved();
-  } catch {
-    // Nothing to do: the notice simply stays as it is, and the next payload corrects it.
-  }
 }
 
 loadCurrentBtn.addEventListener('click', () => showCurrent());
@@ -675,25 +666,18 @@ function draftBubble(): HTMLElement {
     const body = ta.value.trim();
     if (!body) return close();
     if (submit.disabled) return; // hammering Ctrl+Enter must not post twice
-    // The range belongs to the round that was on screen when this was opened. Sending it
-    // against a newer one files the comment on whatever text now sits at those numbers —
-    // the same wrong-place landing this whole issue is about (#100).
+    // The range was read from the document that was on screen when this was opened. If a
+    // different one is on screen now, those numbers point at other text.
     if (draftIsStale()) return fail(box, STALE_DRAFT);
     submit.disabled = true;
     try {
       const res = await fetch('/api/comments', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        // Which round these line numbers belong to. Without it the server cannot tell a
-        // blank line from a document that moved, and both came back as the same refusal.
-        body: JSON.stringify({ startLine, endLine, body, round: state.round?.n }),
+        // Which round these line numbers belong to, so the comment is filed there.
+        body: JSON.stringify({ startLine, endLine, body, round: draft?.round ?? undefined }),
       });
-      if (!res.ok) {
-        // 409 is the round having moved. The stream normally says so first; a dropped
-        // one would otherwise leave the refusal with nothing on screen explaining it.
-        if (res.status === 409) void refreshServerRound();
-        throw await failureOf(res);
-      }
+      if (!res.ok) throw await failureOf(res);
       posted = await decode(res, CommentsPayloadSchema);
     } catch (err) {
       // Keep the draft. Discarding it leaves no way to get the typed text back
@@ -706,7 +690,11 @@ function draftBubble(): HTMLElement {
     // Collapse the selection but keep the line focus: jumping around ruins writing several in a row
     sel = null;
     paintSelection();
-    applyComments(posted);
+    // The answer carries the current round's comments. They are this screen's only when the
+    // comment landed there; a screen on an earlier round keeps its own and adds this one.
+    const id = posted.comment.id;
+    if (posted.comments.some((c) => c.id === id)) applyComments(posted);
+    else applyComments({ ...posted, comments: [...state.comments, posted.comment], carried: state.carried });
   };
   cancel.addEventListener('click', close);
   submit.addEventListener('click', send);
@@ -881,10 +869,9 @@ function clearSelection() {
 
 function startDraft(): void {
   if (!sel) return;
-  if (state.history) return; // history is read-only: adding feedback to a past document breaks reproducibility
   const lo = Math.min(sel.start, sel.end);
   const hi = Math.max(sel.start, sel.end);
-  draft = { startLine: lo, endLine: hi, text: draft?.text ?? '', round: state.round?.n ?? null };
+  draft = { startLine: lo, endLine: hi, text: draft?.text ?? '', round: screenRound() };
   // The document is untouched. Opening a draft happens inside the rail
   renderRail();
   layoutRail();
@@ -1003,7 +990,7 @@ syncRailMode();
 
 /**
  * Show a past round: the document and comments exactly as they were.
- * The document and its line anchors are frozen, so no comments can be written here.
+ * Comments written here are filed on that round.
  */
 async function showRound(n: number, focusId?: string) {
   try {
@@ -1067,7 +1054,7 @@ function renderRoundControls() {
   document.body.classList.toggle('viewing-history', state.history);
   historyBarEl.hidden = !state.history;
   if (state.history) {
-    historyTextEl.textContent = `viewing the document as it was at R${String(viewing).padStart(3, '0')} (read-only)`;
+    historyTextEl.textContent = `viewing the document as it was at R${String(viewing).padStart(3, '0')} — comments written here go to it`;
   }
 }
 
