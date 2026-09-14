@@ -47,7 +47,7 @@ gh attestation verify ~/.local/bin/akapen \
 
 With `--repo` alone an attestation from any workflow in the repository passes, so the signing workflow is pinned too.
 
-Binaries exist for linux and darwin on x64 and arm64. GitHub Actions builds them on tag push and attaches them to the release (`.github/workflows/release.yml`).
+Binaries exist for linux and darwin on x64 and arm64. GitHub Actions builds them for every push to main that passes CI and releases them one release candidate past the highest tag (`v0.1.0-rc.3` → `v0.1.0-rc.4`, `v0.1.0` → `v0.1.1-rc.1`), so `latest` is what is on main (`.github/workflows/release.yml`). Pushing a `v*` tag by hand releases that tag, which is how a final version is cut. The version lives only in the tag; every `package.json` stays at `0.0.0`.
 
 ### Running from the repository
 
