@@ -1,6 +1,13 @@
 name: release
 
 on:
+  # Every push to main that passes CI is released. install.sh fetches the latest release, so
+  # this is what makes it hand out what is on main rather than whatever was last tagged.
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+    branches: [main]
+  # A tag pushed by hand is still released as that tag. This is how a final version is cut.
   push:
     tags: ['v*']
   workflow_dispatch:
@@ -16,11 +23,60 @@ permissions:
   id-token: write
   attestations: write
 
+# One at a time, so two runs cannot read the same highest tag and both claim the next one.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
   # Pinned to commits rather than tags, same as ci.yml. This one matters more: the job
   # holds contents:write and signs provenance, so an action swapped under a moved tag
   # would be attested as ours. Version lives in the trailing comment.
+  tag:
+    # workflow_run fires for every ci run whose branch is called main, and that includes a
+    # pull request from a fork's main. Only a push to this repository's main is a release.
+    if: >-
+      github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.decide.outputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.event.inputs.tag || github.ref }}
+          # Every tag, to count the next one from, and origin/main, to see whether it moved on.
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: .tool-versions
+
+      - name: decide the tag
+        id: decide
+        env:
+          EVENT: ${{ github.event_name }}
+          GIVEN: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          set -eu
+          if [ "$EVENT" != workflow_run ]; then
+            echo "tag=$GIVEN" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # A newer commit is already on main and its own run releases it. Releasing this one
+          # afterwards would make older code the latest.
+          if [ "$(git rev-parse origin/main)" != "$(git rev-parse HEAD)" ]; then
+            echo "main has moved past this commit; not releasing it"
+            exit 0
+          fi
+          # A re-run for the same commit reuses its tag rather than cutting another.
+          existing="$(git tag --points-at HEAD --list 'v*' | head -n 1)"
+          echo "tag=${existing:-$(bun scripts/next-tag.ts)}" >> "$GITHUB_OUTPUT"
+
   build:
+    needs: tag
+    if: needs.tag.outputs.tag != ''
     runs-on: ubuntu-latest
     steps:
       # On a manual run inputs.tag and the default branch HEAD disagree. Without an
@@ -29,7 +85,7 @@ jobs:
       # release is created for a tag that does not exist.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.inputs.tag || github.ref }}
+          ref: ${{ github.event.workflow_run.head_sha || github.event.inputs.tag || github.ref }}
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version-file: .tool-versions
@@ -54,11 +110,14 @@ jobs:
         with:
           subject-path: 'dist/akapen-*'
 
+      # --target creates the tag on the commit that was built when it does not exist yet.
+      # A tag this token creates starts no workflow, so the tag-push trigger above does not
+      # release it a second time.
       - name: release
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+          TAG: ${{ needs.tag.outputs.tag }}
         run: |
           set -eux
-          gh release create "$TAG" --title "$TAG" --generate-notes dist/akapen-* dist/SHA256SUMS \
+          gh release create "$TAG" --target "$(git rev-parse HEAD)" --title "$TAG" --generate-notes dist/akapen-* dist/SHA256SUMS \
             || gh release upload "$TAG" dist/akapen-* dist/SHA256SUMS --clobber
