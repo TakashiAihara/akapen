@@ -524,8 +524,10 @@ body.rail-overlay .marker { display: inline-flex; align-items: center; justify-c
 .body h3 { font-size: 1.25rem; margin: 12px 0 6px; }
 /*
  * Below h3 the size alone runs out: a serif at body size reads lighter than the sans around
- * it, so an h4 at 1rem looked like a paragraph. h4 keeps a step of size; h5 and h6 are told
- * apart by weight and ink instead, since shrinking them under the body would rank them below it.
+ * it, so an h4 at 1rem looked like a paragraph. From h4 down the weight is raised to 700,
+ * because a face without a 600 (IPA Mincho has only a regular) draws 600 as regular. h4 also
+ * keeps a step of size; h5 and h6 stay at body size, since shrinking them under the body
+ * would rank them below it, and h6 is told from h5 by ink.
  */
 .body h4 { font-size: 1.1rem; font-weight: 700; margin: 10px 0 4px; }
 .body h5, .body h6 { font-size: 1rem; font-weight: 700; margin: 9px 0 4px; }
