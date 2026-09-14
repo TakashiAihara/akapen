@@ -15,6 +15,14 @@ describe('nextTag', () => {
     expect(nextTag(['v0.1.0-rc.9', 'v0.1.0-rc.10', 'v0.1.0-rc.2'])).toBe('v0.1.0-rc.11');
   });
 
+  test('compares patch numbers as numbers, not text', () => {
+    expect(nextTag(['v0.1.9', 'v0.1.10'])).toBe('v0.1.11-rc.1');
+  });
+
+  test('counts rc.0 as a release candidate, not a final version', () => {
+    expect(nextTag(['v0.1.0-rc.0'])).toBe('v0.1.0-rc.1');
+  });
+
   test('puts a final version above its own release candidates, and starts the next patch', () => {
     expect(nextTag(['v0.1.0-rc.3', 'v0.1.0', 'v0.1.0-rc.2'])).toBe('v0.1.1-rc.1');
   });
