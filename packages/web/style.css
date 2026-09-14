@@ -509,12 +509,6 @@ body.rail-overlay .marker { display: inline-flex; align-items: center; justify-c
 /* ===== markdown ===== */
 .body p { margin: 0 0 var(--ak-para-gap); }
 /*
- * Prose is held to its own measure; tables, code and diagrams keep the full width of the
- * sheet. On paper a figure may be wider than the column beside it, and a glossary is
- * mostly figures — narrowing the sheet to suit the prose crushes them.
- */
-.body p, .li { max-width: 42em; }
-/*
  * The levels are separated by space, not by rules. The space before a heading is large and
  * the space after it small, so a heading belongs to what follows it.
  */
@@ -527,8 +521,17 @@ body.rail-overlay .marker { display: inline-flex; align-items: center; justify-c
 /* The title keeps the one rule: it separates the document from the bar above it */
 .body h1 { font-size: 2.05rem; margin: 0 0 4px; border-bottom: 1px solid var(--ak-border); padding-bottom: 12px; }
 .body h2 { font-size: 1.5rem; margin: 16px 0 8px; }
-.body h3 { font-size: 1.2rem; margin: 12px 0 6px; }
-.body h4, .body h5, .body h6 { font-size: 1rem; margin: 9px 0 4px; }
+.body h3 { font-size: 1.25rem; margin: 12px 0 6px; }
+/*
+ * Below h3 the size alone runs out: a serif at body size reads lighter than the sans around
+ * it, so an h4 at 1rem looked like a paragraph. From h4 down the weight is raised to 700,
+ * because a face without a 600 (IPA Mincho has only a regular) draws 600 as regular. h4 also
+ * keeps a step of size; h5 and h6 stay at body size, since shrinking them under the body
+ * would rank them below it, and h6 is told from h5 by ink.
+ */
+.body h4 { font-size: 1.1rem; font-weight: 700; margin: 10px 0 4px; }
+.body h5, .body h6 { font-size: 1rem; font-weight: 700; margin: 9px 0 4px; }
+.body h6 { color: var(--ak-fg-2); }
 /* A heading directly under another opens no space of its own: the one above already did */
 .row:has(.body h1, .body h2, .body h3, .body h4, .body h5, .body h6)
   + .row:has(.body h2, .body h3, .body h4, .body h5, .body h6) :is(h2, h3, h4, h5, h6) {
