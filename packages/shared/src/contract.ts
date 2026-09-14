@@ -164,15 +164,12 @@ export const CreateCommentSchema = v.object({
   /**
    * The round the screen was showing when this was written.
    *
-   * Line numbers only mean something inside one round's snapshot, and akapen is read
-   * from more than one screen (`--host 0.0.0.0` is the normal way to run it). When
-   * another screen cuts a round, this one keeps the old numbers and every comment from
-   * it lands somewhere else — or is refused as pointing at nothing, which is what was
-   * actually seen (#100). Saying which round it came from is what lets the server tell
-   * "this line is blank" from "your document moved".
+   * Line numbers only mean something inside one round's snapshot. A screen can be on an
+   * earlier round — opened from history, or left behind when another screen cut the next
+   * one — and the comment is filed on the round named here, so its numbers keep pointing
+   * where the person pointed.
    *
-   * Optional: a tab that was loaded before this existed still works, and a client that
-   * does not say gets the old behaviour rather than a refusal.
+   * Optional: absent means the current round.
    */
   round: v.optional(v.pipe(v.number(), v.integer(), v.minValue(1))),
 });

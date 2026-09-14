@@ -406,8 +406,6 @@ a.peer-file:hover { text-decoration: underline; }
   border-radius: 999px;
   padding: 0 5px;
 }
-body.viewing-history .add, body.viewing-history .row:hover { opacity: 1; }
-body.viewing-history .add { display: none; }
 .rail-close { display: none; }
 
 /* ===== Line blocks ===== */

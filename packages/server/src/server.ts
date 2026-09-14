@@ -253,8 +253,8 @@ export function startServer(opts: ServeOptions) {
     changed: changedState(),
   });
 
-  // Showing a past round: the document and comments exactly as they were.
-  // The document and its line anchors are frozen, so this is read-only.
+  // Showing a past round: the document and comments exactly as they were. The snapshot
+  // never changes, and a comment written on it is filed on that round.
   const historyPayload = (n: number): DocPayload => ({
     type: 'doc',
     history: true,
@@ -480,16 +480,23 @@ export function startServer(opts: ServeOptions) {
   app.post('/api/comments', vValidator('json', CreateCommentSchema), (c) => {
     const { startLine, endLine, body, round } = c.req.valid('json');
     /**
-     * The screen this came from is showing a round that has since been cut, so its line
-     * numbers describe a document the server no longer has. Answered apart from the
-     * range check because the two mean opposite things to whoever is reading: one says
-     * the line is blank, the other says the document moved and the same comment will go
-     * through once it is reloaded (#100). Same status the browser needs to tell them
-     * apart without reading the text.
+     * Filed on the round the screen was showing, whichever that is. Never refused for it.
+     *
+     * akapen is read while an agent keeps writing: a person reviews one round while the
+     * next one is cut on another screen, or goes back to an earlier round to say something
+     * about it. The line numbers were read from that round's snapshot, and saving the
+     * comment into that round is what keeps them pointing where the person pointed.
+     * Refusing it instead throws away a review somebody already wrote and asks them to
+     * write it again, which is the one thing a review tool must not do. The only refusal
+     * left is a range that points at nothing.
+     *
+     * A client that names no round is on the current one.
      */
-    if (round !== undefined && round !== review.currentRound) {
-      return c.text('the round moved; reload the document and send it again', 409);
-    }
+    const n = round ?? review.currentRound;
+    const current = n === review.currentRound;
+    if (!current && !review.rounds.some((r) => r.n === n)) return c.text('no such round', 404);
+    const source = current ? snapshot : roundContent(file, n);
+    const target = current ? doc : buildDoc(file, source);
     /**
      * The schema only knows a line number is a positive integer. Whether the range
      * points at anything depends on the document, which the schema cannot see.
@@ -513,18 +520,18 @@ export function startServer(opts: ServeOptions) {
      */
     if (
       endLine < startLine ||
-      endLine > doc.lineCount ||
-      !doc.blocks.some((b) => b.startLine <= endLine && b.endLine >= startLine)
+      endLine > target.lineCount ||
+      !target.blocks.some((b) => b.startLine <= endLine && b.endLine >= startLine)
     ) {
       return c.text('line range does not point at any text', 400);
     }
-    const comment = makeComment(snapshot, startLine, endLine, body, opts.author);
+    const comment = makeComment(source, startLine, endLine, body, opts.author);
     // Written before it is shown. Pushing first would leave a comment that only exists
     // in memory when the write fails: the POST reports failure, GET returns it anyway,
     // and the next successful save persists the one that was refused.
-    const next = [...comments, comment];
-    saveComments(file, review.currentRound, next);
-    comments = next;
+    const next = [...(current ? comments : loadComments(file, n)), comment];
+    saveComments(file, n, next);
+    if (current) comments = next;
     // Just answer. The author's own screen updates locally.
     return c.json({ comment, comments, carried: carriedOver(file) });
   });
