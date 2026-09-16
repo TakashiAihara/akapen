@@ -22,7 +22,11 @@ type Oklch = { l: number; c: number; h: number };
 function block(header: string): Map<string, Oklch> {
   const at = css.indexOf(header);
   if (at < 0) throw new Error(`no such block: ${header}`);
-  const body = css.slice(at + header.length, css.indexOf('\n}', at));
+  // `\n\s*}`, not `\n}`: the dark block inside the media query closes at an indent, and
+  // stopping at the outer brace instead would quietly take in any rule written after it
+  const rest = css.slice(at + header.length);
+  const end = /\n\s*\}/.exec(rest);
+  const body = rest.slice(0, end ? end.index : rest.length);
   const out = new Map<string, Oklch>();
   for (const m of body.matchAll(/(--ak-[\w-]+):\s*oklch\(\s*([\d.]+)%\s+([\d.]+)\s+([\d.]+)\s*\)/g)) {
     out.set(m[1]!, { l: Number(m[2]) / 100, c: Number(m[3]), h: Number(m[4]) });
@@ -86,9 +90,17 @@ describe.each([
     return v;
   };
 
-  it.each(INK)('%s clears 4.5:1 on the sheet and on the code band', (name) => {
-    expect(contrast(get(name), get('--ak-bg'))).toBeGreaterThanOrEqual(4.5);
-    expect(contrast(get(name), get('--ak-bg-subtle'))).toBeGreaterThanOrEqual(4.5);
+  /*
+   * Every ground text is drawn on, not just the sheet: a row under the pointer, a
+   * selected one, the amber band a banner sits in, the bubble that is being read. Text
+   * that only clears on the sheet goes unreadable the moment a row is picked.
+   */
+  const GROUNDS = ['--ak-bg', '--ak-bg-subtle', '--ak-paper-3', '--ak-warn-subtle', '--ak-accent-subtle'];
+
+  it.each(INK)('%s clears 4.5:1 on every ground it can land on', (name) => {
+    for (const ground of GROUNDS) {
+      expect(contrast(get(name), get(ground)), `${name} on ${ground}`).toBeGreaterThanOrEqual(4.5);
+    }
   });
 
   it('keeps the sheet apart from the desk under it', () => {
@@ -103,9 +115,14 @@ describe.each([
   it.each([...INK.filter((n) => n.startsWith('--ak-code')), '--ak-mark'])(
     "%s stays out of the pen's hues",
     (name) => {
+      /*
+       * Hue is an angle, so the pen's arc runs 340-360-70 and not 0-70. Bounding this
+       * from below alone lets a red through at 355: the same colour as the pen, on the
+       * far side of the wrap, and the reader could no longer tell the two apart.
+       */
       const { h } = get(name);
       expect(h).toBeGreaterThan(70);
-      expect(h).toBeLessThan(360);
+      expect(h).toBeLessThan(340);
     },
   );
 
