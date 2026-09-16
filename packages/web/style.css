@@ -584,17 +584,17 @@ body.rail-overlay .marker { display: inline-flex; align-items: center; justify-c
 }
 .row:first-child .body h1, .row:first-child .body h2 { margin-top: 0; }
 /*
- * Ink, not accent. A link in the accent colour reads as something a person wrote — the
- * blue under it is the machine saying "this leads somewhere", which is not the same claim.
+ * Blue, never the accent. A link in the accent colour reads as something a person wrote;
+ * in blue it reads as what it is — the machine saying "this leads somewhere".
  */
 .body a {
-  color: var(--ak-fg);
+  color: var(--ak-mark);
   text-decoration: underline;
   text-decoration-color: var(--ak-mark);
   text-decoration-thickness: 1px;
   text-underline-offset: 0.18em;
 }
-.body a:hover { text-decoration-color: var(--ak-mark); text-decoration-thickness: 2px; }
+.body a:hover { text-decoration-thickness: 2px; }
 .body code {
   font-family: var(--ak-mono);
   font-size: 0.88em;
