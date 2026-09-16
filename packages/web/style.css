@@ -34,22 +34,51 @@
   /* Where the banner comes to rest. Matches the real height of the bar (#93 follows it) */
   --ak-topbar-h: 41px;
 
-  /* Paper, ink, and the red pen. The accent is only ever what a person wrote */
-  --ak-desk: oklch(88% 0.014 78);
-  --ak-bg: oklch(97.8% 0.009 85);
-  --ak-bg-subtle: oklch(94.5% 0.012 82);
-  --ak-paper-3: oklch(91% 0.014 80);
-  --ak-fg: oklch(22% 0.012 45);
-  --ak-fg-2: oklch(44% 0.012 45);
-  --ak-fg-muted: oklch(48% 0.013 55);
-  --ak-border: oklch(84% 0.014 78);
-  --ak-border-strong: oklch(63% 0.014 70);
+  /*
+   * Paper, ink, and the red pen.
+   *
+   * Three families, and which one a colour belongs to says what it is:
+   *
+   * - neutrals (desk, paper, ink, rules) sit on one hue, 250. They used to sit on 45-85,
+   *   which put the whole screen a step towards the pen and left the accent less room to
+   *   stand out in. One hue for all of them, so the depth reads as paper and not as tint.
+   * - the pen (--ak-accent) is the only warm colour on the sheet, and it marks what a
+   *   person wrote: a commented row, the count, the +, a bubble, a primary button.
+   * - the blue (--ak-mark) is the machine's own furniture: what the outline calls current,
+   *   a control under the pointer, the focus ring, a link. None of it is anybody's writing,
+   *   so none of it may take the pen's colour.
+   */
+  --ak-desk: oklch(88% 0.014 250);
+  --ak-bg: oklch(98% 0.005 250);
+  --ak-bg-subtle: oklch(94.8% 0.009 250);
+  --ak-paper-3: oklch(91% 0.012 250);
+  --ak-fg: oklch(22% 0.015 250);
+  --ak-fg-2: oklch(44% 0.012 250);
+  --ak-fg-muted: oklch(50% 0.012 250);
+  --ak-border: oklch(84% 0.010 250);
+  --ak-border-strong: oklch(63% 0.012 250);
   --ak-accent: oklch(49% 0.195 27);
   --ak-accent-line: oklch(58% 0.12 28);
   --ak-accent-subtle: oklch(93% 0.045 30);
-  --ak-bubble-bg: oklch(98.5% 0.012 32);
-  --ak-focus: oklch(48% 0.215 27);
+  --ak-mark: oklch(48% 0.14 250);
+  --ak-focus: oklch(48% 0.16 250);
   --ak-warn: oklch(48% 0.11 62);
+  --ak-warn-subtle: oklch(94% 0.05 70);
+  /*
+   * Code. highlight.js has been labelling every token since the fences were split per
+   * line; nothing coloured them, so the labels were carried and thrown away.
+   *
+   * The hues stay out of 0-70, which is where the pen and the amber live: a keyword that
+   * happened to be orange would read as a mark in the margin. Each one clears 4.5:1 on the
+   * sheet, in both themes — tests/palette.test.ts measures it rather than trusting the eye.
+   */
+  --ak-code-keyword: oklch(42% 0.15 240);
+  --ak-code-string: oklch(40% 0.12 165);
+  --ak-code-number: oklch(44% 0.14 310);
+  --ak-code-fn: oklch(40% 0.14 275);
+  --ak-code-type: oklch(42% 0.12 195);
+  --ak-code-attr: oklch(43% 0.10 215);
+  --ak-code-comment: oklch(50% 0.02 250);
   --ak-sheet-edge: var(--ak-border);
   --ak-sheet-shadow: 0 1px 2px rgba(32,25,22,.10), 0 10px 28px -12px rgba(32,25,22,.22);
 }
@@ -64,42 +93,58 @@
  */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) {
-    --ak-desk: oklch(10% 0.008 50);
-    --ak-bg: oklch(26% 0.011 55);
-    --ak-bg-subtle: oklch(30% 0.012 55);
-    --ak-paper-3: oklch(34% 0.013 55);
-    --ak-fg: oklch(91% 0.011 80);
-    --ak-fg-2: oklch(72% 0.01 70);
-    --ak-fg-muted: oklch(69% 0.012 60);
-    --ak-border: oklch(40% 0.013 55);
-    --ak-border-strong: oklch(57% 0.013 55);
+    --ak-desk: oklch(10% 0.008 250);
+    --ak-bg: oklch(18% 0.010 250);
+    --ak-bg-subtle: oklch(22% 0.011 250);
+    --ak-paper-3: oklch(26% 0.012 250);
+    --ak-fg: oklch(92% 0.008 250);
+    --ak-fg-2: oklch(73% 0.010 250);
+    --ak-fg-muted: oklch(65% 0.010 250);
+    --ak-border: oklch(31% 0.012 250);
+    --ak-border-strong: oklch(48% 0.013 250);
     --ak-accent: oklch(68% 0.175 30);
     --ak-accent-line: oklch(58% 0.13 30);
-    --ak-accent-subtle: oklch(29% 0.055 30);
-    --ak-bubble-bg: oklch(29% 0.02 32);
-    --ak-focus: oklch(72% 0.2 30);
+    --ak-accent-subtle: oklch(27% 0.055 30);
+    --ak-mark: oklch(74% 0.12 250);
+    --ak-focus: oklch(74% 0.13 250);
     --ak-warn: oklch(75% 0.115 70);
+    --ak-warn-subtle: oklch(26% 0.05 70);
+    --ak-code-keyword: oklch(76% 0.14 240);
+    --ak-code-string: oklch(78% 0.13 165);
+    --ak-code-number: oklch(79% 0.13 310);
+    --ak-code-fn: oklch(76% 0.14 275);
+    --ak-code-type: oklch(78% 0.12 195);
+    --ak-code-attr: oklch(75% 0.10 215);
+    --ak-code-comment: oklch(65% 0.02 250);
     --ak-sheet-edge: var(--ak-border-strong);
-  --ak-sheet-shadow: 0 1px 2px rgba(0,0,0,.55), 0 12px 32px -12px rgba(0,0,0,.75);
+    --ak-sheet-shadow: 0 1px 2px rgba(0,0,0,.55), 0 12px 32px -12px rgba(0,0,0,.75);
   }
 }
 
 :root[data-theme='dark'] {
-  --ak-desk: oklch(10% 0.008 50);
-  --ak-bg: oklch(26% 0.011 55);
-  --ak-bg-subtle: oklch(30% 0.012 55);
-  --ak-paper-3: oklch(34% 0.013 55);
-  --ak-fg: oklch(91% 0.011 80);
-  --ak-fg-2: oklch(72% 0.01 70);
-  --ak-fg-muted: oklch(69% 0.012 60);
-  --ak-border: oklch(40% 0.013 55);
-  --ak-border-strong: oklch(57% 0.013 55);
+  --ak-desk: oklch(10% 0.008 250);
+  --ak-bg: oklch(18% 0.010 250);
+  --ak-bg-subtle: oklch(22% 0.011 250);
+  --ak-paper-3: oklch(26% 0.012 250);
+  --ak-fg: oklch(92% 0.008 250);
+  --ak-fg-2: oklch(73% 0.010 250);
+  --ak-fg-muted: oklch(65% 0.010 250);
+  --ak-border: oklch(31% 0.012 250);
+  --ak-border-strong: oklch(48% 0.013 250);
   --ak-accent: oklch(68% 0.175 30);
   --ak-accent-line: oklch(58% 0.13 30);
-  --ak-accent-subtle: oklch(29% 0.055 30);
-  --ak-bubble-bg: oklch(29% 0.02 32);
-  --ak-focus: oklch(72% 0.2 30);
+  --ak-accent-subtle: oklch(27% 0.055 30);
+  --ak-mark: oklch(74% 0.12 250);
+  --ak-focus: oklch(74% 0.13 250);
   --ak-warn: oklch(75% 0.115 70);
+  --ak-warn-subtle: oklch(26% 0.05 70);
+  --ak-code-keyword: oklch(76% 0.14 240);
+  --ak-code-string: oklch(78% 0.13 165);
+  --ak-code-number: oklch(79% 0.13 310);
+  --ak-code-fn: oklch(76% 0.14 275);
+  --ak-code-type: oklch(78% 0.12 195);
+  --ak-code-attr: oklch(75% 0.10 215);
+  --ak-code-comment: oklch(65% 0.02 250);
   --ak-sheet-edge: var(--ak-border-strong);
   --ak-sheet-shadow: 0 1px 2px rgba(0,0,0,.55), 0 12px 32px -12px rgba(0,0,0,.75);
 }
@@ -184,7 +229,7 @@ body {
   color: var(--ak-fg-muted);
   cursor: pointer;
 }
-.theme-toggle:hover { border-color: var(--ak-accent); color: var(--ak-accent); }
+.theme-toggle:hover { border-color: var(--ak-mark); color: var(--ak-mark); }
 .theme-toggle:focus-visible { outline: 2px solid var(--ak-focus); outline-offset: 1px; }
 .count { color: var(--ak-fg-muted); white-space: nowrap; }
 .round {
@@ -205,7 +250,7 @@ body {
   padding: 8px 16px;
   font-size: 13px;
   color: var(--ak-warn);
-  background: var(--ak-accent-subtle);
+  background: var(--ak-warn-subtle);
   border-bottom: 1px solid var(--ak-border);
 }
 .banner[hidden] { display: none; }
@@ -257,7 +302,7 @@ body {
 }
 .banner.history { color: var(--ak-fg-muted); background: var(--ak-bg-subtle); }
 /* The document on screen is not the one the server has. Same weight as the changed banner: nothing is lost, but nothing can be written either */
-.banner.moved { color: var(--ak-warn); background: var(--ak-accent-subtle); }
+.banner.moved { color: var(--ak-warn); background: var(--ak-warn-subtle); }
 
 /*
  * The switcher: the other akapen on this host.
@@ -280,7 +325,7 @@ body {
   cursor: pointer;
 }
 .peers-toggle[hidden] { display: none; }
-.peers-toggle:hover { border-color: var(--ak-accent); color: var(--ak-accent); }
+.peers-toggle:hover { border-color: var(--ak-mark); color: var(--ak-mark); }
 
 .peers {
   position: absolute;
@@ -304,7 +349,7 @@ body {
   padding: 3px 0;
 }
 .peer-file { font-family: var(--ak-mono); }
-a.peer-file { color: var(--ak-accent); text-decoration: none; }
+a.peer-file { color: var(--ak-mark); text-decoration: none; }
 a.peer-file:hover { text-decoration: underline; }
 .peer-round { font-family: var(--ak-mono); color: var(--ak-fg-muted); }
 .peer-unresolved { color: var(--ak-fg-muted); }
@@ -327,8 +372,8 @@ a.peer-file:hover { text-decoration: underline; }
   cursor: pointer;
 }
 .outline-toggle[hidden] { display: none; }
-.outline-toggle:hover { border-color: var(--ak-accent); color: var(--ak-accent); }
-.outline-toggle[aria-expanded='true'] { border-color: var(--ak-accent); color: var(--ak-accent); }
+.outline-toggle:hover { border-color: var(--ak-mark); color: var(--ak-mark); }
+.outline-toggle[aria-expanded='true'] { border-color: var(--ak-mark); color: var(--ak-mark); }
 
 .outline {
   position: absolute;
@@ -376,9 +421,9 @@ a.peer-file:hover { text-decoration: underline; }
 .outline-entry[data-level='4'],
 .outline-entry[data-level='5'],
 .outline-entry[data-level='6'] { color: var(--ak-fg-muted); }
-.outline-entry:hover { background: var(--ak-bg-subtle); color: var(--ak-accent); }
+.outline-entry:hover { background: var(--ak-bg-subtle); color: var(--ak-mark); }
 /* Where the reader is now, worked out when the panel opens */
-.outline-entry.current { color: var(--ak-accent); box-shadow: inset 2px 0 0 var(--ak-accent); }
+.outline-entry.current { color: var(--ak-mark); box-shadow: inset 2px 0 0 var(--ak-mark); }
 
 .outline-depth {
   display: block;
@@ -538,15 +583,18 @@ body.rail-overlay .marker { display: inline-flex; align-items: center; justify-c
   margin-top: 6px;
 }
 .row:first-child .body h1, .row:first-child .body h2 { margin-top: 0; }
-/* Ink, not accent. A link in the accent colour reads as something a person wrote */
+/*
+ * Ink, not accent. A link in the accent colour reads as something a person wrote — the
+ * blue under it is the machine saying "this leads somewhere", which is not the same claim.
+ */
 .body a {
   color: var(--ak-fg);
   text-decoration: underline;
-  text-decoration-color: var(--ak-border-strong);
+  text-decoration-color: var(--ak-mark);
   text-decoration-thickness: 1px;
   text-underline-offset: 0.18em;
 }
-.body a:hover { text-decoration-color: var(--ak-accent); text-decoration-thickness: 2px; }
+.body a:hover { text-decoration-color: var(--ak-mark); text-decoration-thickness: 2px; }
 .body code {
   font-family: var(--ak-mono);
   font-size: 0.88em;
@@ -574,6 +622,23 @@ body.rail-overlay .marker { display: inline-flex; align-items: center; justify-c
 }
 .code-line code { background: none; border: none; padding: 0; font-size: inherit; }
 .code-fence { color: var(--ak-fg-muted); }
+/*
+ * The token colours. highlight.js has been labelling the code all along and nothing read
+ * the labels, so a fence was one flat colour however long it ran.
+ *
+ * Grouped, not one rule per class: highlight.js names about forty tokens and no reader
+ * tells a `symbol` from a `bullet`. Seven groups are what a person actually reads off a
+ * fence — what is quoted, what is a number, what is called, what is only a comment.
+ */
+.hljs-keyword, .hljs-selector-tag, .hljs-doctag, .hljs-meta .hljs-keyword { color: var(--ak-code-keyword); }
+.hljs-string, .hljs-regexp, .hljs-symbol, .hljs-bullet, .hljs-quote, .hljs-addition, .hljs-meta .hljs-string { color: var(--ak-code-string); }
+.hljs-number, .hljs-literal { color: var(--ak-code-number); }
+.hljs-title, .hljs-section, .hljs-name, .hljs-selector-id, .hljs-selector-class { color: var(--ak-code-fn); }
+.hljs-type, .hljs-built_in, .hljs-class .hljs-title, .hljs-title.class_ { color: var(--ak-code-type); }
+.hljs-attr, .hljs-attribute, .hljs-property, .hljs-variable, .hljs-template-variable, .hljs-selector-attr { color: var(--ak-code-attr); }
+.hljs-comment, .hljs-meta, .hljs-deletion { color: var(--ak-code-comment); }
+.hljs-emphasis { font-style: italic; }
+.hljs-strong { font-weight: 700; }
 .row.code-first .code-line { border-top: 1px solid var(--ak-border); border-radius: 6px 6px 0 0; padding-top: 6px; }
 .row.code-last .code-line { border-bottom: 1px solid var(--ak-border); border-radius: 0 0 6px 6px; padding-bottom: 6px; }
 
@@ -590,7 +655,7 @@ body.rail-overlay .marker { display: inline-flex; align-items: center; justify-c
 
 /* ===== Frontmatter ===== */
 .row.frontmatter { background: var(--ak-bg-subtle); }
-.row.frontmatter:hover { background: var(--ak-accent-subtle); }
+.row.frontmatter:hover { background: var(--ak-paper-3); }
 .row.frontmatter .body { font-family: var(--ak-mono); font-size: 0.82rem; line-height: 1.5; padding: 0 10px; }
 .row.fm-first .body { border-radius: 6px 6px 0 0; padding-top: 6px; }
 .row.fm-last .body { border-radius: 0 0 6px 6px; padding-bottom: 6px; margin-bottom: 14px; }
