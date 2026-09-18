@@ -92,11 +92,18 @@ describe('newEvents', () => {
     expect(events[0]?.content).toContain('body of c1');
   });
 
-  it('says who wrote it, which is the one thing a body cannot carry', () => {
+  it('carries the author field akapen stored, as akapen comments does', () => {
     const first = newEvents('/n/a.md', [], undefined);
     const { events } = newEvents('/n/a.md', [comment('c1', { author: 'takashi' })], first.known);
     expect(events[0]?.meta['author']).toBe('takashi');
-    expect(events[0]?.content).toContain('takashi');
+  });
+
+  it('does not push a file again after a read that came back empty', () => {
+    const first = newEvents('/n/a.md', [comment('c1')], undefined);
+    const empty = newEvents('/n/a.md', [], first.known);
+    // Resolving everything and opening one again looks the same from here.
+    const back = newEvents('/n/a.md', [comment('c1')], empty.known);
+    expect(back.events).toEqual([]);
   });
 
   it('does not report the same unresolved comment twice', () => {
@@ -135,7 +142,7 @@ describe('newEvents', () => {
 
 /** A store on no disk: what each pass sees is whatever the case hands it. */
 const store = (files: string[], comments: Record<string, RoundComment[] | Error>) => ({
-  instances: () => files.map((file) => ({ file, origin: { id: 'S1' } })),
+  instances: () => files.map((file) => ({ file, host: '0.0.0.0', port: 4314, origin: { id: 'S1' } })),
   comments: (file: string) => {
     const c = comments[file];
     if (c instanceof Error) throw c;
@@ -144,6 +151,13 @@ const store = (files: string[], comments: Record<string, RoundComment[] | Error>
 });
 
 describe('collect', () => {
+  it('says where to reply, on this host', () => {
+    const seen = new Map<string, Set<string>>();
+    collect('S1', seen, store(['/n/a.md'], { '/n/a.md': [] }));
+    const events = collect('S1', seen, store(['/n/a.md'], { '/n/a.md': [comment('c1')] }));
+    expect(events[0]?.meta['url']).toBe('http://127.0.0.1:4314');
+  });
+
   it('forgets a document whose akapen has stopped', () => {
     const seen = new Map<string, Set<string>>();
     collect('S1', seen, store(['/n/a.md'], { '/n/a.md': [comment('c1')] }));
