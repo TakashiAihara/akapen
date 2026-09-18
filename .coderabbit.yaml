@@ -8,7 +8,7 @@ reviews:
     - path: '**'
       instructions: |
         Review as the harshest human reviewer on the team. Assume the change is wrong until the code proves otherwise.
-        - For every defect, give a concrete input or state and the wrong output or crash it produces. Drop findings you cannot make concrete, except where a path instruction names an invariant: a change that weakens a named invariant is reported even without a working exploit.
+        - For every defect, give a concrete input or state and the wrong output or crash it produces. Drop findings you cannot make concrete, with one exception: a change that weakens an invariant named in a path instruction matching the same file is reported even without a working exploit.
         - Point at any test assertion that would still pass with the implementation broken.
         - Check whether each code comment's reasoning actually holds. A comment that states a false reason is a defect.
         - Look for silent failures: swallowed errors, fallbacks (`??`, `||`, default values) that hide a bad value, and exit codes lost in pipes.
@@ -16,18 +16,24 @@ reviews:
     - path: 'packages/core/src/blocks.ts'
       instructions: |
         Invariant: every non-blank source line belongs to exactly one block. If a change can break that, say which markdown input breaks it.
-        Invariant: markdown-it runs with `html: false` and its default link validation. Flag any change that turns `html` on or overrides `validateLink`; `plainText` in packages/web/src/inline-text.ts relies on both.
-    - path: 'packages/web/src/{inline-text,title}.ts'
+        Invariant: no HTML this file produces has a raw `>` inside an attribute value; `plainText` in packages/web/src/inline-text.ts relies on it. Flag any change that turns markdown-it's `html` on, overrides `validateLink`, or adds a renderer or template that writes attribute values without escaping them.
+    - path: 'packages/web/src/inline-text.ts'
       instructions: |
-        `plainText` strips tags with a regex. Its input is only HTML that markdown-it generated from the document (packages/core/src/blocks.ts runs with `html: false`), and that output never puts a raw `>` inside an attribute value: URLs come out as `%3E`, attributes as `&gt;`, raw HTML is escaped. Do not report the regex as breakable by attribute values unless the change feeds it HTML from another source.
+        `plainText` strips tags with a regex. Its input is only HTML built by packages/core/src/blocks.ts, which guarantees no raw `>` inside an attribute value (URLs come out as `%3E`, attributes as `&gt;`, raw HTML in the document is escaped). Do not report the regex as breakable by attribute values unless the change feeds it HTML from another source.
+    - path: 'packages/web/src/title.ts'
+      instructions: |
+        `plainText` strips tags with a regex. Its input is only HTML built by packages/core/src/blocks.ts, which guarantees no raw `>` inside an attribute value (URLs come out as `%3E`, attributes as `&gt;`, raw HTML in the document is escaped). Do not report the regex as breakable by attribute values unless the change feeds it HTML from another source.
     - path: 'packages/server/src/**'
       instructions: |
         Invariants (reasons in docs/design/authentication.md); flag any change that weakens one:
         - The Host allowlist accepts only literal addresses and `localhost`, never other host names (DNS rebinding).
-        - The `Sec-Fetch-Site` check stays; a page on another port of the same host can otherwise send the cookie.
+        - A write (non-safe method) with a `Sec-Fetch-Site` header is accepted only when it is `same-origin` or `none`. `same-site` must stay refused: a page on another port of the same host is same-site and can send the cookie.
         - A `?token=` query is always removed by redirect, not only on first use.
         - The token is re-read from the store on each request so `akapen token --rotate` takes effect on a running server.
-    - path: 'packages/{server/src/**,core/src/store.ts}'
+    - path: 'packages/server/src/**'
+      instructions: |
+        Invariant: a comment is never refused because the document changed or the screen shows an earlier round; it is saved to the round the screen showed. Refusal is allowed only when the range points at nothing.
+    - path: 'packages/core/src/store.ts'
       instructions: |
         Invariant: a comment is never refused because the document changed or the screen shows an earlier round; it is saved to the round the screen showed. Refusal is allowed only when the range points at nothing.
     - path: '**/*.md'
