@@ -61,14 +61,21 @@ export function idsOf(comments: RoundComment[]): string[] {
 
 export type ChannelEvent = { content: string; meta: Record<string, string> };
 
-/** The text of a comment, and of a reply as the comment it answers. */
+/**
+ * The text of a comment, and of a reply as the comment it answers.
+ *
+ * A reply carries the comment it is on. Without it the event answers a question the
+ * reader cannot see, and reading the thread means going back to `akapen comments` —
+ * which is the looking this exists to remove.
+ */
 function describe(file: string, c: RoundComment, replyId?: string): ChannelEvent {
   const reply = replyId === undefined ? undefined : (c.replies ?? []).find((r: Reply) => r.id === replyId);
-  const body = reply?.body ?? c.body;
+  const author = reply?.author ?? c.author;
   const lines = [
-    `${reply ? 'Reply on a comment' : 'Comment'} in ${file} (round ${c.round}, lines ${c.startLine}-${c.endLine})`,
+    `${reply ? 'Reply on a comment' : 'Comment'} by ${author} in ${file} (round ${c.round}, lines ${c.startLine}-${c.endLine})`,
     '',
-    body,
+    reply?.body ?? c.body,
+    ...(reply === undefined ? [] : ['', `On the comment by ${c.author}:`, c.body]),
     '',
     // The anchor, not the line number, is what still lands after other edits have moved
     // the file. Sending it means the reader never has to open the round's snapshot.
@@ -82,6 +89,7 @@ function describe(file: string, c: RoundComment, replyId?: string): ChannelEvent
       file,
       comment_id: c.id,
       round: String(c.round),
+      author,
       ...(replyId === undefined ? {} : { reply_id: replyId }),
     },
   };

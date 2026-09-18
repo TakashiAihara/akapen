@@ -88,6 +88,15 @@ describe('newEvents', () => {
     expect(events).toHaveLength(1);
     expect(events[0]?.meta['reply_id']).toBe('r1');
     expect(events[0]?.content).toContain('reply r1');
+    // The comment it answers, so the thread reads without going back to the store.
+    expect(events[0]?.content).toContain('body of c1');
+  });
+
+  it('says who wrote it, which is the one thing a body cannot carry', () => {
+    const first = newEvents('/n/a.md', [], undefined);
+    const { events } = newEvents('/n/a.md', [comment('c1', { author: 'takashi' })], first.known);
+    expect(events[0]?.meta['author']).toBe('takashi');
+    expect(events[0]?.content).toContain('takashi');
   });
 
   it('does not report the same unresolved comment twice', () => {
