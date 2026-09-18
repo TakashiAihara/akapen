@@ -9,7 +9,7 @@
  * unresolved comment every pass, forever.
  */
 import { describe, expect, it } from 'vitest';
-import { filesForSession, idsOf, newEvents } from '../src/channel.ts';
+import { collect, filesForSession, idsOf, newEvents } from '../src/channel.ts';
 import type { RoundComment } from '@akapen/shared';
 
 const comment = (id: string, over: Partial<RoundComment> = {}): RoundComment => ({
@@ -66,6 +66,14 @@ describe('newEvents', () => {
     expect([...known]).toEqual(['c1', 'c2']);
   });
 
+  it('seeds the replies that were already on it, not only the comments', () => {
+    const before = [comment('c1', { replies: [reply('r1')] })];
+    const first = newEvents('/n/a.md', before, undefined);
+    expect(first.events).toEqual([]);
+    // Without the replies in `known`, r1 reads as new on the pass after the first one.
+    expect(newEvents('/n/a.md', before, first.known).events).toEqual([]);
+  });
+
   it('reports a comment that was not there before', () => {
     const first = newEvents('/n/a.md', [comment('c1')], undefined);
     const { events } = newEvents('/n/a.md', [comment('c2'), comment('c1')], first.known);
@@ -89,6 +97,15 @@ describe('newEvents', () => {
     expect(third.events).toEqual([]);
   });
 
+  it('reports a comment that arrived while another was resolved', () => {
+    // The set is the same size either side, so anything watching how many are pending
+    // sees nothing happen. Resolving one and writing one is an ordinary minute of use.
+    const first = newEvents('/n/a.md', [comment('c1')], undefined);
+    const { events } = newEvents('/n/a.md', [comment('c3')], first.known);
+    expect(events).toHaveLength(1);
+    expect(events[0]?.meta['comment_id']).toBe('c3');
+  });
+
   it('carries the anchor, because line numbers belong to the round', () => {
     const first = newEvents('/n/a.md', [], undefined);
     const { events } = newEvents('/n/a.md', [comment('c1', { anchor: '### Q-04 something' })], first.known);
@@ -97,7 +114,56 @@ describe('newEvents', () => {
 
   it('keys meta by identifiers, which is all Claude Code keeps', () => {
     const first = newEvents('/n/a.md', [], undefined);
-    const { events } = newEvents('/n/a.md', [comment('c1')], first.known);
-    for (const key of Object.keys(events[0]?.meta ?? {})) expect(key).toMatch(/^[A-Za-z0-9_]+$/);
+    // Both shapes: a hyphen in a key is dropped in silence, and `reply_id` only appears
+    // on the reply path, so checking the comment path alone would never see it.
+    const { events } = newEvents('/n/a.md', [comment('c1', { replies: [reply('r1')] })], first.known);
+    expect(events).toHaveLength(2);
+    const keys = events.flatMap((e) => Object.keys(e.meta));
+    expect(keys).toContain('reply_id');
+    for (const key of keys) expect(key).toMatch(/^[A-Za-z0-9_]+$/);
+  });
+});
+
+/** A store on no disk: what each pass sees is whatever the case hands it. */
+const store = (files: string[], comments: Record<string, RoundComment[] | Error>) => ({
+  instances: () => files.map((file) => ({ file, origin: { id: 'S1' } })),
+  comments: (file: string) => {
+    const c = comments[file];
+    if (c instanceof Error) throw c;
+    return c ?? [];
+  },
+});
+
+describe('collect', () => {
+  it('forgets a document whose akapen has stopped', () => {
+    const seen = new Map<string, Set<string>>();
+    collect('S1', seen, store(['/n/a.md'], { '/n/a.md': [comment('c1')] }));
+    collect('S1', seen, store([], {}));
+    expect([...seen.keys()]).toEqual([]);
+  });
+
+  it('keeps what it knew when a store cannot be read, rather than seeding over it', () => {
+    const seen = new Map<string, Set<string>>();
+    collect('S1', seen, store(['/n/a.md'], { '/n/a.md': [comment('c1')] }));
+    collect('S1', seen, store(['/n/a.md'], { '/n/a.md': new Error('mid-write') }));
+    // c2 was written while the store could not be read. Forgetting the file over that
+    // pass makes the next one a first sight, and c2 is seeded as history instead.
+    const events = collect('S1', seen, store(['/n/a.md'], { '/n/a.md': [comment('c1'), comment('c2')] }));
+    expect(events).toHaveLength(1);
+    expect(events[0]?.meta['comment_id']).toBe('c2');
+  });
+
+  it('does not go quiet when the registry cannot be read', () => {
+    const seen = new Map<string, Set<string>>();
+    collect('S1', seen, store(['/n/a.md'], { '/n/a.md': [comment('c1')] }));
+    const broken = {
+      instances: (): never => {
+        throw new Error('mid-write');
+      },
+      comments: () => [],
+    };
+    expect(collect('S1', seen, broken)).toEqual([]);
+    const events = collect('S1', seen, store(['/n/a.md'], { '/n/a.md': [comment('c1'), comment('c2')] }));
+    expect(events).toHaveLength(1);
   });
 });

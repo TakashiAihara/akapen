@@ -56,6 +56,21 @@ if (positional.length === 0 || args.help) {
 }
 
 /**
+ * The channel, which is not a command a person types.
+ *
+ * Claude Code spawns it over stdio from an MCP config entry. It takes no arguments: what
+ * it watches is decided by the session id it inherits, so there is nothing to get wrong
+ * on the command line.
+ */
+if (positional[0] === 'channel') {
+  const { runChannel } = await import('./channel.ts');
+  await runChannel();
+  // Only reached if the loop inside ever returns. Falling through would take `channel`
+  // for the path of a document to serve.
+  process.exit(0);
+}
+
+/**
  * The instances running for this user, printed.
  *
  * The terminal is where you are when you have lost the port, and this is the same
@@ -76,18 +91,6 @@ if (positional.length === 0 || args.help) {
  * every script on this host, so replacing it locks all of them out at once — that is
  * what a shared secret costs, and there is nothing finer-grained to reach for.
  */
-/**
- * The channel, which is not a command a person types.
- *
- * Claude Code spawns it over stdio from an MCP config entry. It takes no arguments: what
- * it watches is decided by the session id it inherits, so there is nothing to get wrong
- * on the command line.
- */
-if (positional[0] === 'channel') {
-  const { runChannel } = await import('./channel.ts');
-  await runChannel();
-}
-
 if (positional[0] === 'token') {
   console.log(args.rotate ? rotateToken() : resolveToken());
   process.exit(0);

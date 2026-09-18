@@ -73,6 +73,24 @@ The examples below use `bun run packages/cli/src/cli.ts`; read that as `akapen` 
 
 Use `--host 0.0.0.0` to run it on a remote machine and read it from a local browser. A wildcard bind is not an address anything connects to, so what gets printed is the machine's own addresses — the section below says which, and how to pin one. An address, not a name: akapen serves literal addresses and `localhost` only, because a name is the one thing another machine on the network can claim and rebind.
 
+### Pushing comments into a Claude Code session
+
+`akapen channel` is a [channel](https://code.claude.com/docs/en/channels): an MCP server Claude Code spawns over stdio, which pushes each new comment into the session that is already running, as it is written. Without it a session has to be told to go and look, and the looking is something it has to keep re-arming.
+
+Register it, and start the session with the flag that admits it. Channels are a research preview, so one that is not on Anthropic's allowlist needs the development flag and answers a confirmation dialog at startup:
+
+```json
+{ "mcpServers": { "akapen": { "command": "akapen", "args": ["channel"] } } }
+```
+
+```bash
+claude --dangerously-load-development-channels server:akapen
+```
+
+It reports only the documents that session started — `CLAUDE_CODE_SESSION_ID` is stamped on an instance when it starts, and the same id reaches the channel — so a host running several sessions does not tell all of them about each comment. What is on a document when it is first seen is not reported: that backlog is what `akapen comments` already hands over, and pushing it would bury whatever is new.
+
+It is one way. The channel does not declare `claude/channel/permission`, which would let whoever can write a comment approve the session's tool calls: akapen authenticates the host, not the person. For the same reason a comment arriving this way is somebody's text landing in a running session unasked — it is given to the model as data rather than as instructions, and anyone who can reach the review can write it.
+
 ### Authentication
 
 Every request needs a token, at every bind address. The URL akapen prints carries it:
