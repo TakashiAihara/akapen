@@ -12,6 +12,7 @@
   "dependencies": {
     "@akapen/core": "workspace:*",
     "@akapen/server": "workspace:*",
-    "@akapen/shared": "workspace:*"
+    "@akapen/shared": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.30.0"
   }
 }
