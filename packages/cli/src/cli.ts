@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { startServer } from '@akapen/server';
+
 import { AdvertiseError, localAddresses, resolveAdvertised, urlsFor } from '@akapen/core/addresses';
 
 import { loadReview, pendingComments } from '@akapen/core/store';
@@ -15,6 +15,7 @@ const USAGE = `akapen — markdown inline review (PoC)
   akapen <file.md> [options]     start the review server
   akapen comments <file.md>      print unresolved comments as JSON (for agents)
   akapen list                    print the akapen running on this host
+  akapen channel                 push this session's comments to Claude Code (MCP channel)
   akapen token                   print this host's token (--rotate to replace it)
 
 options:
@@ -51,6 +52,21 @@ const positional = args.positional;
 
 if (positional.length === 0 || args.help) {
   console.log(USAGE);
+  process.exit(0);
+}
+
+/**
+ * The channel, which is not a command a person types.
+ *
+ * Claude Code spawns it over stdio from an MCP config entry. It takes no arguments: what
+ * it watches is decided by the session id it inherits, so there is nothing to get wrong
+ * on the command line.
+ */
+if (positional[0] === 'channel') {
+  const { runChannel } = await import('./channel.ts');
+  await runChannel();
+  // Only reached if the loop inside ever returns. Falling through would take `channel`
+  // for the path of a document to serve.
   process.exit(0);
 }
 
@@ -259,6 +275,11 @@ secureHome();
 
 const token = args['no-auth'] ? null : resolveToken(args.token);
 
+// Loaded here rather than at the top: every subcommand runs this file, and the server
+// (hono, the renderer, the browser assets) is the bulk of its memory. `channel` stays
+// resident for a whole Claude Code session and never serves a page, so paying for the
+// server there costs about 20MB per session for nothing.
+const { startServer } = await import('@akapen/server');
 const { server, stop, storeDir, round } = startServer({
   file,
   host,
