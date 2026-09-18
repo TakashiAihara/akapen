@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { startServer } from '@akapen/server';
+
 import { AdvertiseError, localAddresses, resolveAdvertised, urlsFor } from '@akapen/core/addresses';
 
 import { loadReview, pendingComments } from '@akapen/core/store';
@@ -275,6 +275,11 @@ secureHome();
 
 const token = args['no-auth'] ? null : resolveToken(args.token);
 
+// Loaded here rather than at the top: every subcommand runs this file, and the server
+// (hono, the renderer, the browser assets) is the bulk of its memory. `channel` stays
+// resident for a whole Claude Code session and never serves a page, so paying for the
+// server there costs about 20MB per session for nothing.
+const { startServer } = await import('@akapen/server');
 const { server, stop, storeDir, round } = startServer({
   file,
   host,
