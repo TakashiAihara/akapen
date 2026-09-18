@@ -2,10 +2,10 @@
 reviews:
   profile: assertive
   path_filters:
-    - "!bun.lock"
-    - "!**/dist/**"
+    - '!bun.lock'
+    - '!**/dist/**'
   path_instructions:
-    - path: "**"
+    - path: '**'
       instructions: |
         Review as the harshest human reviewer on the team. Assume the change is wrong until the code proves otherwise.
         - For every defect, give a concrete input or state and the wrong output or crash it produces. Drop findings you cannot make concrete, except where a path instruction names an invariant: a change that weakens a named invariant is reported even without a working exploit.
@@ -13,23 +13,23 @@ reviews:
         - Check whether each code comment's reasoning actually holds. A comment that states a false reason is a defect.
         - Look for silent failures: swallowed errors, fallbacks (`??`, `||`, default values) that hide a bad value, and exit codes lost in pipes.
         - Do not report formatting or naming nits; oxfmt and oxlint cover them.
-    - path: "packages/core/src/blocks.ts"
+    - path: 'packages/core/src/blocks.ts'
       instructions: |
         Invariant: every non-blank source line belongs to exactly one block. If a change can break that, say which markdown input breaks it.
         Invariant: markdown-it runs with `html: false` and its default link validation. Flag any change that turns `html` on or overrides `validateLink`; `plainText` in packages/web/src/inline-text.ts relies on both.
-    - path: "packages/web/src/{inline-text,title}.ts"
+    - path: 'packages/web/src/{inline-text,title}.ts'
       instructions: |
         `plainText` strips tags with a regex. Its input is only HTML that markdown-it generated from the document (packages/core/src/blocks.ts runs with `html: false`), and that output never puts a raw `>` inside an attribute value: URLs come out as `%3E`, attributes as `&gt;`, raw HTML is escaped. Do not report the regex as breakable by attribute values unless the change feeds it HTML from another source.
-    - path: "packages/server/src/**"
+    - path: 'packages/server/src/**'
       instructions: |
         Invariants (reasons in docs/design/authentication.md); flag any change that weakens one:
         - The Host allowlist accepts only literal addresses and `localhost`, never other host names (DNS rebinding).
         - The `Sec-Fetch-Site` check stays; a page on another port of the same host can otherwise send the cookie.
         - A `?token=` query is always removed by redirect, not only on first use.
         - The token is re-read from the store on each request so `akapen token --rotate` takes effect on a running server.
-    - path: "packages/{server/src/**,core/src/store.ts}"
+    - path: 'packages/{server/src/**,core/src/store.ts}'
       instructions: |
         Invariant: a comment is never refused because the document changed or the screen shows an earlier round; it is saved to the round the screen showed. Refusal is allowed only when the range points at nothing.
-    - path: "**/*.md"
+    - path: '**/*.md'
       instructions: |
         This repository is public. Flag names of specific private machines, internal FQDNs, and home-infrastructure products; they should be written generically (for example `one shared host`, `internal DNS`). `localhost`, loopback addresses, and public hosts such as `github.com` are fine.
