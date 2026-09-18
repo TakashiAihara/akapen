@@ -176,3 +176,33 @@ describe('collect', () => {
     expect(events).toHaveLength(1);
   });
 });
+
+describe('runChannel', () => {
+  it('exits when the session closes its stdin', async () => {
+    const { spawn } = await import('node:child_process');
+    const { mkdtempSync, rmSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const home = mkdtempSync(join(tmpdir(), 'akapen-channel-'));
+    const cli = join(import.meta.dirname, '../src/cli.ts');
+    const proc = spawn('bun', ['run', cli, 'channel'], {
+      env: { ...process.env, AKAPEN_HOME: home, CLAUDE_CODE_SESSION_ID: 'channel-exit-test' },
+      stdio: ['pipe', 'ignore', 'ignore'],
+    });
+    try {
+      // Long enough for the MCP transport to be listening, so the close is what ends it.
+      await new Promise((r) => setTimeout(r, 1500));
+      expect(proc.exitCode).toBeNull();
+      const exited = new Promise<number | null>((r) => proc.on('exit', (code) => r(code)));
+      proc.stdin.end();
+      const code = await Promise.race([
+        exited,
+        new Promise<'timeout'>((r) => setTimeout(() => r('timeout'), 5000)),
+      ]);
+      expect(code).toBe(0);
+    } finally {
+      proc.kill();
+      rmSync(home, { recursive: true, force: true });
+    }
+  }, 15000);
+});

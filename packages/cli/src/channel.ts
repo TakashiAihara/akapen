@@ -28,6 +28,8 @@ import type { Reply, RoundComment } from '@akapen/shared';
  */
 const INTERVAL_MS = 3000;
 
+const exitOnClose = (): never => process.exit(0);
+
 /**
  * The documents this session is reviewing.
  *
@@ -208,6 +210,12 @@ export async function runChannel(): Promise<void> {
   );
 
   await mcp.connect(new StdioServerTransport());
+
+  // Claude Code ends a session by closing our stdin. Nothing else ends the loop below, so
+  // without this every session that ever loaded the channel leaves a process behind for
+  // the life of the host.
+  process.stdin.on('end', exitOnClose);
+  process.stdin.on('close', exitOnClose);
 
   const seen = new Map<string, Set<string>>();
   for (;;) {
