@@ -174,8 +174,12 @@ export function collect(
       if (carried !== undefined) next.set(file, carried);
       continue;
     }
-    const { events, known } = newEvents(file, comments, seen.get(file));
-    next.set(file, known);
+    const prev = seen.get(file);
+    const { events, known } = newEvents(file, comments, prev);
+    // A file seen for the first time is seeded here. After that, ids become known only
+    // when their event has been delivered (`markSent`): committing them now would lose any
+    // event whose notification fails, since nothing would ever send it again.
+    next.set(file, prev ?? known);
     const url = urls.get(file);
     for (const e of events) {
       if (url !== undefined) e.meta['url'] = url;
@@ -185,6 +189,13 @@ export function collect(
   seen.clear();
   for (const [file, ids] of next) seen.set(file, ids);
   return out;
+}
+
+/** Record that an event reached the session, so no later pass sends it again. */
+export function markSent(seen: Map<string, Set<string>>, event: ChannelEvent): void {
+  const { file, comment_id: commentId, reply_id: replyId } = event.meta;
+  if (file === undefined || commentId === undefined) return;
+  seen.get(file)?.add(replyId === undefined ? commentId : `${commentId}/${replyId}`);
 }
 
 /**
@@ -239,6 +250,7 @@ export async function runChannel(): Promise<void> {
     try {
       for (const event of collect(sessionId, seen)) {
         await mcp.notification({ method: 'notifications/claude/channel', params: event });
+        markSent(seen, event);
       }
     } catch (err) {
       // A pass that throws must not take the process with it. The whole point of this

@@ -9,7 +9,7 @@
  * unresolved comment every pass, forever.
  */
 import { describe, expect, it } from 'vitest';
-import { collect, filesForSession, idsOf, newEvents } from '../src/channel.ts';
+import { collect, filesForSession, idsOf, markSent, newEvents } from '../src/channel.ts';
 import type { RoundComment } from '@akapen/shared';
 
 const comment = (id: string, over: Partial<RoundComment> = {}): RoundComment => ({
@@ -156,6 +156,22 @@ describe('collect', () => {
     collect('S1', seen, store(['/n/a.md'], { '/n/a.md': [] }));
     const events = collect('S1', seen, store(['/n/a.md'], { '/n/a.md': [comment('c1')] }));
     expect(events[0]?.meta['url']).toBe('http://127.0.0.1:4314');
+  });
+
+  it('sends an event again when its delivery failed', () => {
+    const seen = new Map<string, Set<string>>();
+    collect('S1', seen, store(['/n/a.md'], { '/n/a.md': [] }));
+    expect(collect('S1', seen, store(['/n/a.md'], { '/n/a.md': [comment('c1')] }))).toHaveLength(1);
+    // Not marked: the notification threw, so the session never saw it.
+    expect(collect('S1', seen, store(['/n/a.md'], { '/n/a.md': [comment('c1')] }))).toHaveLength(1);
+  });
+
+  it('does not send a delivered event again', () => {
+    const seen = new Map<string, Set<string>>();
+    collect('S1', seen, store(['/n/a.md'], { '/n/a.md': [] }));
+    const withReply = [comment('c1', { replies: [reply('r1')] })];
+    for (const e of collect('S1', seen, store(['/n/a.md'], { '/n/a.md': withReply }))) markSent(seen, e);
+    expect(collect('S1', seen, store(['/n/a.md'], { '/n/a.md': withReply }))).toEqual([]);
   });
 
   it('forgets a document whose akapen has stopped', () => {
