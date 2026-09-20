@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 
 import { AdvertiseError, localAddresses, resolveAdvertised, urlsFor } from '@akapen/core/addresses';
 
-import { loadReview, pendingComments } from '@akapen/core/store';
+import { legacyLeftBehind, loadReview, pendingComments } from '@akapen/core/store';
 import { liveInstances } from '@akapen/core/instances';
 import { liveEntries, sweep as sweepSessions } from '@akapen/core/sessions';
 import { currentToken, resolveToken, rotateToken, secureHome, tokenIsPinned } from '@akapen/core/token';
@@ -55,27 +55,6 @@ const positional = args.positional;
 if (positional.length === 0 || args.help) {
   console.log(USAGE);
   process.exit(0);
-}
-
-/**
- * `--review-root`, or `AKAPEN_REVIEW_ROOT` for a host that keeps its notes in one tree.
- *
- * Settled here, before any subcommand, because every one of them (serving, `comments`,
- * the channel) opens the store, and the store reads the variable: the flag is written
- * into it, so there is one resolver and the flag wins over the environment the way
- * `--advertise` does. A root that is not a directory is refused rather than ignored —
- * ignored, a typo would key every review by its absolute path and say nothing.
- */
-const requestedRoot = args['review-root'] ?? process.env['AKAPEN_REVIEW_ROOT'] ?? '';
-if (requestedRoot !== '') {
-  let isDir = false;
-  try {
-    isDir = statSync(requestedRoot).isDirectory();
-  } catch {
-    /* Missing: refused below with the same message. */
-  }
-  if (!isDir) fail(`--review-root: ${requestedRoot} is not a directory`);
-  process.env['AKAPEN_REVIEW_ROOT'] = resolve(requestedRoot);
 }
 
 /**
@@ -204,6 +183,31 @@ if (positional[0] === 'list') {
   process.exit(0);
 }
 
+/**
+ * `--review-root`, or `AKAPEN_REVIEW_ROOT` for a host that keeps its notes in one tree.
+ *
+ * Settled here, after `list` and `token`, which never open the store and should not
+ * fail on a variable meant for it (`list` is what a statusline redraws). `comments` and
+ * serving are below and do, and the store reads the variable: the flag is written into
+ * it, so there is one resolver and the flag wins over the environment the way
+ * `--advertise` does. A root that is not a directory is refused rather than ignored —
+ * ignored, a typo would key every review by its absolute path and say nothing. The
+ * channel, above, takes the variable as it is: it has no flag, and an MCP server that
+ * exits on a stale profile is worse than one that keys by the absolute path.
+ */
+const requestedRoot = args['review-root'] ?? process.env['AKAPEN_REVIEW_ROOT'] ?? '';
+if (requestedRoot !== '') {
+  let isDir = false;
+  try {
+    isDir = statSync(requestedRoot).isDirectory();
+  } catch {
+    /* Missing: refused below with the same message. */
+  }
+  const source = args['review-root'] === undefined ? 'AKAPEN_REVIEW_ROOT' : '--review-root';
+  if (!isDir) fail(`${source}: ${requestedRoot} is not a directory`);
+  process.env['AKAPEN_REVIEW_ROOT'] = resolve(requestedRoot);
+}
+
 if (positional[0] === 'comments') {
   const file = positional[1];
   if (!file || !existsSync(file)) fail(`no such file: ${file ?? '(missing)'}`);
@@ -212,6 +216,14 @@ if (positional[0] === 'comments') {
   // and will not match the live file, so an agent matches on `anchor` (the text as it was).
   const review = loadReview(file);
   const comments = pendingComments(file, args.all);
+  // stderr, so the JSON on stdout stays JSON. The agent reading it is not the one who
+  // can merge two stores, but the person running it by hand is.
+  const leftBehind = legacyLeftBehind(file);
+  if (leftBehind !== null) {
+    console.error(
+      `akapen: a review keyed by the absolute path was left at ${leftBehind}; its comments are not in this output`,
+    );
+  }
   console.log(
     JSON.stringify(
       comments.map((c) => ({
@@ -373,6 +385,11 @@ console.log(`  url     ${withToken(primary)}`);
 // Nothing is printed here when `--advertise` named one: the choice has been made.
 for (const also of alternates) console.log(`  also    ${withToken(also)}`);
 console.log(`  round   ${String(round).padStart(3, '0')}`);
+// In the block rather than on stderr: a person reads this block, and a review whose
+// comments are in a directory nothing looks at is worth a line of it.
+const leftBehind = legacyLeftBehind(file);
+if (leftBehind !== null)
+  console.log(`  legacy  ${leftBehind}  (kept: the store below already has rounds; merge or remove it)`);
 console.log(`  store   ${storeDir}`);
 if (token === null) {
   console.log(`  note    --no-auth: anyone who can reach this address can read and write.`);

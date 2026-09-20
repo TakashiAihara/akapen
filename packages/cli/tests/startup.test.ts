@@ -9,7 +9,7 @@
  */
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { networkInterfaces } from 'node:os';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
@@ -241,14 +241,89 @@ describe('--review-root', () => {
   }, 30_000);
 
   it('refuses a root that is not a directory, rather than keying by the absolute path', () => {
-    const result = spawnSync(
-      'bun',
-      ['run', CLI, 'comments', '/nonexistent.md', '--review-root', '/nonexistent-root'],
-      {
-        encoding: 'utf8',
-      },
-    );
+    // The file exists, so a refusal that merely fell through would go on to print `[]`
+    // with status 0. The root is that same file: present, and not a directory.
+    const sandbox = mkdtempSync(join(tmpdir(), 'akapen-startup-'));
+    sandboxes.push(sandbox);
+    const file = join(sandbox, 'note.md');
+    writeFileSync(file, SOURCE);
+    const result = spawnSync('bun', ['run', CLI, 'comments', file, '--review-root', file], {
+      env: { ...process.env, AKAPEN_HOME: join(sandbox, 'home') },
+      encoding: 'utf8',
+    });
     expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain('/nonexistent-root');
+    expect(result.stderr).toContain(`${file} is not a directory`);
+  }, 30_000);
+
+  it('leaves list alone: a stale variable in a profile must not break what the statusline redraws', () => {
+    const sandbox = mkdtempSync(join(tmpdir(), 'akapen-startup-'));
+    sandboxes.push(sandbox);
+    const result = spawnSync('bun', ['run', CLI, 'list'], {
+      env: { ...process.env, AKAPEN_HOME: join(sandbox, 'home'), AKAPEN_REVIEW_ROOT: '/nonexistent-root' },
+      encoding: 'utf8',
+    });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('no akapen is running');
+  }, 30_000);
+});
+
+/**
+ * Two stores for one note (#191): this host reviewed it before the root was set, and
+ * the other host's store arrived by sync under the relative key. Neither is dropped,
+ * and the one nothing looks up is named.
+ */
+describe('a legacy store left behind', () => {
+  /** A note under a root, with a review under the absolute key and one under the relative key. */
+  const twoStores = () => {
+    const sandbox = mkdtempSync(join(tmpdir(), 'akapen-startup-'));
+    sandboxes.push(sandbox);
+    const root = join(sandbox, 'notes');
+    mkdirSync(root);
+    const file = join(root, 'note.md');
+    writeFileSync(file, SOURCE);
+    const home = join(sandbox, 'home');
+    const key = (input: string) => join(home, 'reviews', keyed(input));
+    // The absolute key is the path as given (`resolve`), not its realpath.
+    for (const dir of [key(file), key('note.md')]) {
+      mkdirSync(join(dir, 'rounds', '001'), { recursive: true });
+      writeFileSync(join(dir, 'rounds', '001', 'content.md'), SOURCE);
+      writeFileSync(join(dir, 'rounds', '001', 'comments.json'), '[]');
+      writeFileSync(
+        join(dir, 'review.json'),
+        JSON.stringify({ version: 2, currentRound: 1, rounds: [{ n: 1, createdAt: 'x', closedAt: null }] }),
+      );
+    }
+    return { file, root, home, legacy: key(file) };
+  };
+
+  it('is named in the startup block', async () => {
+    const { file, root, home, legacy } = twoStores();
+    const proc = spawn('bun', ['run', CLI, file, '-p', '0', '--review-root', root], {
+      env: { ...process.env, AKAPEN_HOME: home },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    running.push(() => void proc.kill());
+    let out = '';
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`akapen did not start:\n${out}`)), 15_000);
+      proc.stdout?.on('data', (chunk: Buffer) => {
+        out += chunk.toString();
+        if (!/^\s+store\s+\S/m.test(out)) return;
+        clearTimeout(timer);
+        resolve();
+      });
+    });
+    expect(out).toContain(`legacy  ${legacy}`);
+  }, 30_000);
+
+  it('is named on stderr by comments, with the JSON on stdout untouched', () => {
+    const { file, root, home, legacy } = twoStores();
+    const result = spawnSync('bun', ['run', CLI, 'comments', file, '--review-root', root], {
+      env: { ...process.env, AKAPEN_HOME: home },
+      encoding: 'utf8',
+    });
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual([]);
+    expect(result.stderr).toContain(legacy);
   }, 30_000);
 });

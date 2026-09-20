@@ -1,11 +1,12 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { homedir } from 'node:os';
-import { basename, join, relative, resolve } from 'node:path';
+import { basename, dirname, join, relative, resolve } from 'node:path';
 import type { AuthorKind, Comment, Reply, RoundComment, RoundMeta } from '@akapen/shared';
 import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   writeFileSync,
   renameSync,
   statSync,
@@ -20,8 +21,10 @@ export type Review = {
   /** Absolute on the host that wrote it. Rewritten from the argument on every load, so
    * a review.json copied from another host does not carry its path over. */
   path: string;
-  /** Set when the file is under `AKAPEN_REVIEW_ROOT`: the root, and the path relative
-   * to it that the store is keyed by. This pair is the part that survives a copy. */
+  /** Set when the file is under `AKAPEN_REVIEW_ROOT`: the path relative to it that the
+   * store is keyed by, which is what another host can match, and the root it was
+   * relative to when written, which says where. Both are informational: like `path`,
+   * they are recomputed from the argument on every load. */
   root?: string;
   relativePath?: string;
   /** 0 means no round has been opened yet. */
@@ -36,26 +39,55 @@ export type Review = {
  */
 export function storeDir(filePath: string): string {
   const abs = resolve(filePath);
-  const name = basename(abs).replace(/\.md$/, '');
-  const dirFor = (keyed: string) =>
-    join(akapenHome(), 'reviews', `${name}-${createHash('sha1').update(keyed).digest('hex').slice(0, 12)}`);
   const rel = relativeToRoot(abs);
-  if (rel === null) return dirFor(abs);
-  const dir = dirFor(rel);
-  // A review made before the root was set is keyed by the absolute path. Moving it
-  // once is what keeps it findable; from then on the legacy name does not exist and
-  // this costs one stat. Once is the filesystem's word: rename will not replace a
-  // populated directory, so a second copy under the old name stays where it is, and a
-  // second process racing on the same move loses with ENOENT.
-  const legacy = dirFor(abs);
-  if (existsSync(legacy)) {
-    try {
-      renameSync(legacy, dir);
-    } catch {
-      /* Already moved, or the store is read-only: the lookup decides. */
-    }
+  return keyedDir(abs, rel ?? abs);
+}
+
+function keyedDir(abs: string, keyed: string): string {
+  const name = basename(abs).replace(/\.md$/, '');
+  return join(
+    akapenHome(),
+    'reviews',
+    `${name}-${createHash('sha1').update(keyed).digest('hex').slice(0, 12)}`,
+  );
+}
+
+/**
+ * Where a review made before the root was set would be: the absolute-path key. Null
+ * when the file is not under a root, since then that key is the key.
+ */
+export function legacyStoreDir(filePath: string): string | null {
+  const abs = resolve(filePath);
+  return relativeToRoot(abs) === null ? null : keyedDir(abs, abs);
+}
+
+/**
+ * Move a review keyed by the absolute path to its relative key, once.
+ *
+ * Called from loadReview when nothing is under the new key yet, so a migrated store
+ * costs the stat loadReview already pays and a stale legacy directory is not retried
+ * on every read. Once is the filesystem's word: rename will not replace a populated
+ * directory, so a second copy under the old name stays where it is, and a second
+ * process racing on the same move loses with ENOENT.
+ */
+function migrateLegacy(filePath: string): void {
+  const legacy = legacyStoreDir(filePath);
+  if (legacy === null || !existsSync(legacy)) return;
+  try {
+    renameSync(legacy, storeDir(filePath));
+  } catch {
+    /* Already moved, or both keys are populated: legacyLeftBehind reports the latter. */
   }
-  return dir;
+}
+
+/**
+ * A legacy directory that could not be moved because the new key already holds a
+ * review. The comments in it are invisible to every lookup, which is the failure
+ * #191 exists to remove, so callers that face a person say where it is.
+ */
+export function legacyLeftBehind(filePath: string): string | null {
+  const legacy = legacyStoreDir(filePath);
+  return legacy !== null && existsSync(legacy) && existsSync(reviewFile(filePath)) ? legacy : null;
 }
 
 /**
@@ -77,9 +109,22 @@ export function reviewRoot(): string | null {
 export function relativeToRoot(abs: string): string | null {
   const root = reviewRoot();
   if (root === null) return null;
-  const rel = relative(root, abs);
+  // Both sides real: `/var` and `/private/var` are one directory on macOS, and a
+  // `~/notes` that is a symlink onto a mount is the issue's own use case. The
+  // absolute key stays `resolve`d — realpath there would rename every existing review.
+  const rel = relative(realpathOr(root), realpathOr(abs));
   // `../` and not `..`: a file called `..x.md` right under the root is inside it.
   return rel === '..' || rel.startsWith('../') ? null : rel;
+}
+
+/** realpath, or as much of it as exists: a file not yet written still has a real parent. */
+function realpathOr(p: string): string {
+  try {
+    return realpathSync(p);
+  } catch {
+    const parent = dirname(p);
+    return parent === p ? p : join(realpathOr(parent), basename(p));
+  }
 }
 
 /**
@@ -153,6 +198,7 @@ function roundsOnDisk(filePath: string): RoundMeta[] {
 
 export function loadReview(filePath: string): Review {
   const f = reviewFile(filePath);
+  if (!existsSync(f)) migrateLegacy(filePath);
   if (existsSync(f)) {
     try {
       const parsed = JSON.parse(readFileSync(f, 'utf8')) as Partial<Review>;

@@ -5,7 +5,15 @@
  * while building the history view, loadAllComments trusted review.json and missed
  * rounds that were on disk.
  */
-import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -13,6 +21,7 @@ import {
   addReply,
   carriedOver,
   ensureRound,
+  legacyLeftBehind,
   loadAllComments,
   loadComments,
   loadReview,
@@ -330,15 +339,17 @@ describe('AKAPEN_REVIEW_ROOT', () => {
     saveComments(a, 1, [makeComment(SOURCE, 6, 6, 'from host a', 't')]);
     const dirA = storeDir(a);
 
+    // What host a wrote to disk names the key in the form host b can match.
+    expect(JSON.parse(readFileSync(join(dirA, 'review.json'), 'utf8'))).toMatchObject({
+      path: a,
+      root: join(sandbox, 'home-a', 'notes'),
+      relativePath: join('x', 'note.md'),
+    });
+
     process.env['AKAPEN_REVIEW_ROOT'] = join(sandbox, 'home-b', 'notes');
     // Host b sees the directory host a wrote, under whatever synced ~/.akapen/reviews.
     expect(storeDir(b)).toBe(dirA);
     expect(pendingComments(b).map((c) => c.body)).toEqual(['from host a']);
-    expect(loadReview(b)).toMatchObject({
-      path: b,
-      root: join(sandbox, 'home-b', 'notes'),
-      relativePath: join('x', 'note.md'),
-    });
   });
 
   it('keys a file outside the root exactly as it did with no root', () => {
@@ -363,17 +374,61 @@ describe('AKAPEN_REVIEW_ROOT', () => {
     const legacy = storeDir(file);
 
     process.env['AKAPEN_REVIEW_ROOT'] = root;
+    // The move happens on the read, not on naming the directory.
     const dir = storeDir(file);
-    expect(dir).not.toBe(legacy);
+    expect(existsSync(legacy)).toBe(true);
+    expect(loadReview(file).currentRound).toBe(1);
     expect(existsSync(legacy)).toBe(false);
+    expect(existsSync(join(dir, 'review.json'))).toBe(true);
     expect(loadComments(file, 1)).toEqual(comments);
+    expect(legacyLeftBehind(file)).toBeNull();
 
-    // Second access: a directory reappearing under the legacy name is not moved over
-    // the one already in place.
+    // A directory reappearing under the legacy name is not moved over the one already
+    // in place, and the person is told it is there.
     mkdirSync(legacy);
     writeFileSync(join(legacy, 'marker'), '');
-    expect(storeDir(file)).toBe(dir);
-    expect(existsSync(join(legacy, 'marker'))).toBe(true);
     expect(loadComments(file, 1)).toEqual(comments);
+    expect(existsSync(join(legacy, 'marker'))).toBe(true);
+    expect(legacyLeftBehind(file)).toBe(legacy);
+  });
+
+  it('keeps both stores and names the one left behind when each host had reviewed the note', () => {
+    const root = join(sandbox, 'notes');
+    const file = tree(root);
+    ensureRound(file, SOURCE);
+    saveComments(file, 1, [makeComment(SOURCE, 6, 6, 'on this host, before the root', 't')]);
+    const legacy = storeDir(file);
+
+    process.env['AKAPEN_REVIEW_ROOT'] = root;
+    // The other host's store arrives by sync under the relative key.
+    const arrived = storeDir(file);
+    mkdirSync(join(arrived, 'rounds', '001'), { recursive: true });
+    writeFileSync(join(arrived, 'rounds', '001', 'content.md'), SOURCE);
+    writeFileSync(
+      join(arrived, 'rounds', '001', 'comments.json'),
+      JSON.stringify([makeComment(SOURCE, 8, 8, 'from the other host', 't')]),
+    );
+    writeFileSync(
+      join(arrived, 'review.json'),
+      JSON.stringify({ version: 2, currentRound: 1, rounds: [{ n: 1, createdAt: 'x', closedAt: null }] }),
+    );
+
+    expect(pendingComments(file).map((c) => c.body)).toEqual(['from the other host']);
+    expect(existsSync(legacy)).toBe(true);
+    expect(legacyLeftBehind(file)).toBe(legacy);
+  });
+
+  it('agrees on the key through a symlinked root', () => {
+    const real = join(sandbox, 'mount', 'notes');
+    const file = tree(real);
+    mkdirSync(join(sandbox, 'home'), { recursive: true });
+    symlinkSync(real, join(sandbox, 'link-notes'));
+
+    // Mixed spellings: the root through the link, the file by its real path, and back.
+    process.env['AKAPEN_REVIEW_ROOT'] = join(sandbox, 'link-notes');
+    const viaLink = storeDir(file);
+    expect(loadReview(file).relativePath).toBe(join('x', 'note.md'));
+    process.env['AKAPEN_REVIEW_ROOT'] = real;
+    expect(storeDir(join(sandbox, 'link-notes', 'x', 'note.md'))).toBe(viaLink);
   });
 });
