@@ -71,6 +71,7 @@ The examples below use `bun run packages/cli/src/cli.ts`; read that as `akapen` 
 | `--token <s>` | use this token instead of the stored one (`AKAPEN_TOKEN` does the same without appearing in `ps`) |
 | `--no-auth` | serve with no token at all, for running behind something that authenticates |
 
+
 Use `--host 0.0.0.0` to run it on a remote machine and read it from a local browser. A wildcard bind is not an address anything connects to, so what gets printed is the machine's own addresses — the section below says which, and how to pin one. An address, not a name: akapen serves literal addresses and `localhost` only, because a name is the one thing another machine on the network can claim and rebind.
 
 ### Pushing comments into a Claude Code session
@@ -429,7 +430,18 @@ The markdown file is never touched.
 ~/.akapen/sessions/
   <session-id>/<pid>   # the url that instance can be reached at, one line
 ~/.akapen/token        # the shared secret, mode 0600
+~/.akapen/review-root  # the directory reviews are keyed under, one line, if one is set
 ```
+
+`<hash>` is the first twelve hex characters of the sha1 of the file's absolute path — which is a key that contains `$HOME`, so the same note under `/Users/me/notes` and `/root/notes` hashes to two different directories, and a `~/notes` synced between the two hosts arrives without its comments even when `~/.akapen/reviews` is synced along with it. `akapen review-root ~/notes` names a directory under which files are keyed by their path relative to it instead: run once on each host, the two agree on `x/00-judgment-queue.md` and find the same directory. Files outside the root keep the absolute key, and nothing changes while no root is set. `review.json` records the root and the relative path beside the absolute one.
+
+| Command | Meaning |
+|---|---|
+| `akapen review-root` | print the root, or `none` |
+| `akapen review-root <dir>` | set it — a directory that does not exist is refused, not stored |
+| `akapen review-root --clear` | unset it |
+
+The root is a file in the store rather than a variable in the environment, so every process reading the same `AKAPEN_HOME` — `akapen comments`, the channel, a cron job — derives the same key; a variable would be read by whatever inherited it, and a shell without the profile would look under the absolute key and report the note as never reviewed. A review made before the root was set is moved to its new name the first time it is read. If the new name already holds a review (this host reviewed the note before the root was set, and another host's store then arrived by sync), nothing is moved and nothing is dropped: the startup block and `akapen comments` name the directory left behind, and merging or removing it is a manual step. Directories are compared as real paths, so a root that is a symlink onto a mount still contains what is under the mount, and a note that is itself a symlink is keyed by its name under the root. A root that has since gone missing stops `comments` and serving with a message; `list` and `token` do not read the store and are not stopped. Syncing the store itself is not akapen's job: `instances/` and `sessions/` are runtime state and are not meant to travel.
 
 `AKAPEN_HOME` replaces `~/.akapen` (the tests use it to avoid touching the real store). `AKAPEN_SETTLE_MS` replaces the 50ms gap between the two reads that decide the file has stopped moving; the test that asserts a moving file is refused hands over a long one, because at 50ms the assertion rested on its writer outrunning that gap and lost the race on CI ([#135](https://github.com/TakashiAihara/akapen/issues/135)).
 

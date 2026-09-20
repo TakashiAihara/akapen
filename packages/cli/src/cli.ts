@@ -1,10 +1,16 @@
 #!/usr/bin/env bun
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import { AdvertiseError, localAddresses, resolveAdvertised, urlsFor } from '@akapen/core/addresses';
 
-import { loadReview, pendingComments } from '@akapen/core/store';
+import {
+  legacyLeftBehind,
+  loadReview,
+  pendingComments,
+  reviewRoot,
+  writeReviewRoot,
+} from '@akapen/core/store';
 import { liveInstances } from '@akapen/core/instances';
 import { liveEntries, sweep as sweepSessions } from '@akapen/core/sessions';
 import { currentToken, resolveToken, rotateToken, secureHome, tokenIsPinned } from '@akapen/core/token';
@@ -17,6 +23,7 @@ const USAGE = `akapen — markdown inline review (PoC)
   akapen list                    print the akapen running on this host
   akapen channel                 push this session's comments to Claude Code (MCP channel)
   akapen token                   print this host's token (--rotate to replace it)
+  akapen review-root [<dir>]     print or set the directory reviews are keyed under (--clear to unset)
 
 options:
   --host <addr>            listen address (default 127.0.0.1)
@@ -32,7 +39,16 @@ options:
   --json                   list: print as JSON (for agents)
   --session <id>           list: only what that session started
   --rotate                 token: replace the stored token
+  --clear                  review-root: unset it
 `;
+
+function isDirectory(p: string): boolean {
+  try {
+    return statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+}
 
 /** Anything typed wrong ends here: the reason, then how to type it. */
 function fail(message: string): never {
@@ -181,6 +197,47 @@ if (positional[0] === 'list') {
   process.exit(0);
 }
 
+/**
+ * The directory reviews are keyed under (#191), set once per host and kept in the
+ * store, so every akapen on this `AKAPEN_HOME` — the channel included — derives the
+ * same key. A directory that does not exist is refused rather than stored: stored, it
+ * would key every review by its absolute path and say nothing.
+ */
+if (positional[0] === 'review-root') {
+  // A second path is a typo, and the one that would be kept is the first.
+  if (positional.length > 2) fail(`review-root: one directory, got ${positional.length - 1}`);
+  const dir = positional[1];
+  if (args.clear) {
+    if (dir !== undefined) fail('review-root: --clear takes no directory');
+    writeReviewRoot(null);
+    process.exit(0);
+  }
+  if (dir !== undefined) {
+    if (!isDirectory(dir)) fail(`review-root: ${dir} is not a directory`);
+    writeReviewRoot(dir);
+  }
+  const root = reviewRoot();
+  console.log(root ?? 'none');
+  process.exit(0);
+}
+
+/**
+ * A root that has gone missing since it was set. Checked here, after `list` and
+ * `token`, which never open the store (`list` is what a statusline redraws), and
+ * before `comments` and serving, which do. Not before the channel either: an MCP
+ * server that exits over a stale root is worse than one that keys files under it by
+ * the absolute path, which is what a missing root amounts to. A root file that cannot
+ * be read is different, and the store throws on it everywhere.
+ */
+{
+  const root = reviewRoot();
+  if (root !== null && !isDirectory(root)) {
+    fail(
+      `review-root: ${root} is not a directory (akapen review-root <dir> to replace it, --clear to unset)`,
+    );
+  }
+}
+
 if (positional[0] === 'comments') {
   const file = positional[1];
   if (!file || !existsSync(file)) fail(`no such file: ${file ?? '(missing)'}`);
@@ -189,6 +246,14 @@ if (positional[0] === 'comments') {
   // and will not match the live file, so an agent matches on `anchor` (the text as it was).
   const review = loadReview(file);
   const comments = pendingComments(file, args.all);
+  // stderr, so the JSON on stdout stays JSON. The agent reading it is not the one who
+  // can merge two stores, but the person running it by hand is.
+  const leftBehind = legacyLeftBehind(file);
+  if (leftBehind !== null) {
+    console.error(
+      `akapen: a review keyed by the absolute path was left at ${leftBehind}; its comments are not in this output`,
+    );
+  }
   console.log(
     JSON.stringify(
       comments.map((c) => ({
@@ -350,6 +415,11 @@ console.log(`  url     ${withToken(primary)}`);
 // Nothing is printed here when `--advertise` named one: the choice has been made.
 for (const also of alternates) console.log(`  also    ${withToken(also)}`);
 console.log(`  round   ${String(round).padStart(3, '0')}`);
+// In the block rather than on stderr: a person reads this block, and a review whose
+// comments are in a directory nothing looks at is worth a line of it.
+const leftBehind = legacyLeftBehind(file);
+if (leftBehind !== null)
+  console.log(`  legacy  ${leftBehind}  (could not be moved onto the store below; merge or remove it)`);
 console.log(`  store   ${storeDir}`);
 if (token === null) {
   console.log(`  note    --no-auth: anyone who can reach this address can read and write.`);

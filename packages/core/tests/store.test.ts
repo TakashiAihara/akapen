@@ -5,7 +5,16 @@
  * while building the history view, loadAllComments trusted review.json and missed
  * rounds that were on disk.
  */
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -13,10 +22,13 @@ import {
   addReply,
   carriedOver,
   ensureRound,
+  legacyLeftBehind,
   loadAllComments,
   loadComments,
   loadReview,
   makeComment,
+  reviewRoot,
+  writeReviewRoot,
   openRound,
   pendingComments,
   roundContent,
@@ -298,5 +310,187 @@ describe('replies', () => {
     openRound(work, EDITED);
     const carried = carriedOver(work).find((c) => c.id === first!.id);
     expect(carried?.replies?.[0]?.body).toBe('why it is still open');
+  });
+});
+
+/**
+ * Keying by a path relative to a root (#191).
+ *
+ * The failure this guards against is silent: a review copied to a host with a
+ * different $HOME is not lost, it is merely never looked up, and the note reads as
+ * never reviewed.
+ */
+describe('the review root', () => {
+  afterEach(() => {
+    writeReviewRoot(null);
+  });
+
+  /** A `notes/x/note.md` under a root of its own, with SOURCE in it. */
+  const tree = (root: string) => {
+    const file = join(root, 'x', 'note.md');
+    mkdirSync(join(root, 'x'), { recursive: true });
+    writeFileSync(file, SOURCE);
+    return file;
+  };
+
+  it('gives the same key to the same relative path under two different roots', () => {
+    const a = tree(join(sandbox, 'home-a', 'notes'));
+    const b = tree(join(sandbox, 'home-b', 'notes'));
+
+    writeReviewRoot(join(sandbox, 'home-a', 'notes'));
+    ensureRound(a, SOURCE);
+    saveComments(a, 1, [makeComment(SOURCE, 6, 6, 'from host a', 't')]);
+    const dirA = storeDir(a);
+
+    // What host a wrote to disk names the key in the form host b can match.
+    expect(JSON.parse(readFileSync(join(dirA, 'review.json'), 'utf8'))).toMatchObject({
+      path: a,
+      root: realpathSync(join(sandbox, 'home-a', 'notes')),
+      relativePath: join('x', 'note.md'),
+    });
+
+    writeReviewRoot(join(sandbox, 'home-b', 'notes'));
+    // Host b sees the directory host a wrote, under whatever synced ~/.akapen/reviews.
+    expect(storeDir(b)).toBe(dirA);
+    expect(pendingComments(b).map((c) => c.body)).toEqual(['from host a']);
+  });
+
+  it('keys a file outside the root exactly as it did with no root', () => {
+    const unset = storeDir(work);
+    mkdirSync(join(sandbox, 'elsewhere'));
+    writeReviewRoot(join(sandbox, 'elsewhere'));
+    expect(storeDir(work)).toBe(unset);
+    expect(loadReview(work)).not.toHaveProperty('root');
+    // A sibling whose name merely starts with the root's is outside it too.
+    mkdirSync(sandbox.slice(0, -1));
+    writeReviewRoot(sandbox.slice(0, -1));
+    expect(storeDir(work)).toBe(unset);
+    // And a file whose name starts with `..` is not above the root it sits in.
+    writeReviewRoot(sandbox);
+    expect(loadReview(join(sandbox, '..odd.md')).relativePath).toBe('..odd.md');
+  });
+
+  it('moves a review keyed by the absolute path to the relative key once, comments intact', () => {
+    const root = join(sandbox, 'notes');
+    const file = tree(root);
+    const comments = [makeComment(SOURCE, 6, 6, 'before the root existed', 't')];
+    ensureRound(file, SOURCE);
+    saveComments(file, 1, comments);
+    const legacy = storeDir(file);
+
+    writeReviewRoot(root);
+    // The move happens on the read, not on naming the directory.
+    const dir = storeDir(file);
+    expect(existsSync(legacy)).toBe(true);
+    expect(loadReview(file).currentRound).toBe(1);
+    expect(existsSync(legacy)).toBe(false);
+    // The moved review.json names the relative key on disk, not only in memory.
+    expect(JSON.parse(readFileSync(join(dir, 'review.json'), 'utf8'))).toMatchObject({
+      relativePath: join('x', 'note.md'),
+      currentRound: 1,
+    });
+    expect(loadComments(file, 1)).toEqual(comments);
+    expect(legacyLeftBehind(file)).toBeNull();
+
+    // A directory reappearing under the legacy name is not moved over the one already
+    // in place, and the person is told it is there.
+    mkdirSync(legacy);
+    writeFileSync(join(legacy, 'marker'), '');
+    expect(loadReview(file).currentRound).toBe(1);
+    expect(loadComments(file, 1)).toEqual(comments);
+    expect(existsSync(join(legacy, 'marker'))).toBe(true);
+    expect(legacyLeftBehind(file)).toBe(legacy);
+  });
+
+  it('keeps both stores and names the one left behind when each host had reviewed the note', () => {
+    const root = join(sandbox, 'notes');
+    const file = tree(root);
+    ensureRound(file, SOURCE);
+    saveComments(file, 1, [makeComment(SOURCE, 6, 6, 'on this host, before the root', 't')]);
+    const legacy = storeDir(file);
+
+    writeReviewRoot(root);
+    // The other host's store arrives by sync under the relative key — rounds only, as a
+    // sync that has not finished, or a review.json lost along the way, would leave it.
+    const arrived = storeDir(file);
+    mkdirSync(join(arrived, 'rounds', '001'), { recursive: true });
+    writeFileSync(join(arrived, 'rounds', '001', 'content.md'), SOURCE);
+    writeFileSync(
+      join(arrived, 'rounds', '001', 'comments.json'),
+      JSON.stringify([makeComment(SOURCE, 8, 8, 'from the other host', 't')]),
+    );
+
+    expect(pendingComments(file).map((c) => c.body)).toEqual(['from the other host']);
+    expect(existsSync(legacy)).toBe(true);
+    expect(legacyLeftBehind(file)).toBe(legacy);
+  });
+
+  it('agrees on the key through a symlinked root', () => {
+    const real = join(sandbox, 'mount', 'notes');
+    const file = tree(real);
+    mkdirSync(join(sandbox, 'home'), { recursive: true });
+    symlinkSync(real, join(sandbox, 'link-notes'));
+
+    // Mixed spellings: the root through the link, the file by its real path, and back.
+    writeReviewRoot(join(sandbox, 'link-notes'));
+    const viaLink = storeDir(file);
+    expect(loadReview(file).relativePath).toBe(join('x', 'note.md'));
+    writeReviewRoot(real);
+    expect(storeDir(join(sandbox, 'link-notes', 'x', 'note.md'))).toBe(viaLink);
+    // A note that is itself a symlink to somewhere outside is still the note under the root.
+    symlinkSync(work, join(real, 'x', 'elsewhere.md'));
+    expect(loadReview(join(real, 'x', 'elsewhere.md')).relativePath).toBe(join('x', 'elsewhere.md'));
+  });
+});
+
+describe('a store already under the new key', () => {
+  afterEach(() => {
+    writeReviewRoot(null);
+  });
+
+  it('is not moved onto, even when it holds no review.json yet', () => {
+    const comments = [makeComment(SOURCE, 6, 6, 'before the root', 't')];
+    ensureRound(work, SOURCE);
+    saveComments(work, 1, comments);
+    const legacy = storeDir(work);
+
+    writeReviewRoot(sandbox);
+    // Rounds only under the new key: the state a sync in progress leaves. The move is
+    // refused by the filesystem, not by anything that first makes room for it.
+    const dir = storeDir(work);
+    mkdirSync(join(dir, 'rounds', '001'), { recursive: true });
+    writeFileSync(join(dir, 'rounds', '001', 'content.md'), EDITED);
+
+    expect(loadReview(work).currentRound).toBe(1);
+    expect(roundContent(work, 1)).toBe(EDITED);
+    expect(existsSync(legacy)).toBe(true);
+    expect(legacyLeftBehind(work)).toBe(legacy);
+  });
+});
+
+describe('the review-root file', () => {
+  afterEach(() => {
+    writeReviewRoot(null);
+  });
+
+  it('keeps a trailing space in the directory name', () => {
+    const spaced = join(sandbox, 'notes ');
+    mkdirSync(spaced);
+    writeReviewRoot(spaced);
+    expect(reviewRoot()).toBe(realpathSync(spaced));
+  });
+
+  it('is an error when present but unreadable, not an absent root', () => {
+    mkdirSync(join(process.env['AKAPEN_HOME']!, 'review-root'), { recursive: true });
+    expect(() => reviewRoot()).toThrow();
+    rmSync(join(process.env['AKAPEN_HOME']!, 'review-root'), { recursive: true });
+  });
+
+  it('clearing what is not set is fine, and clearing what cannot be removed is not', () => {
+    expect(() => writeReviewRoot(null)).not.toThrow();
+    mkdirSync(join(process.env['AKAPEN_HOME']!, 'review-root'), { recursive: true });
+    writeFileSync(join(process.env['AKAPEN_HOME']!, 'review-root', 'x'), '');
+    expect(() => writeReviewRoot(null)).toThrow();
+    rmSync(join(process.env['AKAPEN_HOME']!, 'review-root'), { recursive: true });
   });
 });

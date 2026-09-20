@@ -1,11 +1,12 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { homedir } from 'node:os';
-import { basename, join, resolve } from 'node:path';
+import { basename, dirname, join, relative, resolve } from 'node:path';
 import type { AuthorKind, Comment, Reply, RoundComment, RoundMeta } from '@akapen/shared';
 import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   writeFileSync,
   renameSync,
   statSync,
@@ -17,7 +18,15 @@ export type { AuthorKind, Comment, Reply, RoundComment, RoundMeta };
 
 export type Review = {
   version: 2;
+  /** Absolute on the host that wrote it. Rewritten from the argument on every load, so
+   * a review.json copied from another host does not carry its path over. */
   path: string;
+  /** Set when the file is under the store's review root: the path relative to it that the
+   * store is keyed by, which is what another host can match, and the root it was
+   * relative to when written, which says where. Both are informational: like `path`,
+   * they are recomputed from the argument on every load. */
+  root?: string;
+  relativePath?: string;
   /** 0 means no round has been opened yet. */
   currentRound: number;
   rounds: RoundMeta[];
@@ -30,8 +39,141 @@ export type Review = {
  */
 export function storeDir(filePath: string): string {
   const abs = resolve(filePath);
-  const hash = createHash('sha1').update(abs).digest('hex').slice(0, 12);
-  return join(akapenHome(), 'reviews', `${basename(abs).replace(/\.md$/, '')}-${hash}`);
+  const rel = relativeToRoot(abs);
+  return keyedDir(abs, rel ?? abs);
+}
+
+function keyedDir(abs: string, keyed: string): string {
+  const name = basename(abs).replace(/\.md$/, '');
+  return join(
+    akapenHome(),
+    'reviews',
+    `${name}-${createHash('sha1').update(keyed).digest('hex').slice(0, 12)}`,
+  );
+}
+
+/**
+ * Where a review made before the root was set would be: the absolute-path key. Null
+ * when the file is not under a root, since then that key is the key.
+ */
+export function legacyStoreDir(filePath: string): string | null {
+  const abs = resolve(filePath);
+  return relativeToRoot(abs) === null ? null : keyedDir(abs, abs);
+}
+
+/**
+ * Move a review keyed by the absolute path to its relative key, once.
+ *
+ * Called from loadReview when nothing is under the new key yet, so a migrated store
+ * costs the stat loadReview already pays and a stale legacy directory is not retried
+ * on every read. Once is the filesystem's word: rename will not replace a populated
+ * directory, so a second copy under the old name stays where it is, and a second
+ * process racing on the same move loses with ENOENT.
+ */
+function migrateLegacy(filePath: string): void {
+  const legacy = legacyStoreDir(filePath);
+  if (legacy === null || !existsSync(legacy)) return;
+  try {
+    renameSync(legacy, storeDir(filePath));
+  } catch {
+    /* Whatever the reason, the directory is still there, and legacyLeftBehind says so. */
+    return;
+  }
+  // The moved review.json still names only the absolute path. Writing it back once
+  // gives the file the relative form the directory now has, so a copy of it says
+  // what it is keyed by.
+  saveReview(loadReview(filePath));
+}
+
+/**
+ * A legacy directory still present after loadReview tried to move it: the new key
+ * already held a review, or the store could not be written. Either way the comments
+ * in it are invisible to every lookup, which is the failure #191 exists to remove, so
+ * callers that face a person say where it is. Ask after a load, not before one.
+ */
+export function legacyLeftBehind(filePath: string): string | null {
+  const legacy = legacyStoreDir(filePath);
+  return legacy !== null && existsSync(legacy) ? legacy : null;
+}
+
+/**
+ * The directory reviews are keyed under, when one is set.
+ *
+ * A key derived from the absolute path is a key derived from `$HOME`, so a `~/notes`
+ * synced between two hosts arrives with its comments looking absent (#191). Keying
+ * by the path relative to a root that both hosts set makes them agree. Files outside
+ * the root keep the absolute key; no root means that everywhere.
+ *
+ * The root is a file in the store, not a variable in the environment: the key is a
+ * property of the store, and every process reading the same `AKAPEN_HOME` has to
+ * derive the same one. A variable would be read by whatever happened to inherit it,
+ * and a cron job or a shell without the profile would look under the absolute key,
+ * find nothing, and say so with an empty list.
+ *
+ * Read on each call rather than cached: the file is a line, and a server that cached
+ * it would key by a root the person has since replaced.
+ */
+export function reviewRoot(): string | null {
+  let raw: string;
+  try {
+    raw = readFileSync(reviewRootPath(), 'utf8');
+  } catch (e) {
+    // No file is no root. Anything else (unreadable, a directory) is not: answering
+    // null there would key by the absolute path and look like nothing was set.
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw e;
+  }
+  // Only the line ending the writer added: a directory may end in a space.
+  const root = raw.replace(/\n$/, '');
+  return root === '' ? null : root;
+}
+
+function reviewRootPath(): string {
+  return join(akapenHome(), 'review-root');
+}
+
+/**
+ * Set the root for this store, or clear it with null.
+ *
+ * Stored as a real, absolute path: relative would be relative to whoever reads it,
+ * and a symlink resolved here is resolved the same way relativeToRoot resolves the
+ * file's directories.
+ */
+export function writeReviewRoot(dir: string | null): void {
+  if (dir === null) {
+    try {
+      unlinkSync(reviewRootPath());
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+    }
+    return;
+  }
+  mkdirSync(akapenHome(), { recursive: true, mode: 0o700 });
+  writeAtomic(reviewRootPath(), `${realpathSync(resolve(dir))}\n`);
+}
+
+/** `abs` as a key relative to the review root, or null when there is no root or it is not under it. */
+export function relativeToRoot(abs: string): string | null {
+  const root = reviewRoot();
+  if (root === null) return null;
+  // Both sides real: `/var` and `/private/var` are one directory on macOS, and a
+  // `~/notes` that is a symlink onto a mount is the issue's own use case. The file's
+  // own name is kept as written, so a note that is itself a symlink to somewhere else
+  // is still the note under the root. The absolute key stays `resolve`d — realpath
+  // there would rename every existing review.
+  const rel = relative(realpathOr(root), join(realpathOr(dirname(abs)), basename(abs)));
+  // `../` and not `..`: a file called `..x.md` right under the root is inside it.
+  return rel === '..' || rel.startsWith('../') ? null : rel;
+}
+
+/** realpath, or as much of it as exists: a file not yet written still has a real parent. */
+function realpathOr(p: string): string {
+  try {
+    return realpathSync(p);
+  } catch {
+    const parent = dirname(p);
+    return parent === p ? p : join(realpathOr(parent), basename(p));
+  }
 }
 
 /**
@@ -105,6 +247,7 @@ function roundsOnDisk(filePath: string): RoundMeta[] {
 
 export function loadReview(filePath: string): Review {
   const f = reviewFile(filePath);
+  if (!existsSync(f)) migrateLegacy(filePath);
   if (existsSync(f)) {
     try {
       const parsed = JSON.parse(readFileSync(f, 'utf8')) as Partial<Review>;
@@ -118,8 +261,7 @@ export function loadReview(filePath: string): Review {
         const known = new Set(rounds.map((r) => r.n));
         const merged = [...rounds, ...disk.filter((r) => !known.has(r.n))].toSorted((a, b) => a.n - b.n);
         return {
-          version: 2,
-          path: resolve(filePath),
+          ...identity(filePath),
           currentRound: Math.max(currentRound!, merged.at(-1)?.n ?? 0),
           rounds: merged,
         };
@@ -132,7 +274,16 @@ export function loadReview(filePath: string): Review {
   // Resetting currentRound to 0 here would make openRound overwrite round 001,
   // destroying a frozen document and its comments.
   const rounds = roundsOnDisk(filePath);
-  return { version: 2, path: resolve(filePath), currentRound: rounds.at(-1)?.n ?? 0, rounds };
+  return { ...identity(filePath), currentRound: rounds.at(-1)?.n ?? 0, rounds };
+}
+
+/** The part of a Review that names the file, in both the host's and the portable form. */
+function identity(filePath: string): Pick<Review, 'version' | 'path' | 'root' | 'relativePath'> {
+  const abs = resolve(filePath);
+  const rel = relativeToRoot(abs);
+  return rel === null
+    ? { version: 2, path: abs }
+    : { version: 2, path: abs, root: reviewRoot()!, relativePath: rel };
 }
 
 export function saveReview(review: Review): void {
