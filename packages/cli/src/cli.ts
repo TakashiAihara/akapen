@@ -389,7 +389,7 @@ console.log(`  round   ${String(round).padStart(3, '0')}`);
 // comments are in a directory nothing looks at is worth a line of it.
 const leftBehind = legacyLeftBehind(file);
 if (leftBehind !== null)
-  console.log(`  legacy  ${leftBehind}  (kept: the store below already has rounds; merge or remove it)`);
+  console.log(`  legacy  ${leftBehind}  (could not be moved onto the store below; merge or remove it)`);
 console.log(`  store   ${storeDir}`);
 if (token === null) {
   console.log(`  note    --no-auth: anyone who can reach this address can read and write.`);

@@ -76,18 +76,24 @@ function migrateLegacy(filePath: string): void {
   try {
     renameSync(legacy, storeDir(filePath));
   } catch {
-    /* Already moved, or both keys are populated: legacyLeftBehind reports the latter. */
+    /* Whatever the reason, the directory is still there, and legacyLeftBehind says so. */
+    return;
   }
+  // The moved review.json still names only the absolute path. Writing it back once
+  // gives the file the relative form the directory now has, so a copy of it says
+  // what it is keyed by.
+  saveReview(loadReview(filePath));
 }
 
 /**
- * A legacy directory that could not be moved because the new key already holds a
- * review. The comments in it are invisible to every lookup, which is the failure
- * #191 exists to remove, so callers that face a person say where it is.
+ * A legacy directory still present after loadReview tried to move it: the new key
+ * already held a review, or the store could not be written. Either way the comments
+ * in it are invisible to every lookup, which is the failure #191 exists to remove, so
+ * callers that face a person say where it is. Ask after a load, not before one.
  */
 export function legacyLeftBehind(filePath: string): string | null {
   const legacy = legacyStoreDir(filePath);
-  return legacy !== null && existsSync(legacy) && existsSync(reviewFile(filePath)) ? legacy : null;
+  return legacy !== null && existsSync(legacy) ? legacy : null;
 }
 
 /**
@@ -110,9 +116,11 @@ export function relativeToRoot(abs: string): string | null {
   const root = reviewRoot();
   if (root === null) return null;
   // Both sides real: `/var` and `/private/var` are one directory on macOS, and a
-  // `~/notes` that is a symlink onto a mount is the issue's own use case. The
-  // absolute key stays `resolve`d — realpath there would rename every existing review.
-  const rel = relative(realpathOr(root), realpathOr(abs));
+  // `~/notes` that is a symlink onto a mount is the issue's own use case. The file's
+  // own name is kept as written, so a note that is itself a symlink to somewhere else
+  // is still the note under the root. The absolute key stays `resolve`d — realpath
+  // there would rename every existing review.
+  const rel = relative(realpathOr(root), join(realpathOr(dirname(abs)), basename(abs)));
   // `../` and not `..`: a file called `..x.md` right under the root is inside it.
   return rel === '..' || rel.startsWith('../') ? null : rel;
 }

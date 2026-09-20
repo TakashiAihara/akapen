@@ -283,11 +283,30 @@ describe('a legacy store left behind', () => {
     writeFileSync(file, SOURCE);
     const home = join(sandbox, 'home');
     const key = (input: string) => join(home, 'reviews', keyed(input));
-    // The absolute key is the path as given (`resolve`), not its realpath.
-    for (const dir of [key(file), key('note.md')]) {
+    // The absolute key is the path as given (`resolve`), not its realpath. Each store
+    // holds a comment of its own, so which one was read shows in the output.
+    for (const [dir, body] of [
+      [key(file), 'from the legacy store'],
+      [key('note.md'), 'from the relative store'],
+    ] as const) {
       mkdirSync(join(dir, 'rounds', '001'), { recursive: true });
       writeFileSync(join(dir, 'rounds', '001', 'content.md'), SOURCE);
-      writeFileSync(join(dir, 'rounds', '001', 'comments.json'), '[]');
+      writeFileSync(
+        join(dir, 'rounds', '001', 'comments.json'),
+        JSON.stringify([
+          {
+            id: 'c_1',
+            startLine: 1,
+            endLine: 1,
+            body,
+            author: 't',
+            createdAt: 'x',
+            resolved: false,
+            anchor: '# Heading',
+            replies: [],
+          },
+        ]),
+      );
       writeFileSync(
         join(dir, 'review.json'),
         JSON.stringify({ version: 2, currentRound: 1, rounds: [{ n: 1, createdAt: 'x', closedAt: null }] }),
@@ -323,7 +342,9 @@ describe('a legacy store left behind', () => {
       encoding: 'utf8',
     });
     expect(result.status).toBe(0);
-    expect(JSON.parse(result.stdout)).toEqual([]);
+    expect((JSON.parse(result.stdout) as { body: string }[]).map((c) => c.body)).toEqual([
+      'from the relative store',
+    ]);
     expect(result.stderr).toContain(legacy);
   }, 30_000);
 });
