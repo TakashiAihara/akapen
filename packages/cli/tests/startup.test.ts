@@ -8,10 +8,11 @@
  * the process starts, serves correctly, and prints an address that opens nothing.
  */
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { networkInterfaces } from 'node:os';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 const CLI = join(import.meta.dirname, '..', 'src', 'cli.ts');
@@ -213,5 +214,41 @@ describe('--advertise', () => {
   it('an empty AKAPEN_ADVERTISE is an unset one, not a request to advertise nothing', async () => {
     const { lines } = await start([], { AKAPEN_ADVERTISE: '' });
     expect(urlsIn(lines)[0]).toContain('//127.0.0.1:');
+  }, 30_000);
+});
+
+/**
+ * The review root (#191): the store line is where the key shows, so it is what proves
+ * the flag and the variable reached the store.
+ */
+const storeIn = (lines: string[]): string => /^\s+store\s+(\S+)$/m.exec(lines.join('\n'))![1]!;
+const keyed = (input: string): string =>
+  `note-${createHash('sha1').update(input).digest('hex').slice(0, 12)}`;
+
+describe('--review-root', () => {
+  it('keys the served file by its path relative to AKAPEN_REVIEW_ROOT', async () => {
+    const { lines } = await start([], { AKAPEN_REVIEW_ROOT: tmpdir() });
+    const store = storeIn(lines);
+    // The sandbox is a child of tmpdir, so the key is `<sandbox name>/note.md`.
+    const rel = relative(tmpdir(), join(sandboxes.at(-1)!, 'note.md'));
+    expect(store.endsWith(keyed(rel))).toBe(true);
+  }, 30_000);
+
+  it('lets the flag beat the variable', async () => {
+    const { lines } = await start(['--review-root', tmpdir()], { AKAPEN_REVIEW_ROOT: '/' });
+    const rel = relative(tmpdir(), join(sandboxes.at(-1)!, 'note.md'));
+    expect(storeIn(lines).endsWith(keyed(rel))).toBe(true);
+  }, 30_000);
+
+  it('refuses a root that is not a directory, rather than keying by the absolute path', () => {
+    const result = spawnSync(
+      'bun',
+      ['run', CLI, 'comments', '/nonexistent.md', '--review-root', '/nonexistent-root'],
+      {
+        encoding: 'utf8',
+      },
+    );
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('/nonexistent-root');
   }, 30_000);
 });

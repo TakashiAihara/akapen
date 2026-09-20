@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import { AdvertiseError, localAddresses, resolveAdvertised, urlsFor } from '@akapen/core/addresses';
@@ -32,6 +32,8 @@ options:
   --json                   list: print as JSON (for agents)
   --session <id>           list: only what that session started
   --rotate                 token: replace the stored token
+  --review-root <dir>      key reviews of files under this directory by their path
+                           relative to it ($AKAPEN_REVIEW_ROOT sets it once per host)
 `;
 
 /** Anything typed wrong ends here: the reason, then how to type it. */
@@ -53,6 +55,27 @@ const positional = args.positional;
 if (positional.length === 0 || args.help) {
   console.log(USAGE);
   process.exit(0);
+}
+
+/**
+ * `--review-root`, or `AKAPEN_REVIEW_ROOT` for a host that keeps its notes in one tree.
+ *
+ * Settled here, before any subcommand, because every one of them (serving, `comments`,
+ * the channel) opens the store, and the store reads the variable: the flag is written
+ * into it, so there is one resolver and the flag wins over the environment the way
+ * `--advertise` does. A root that is not a directory is refused rather than ignored —
+ * ignored, a typo would key every review by its absolute path and say nothing.
+ */
+const requestedRoot = args['review-root'] ?? process.env['AKAPEN_REVIEW_ROOT'] ?? '';
+if (requestedRoot !== '') {
+  let isDir = false;
+  try {
+    isDir = statSync(requestedRoot).isDirectory();
+  } catch {
+    /* Missing: refused below with the same message. */
+  }
+  if (!isDir) fail(`--review-root: ${requestedRoot} is not a directory`);
+  process.env['AKAPEN_REVIEW_ROOT'] = resolve(requestedRoot);
 }
 
 /**

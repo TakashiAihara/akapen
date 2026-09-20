@@ -35,6 +35,7 @@ describe('flags that take a value', () => {
 
   it('reads the value attached with =', () => {
     expect(parseArgs(['note.md', '--host=0.0.0.0']).host).toBe('0.0.0.0');
+    expect(parseArgs(['note.md', '--review-root=/n'])['review-root']).toBe('/n');
   });
 
   it('takes a value starting with a dash only in the attached form', () => {

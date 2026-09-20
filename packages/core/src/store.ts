@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { homedir } from 'node:os';
-import { basename, join, resolve } from 'node:path';
+import { basename, join, relative, resolve } from 'node:path';
 import type { AuthorKind, Comment, Reply, RoundComment, RoundMeta } from '@akapen/shared';
 import {
   mkdirSync,
@@ -17,7 +17,13 @@ export type { AuthorKind, Comment, Reply, RoundComment, RoundMeta };
 
 export type Review = {
   version: 2;
+  /** Absolute on the host that wrote it. Rewritten from the argument on every load, so
+   * a review.json copied from another host does not carry its path over. */
   path: string;
+  /** Set when the file is under `AKAPEN_REVIEW_ROOT`: the root, and the path relative
+   * to it that the store is keyed by. This pair is the part that survives a copy. */
+  root?: string;
+  relativePath?: string;
   /** 0 means no round has been opened yet. */
   currentRound: number;
   rounds: RoundMeta[];
@@ -30,8 +36,50 @@ export type Review = {
  */
 export function storeDir(filePath: string): string {
   const abs = resolve(filePath);
-  const hash = createHash('sha1').update(abs).digest('hex').slice(0, 12);
-  return join(akapenHome(), 'reviews', `${basename(abs).replace(/\.md$/, '')}-${hash}`);
+  const name = basename(abs).replace(/\.md$/, '');
+  const dirFor = (keyed: string) =>
+    join(akapenHome(), 'reviews', `${name}-${createHash('sha1').update(keyed).digest('hex').slice(0, 12)}`);
+  const rel = relativeToRoot(abs);
+  if (rel === null) return dirFor(abs);
+  const dir = dirFor(rel);
+  // A review made before the root was set is keyed by the absolute path. Moving it
+  // once is what keeps it findable; from then on the legacy name does not exist and
+  // this costs one stat. Once is the filesystem's word: rename will not replace a
+  // populated directory, so a second copy under the old name stays where it is, and a
+  // second process racing on the same move loses with ENOENT.
+  const legacy = dirFor(abs);
+  if (existsSync(legacy)) {
+    try {
+      renameSync(legacy, dir);
+    } catch {
+      /* Already moved, or the store is read-only: the lookup decides. */
+    }
+  }
+  return dir;
+}
+
+/**
+ * The directory reviews are keyed under, when one is set.
+ *
+ * A key derived from the absolute path is a key derived from `$HOME`, so a `~/notes`
+ * synced between two hosts arrives with its comments looking absent (#191). Keying
+ * by the path relative to a root that both hosts set makes them agree. Files outside
+ * the root keep the absolute key; unset means that everywhere.
+ *
+ * An empty variable is an unset one, for the same reason `AKAPEN_ADVERTISE=` is.
+ */
+export function reviewRoot(): string | null {
+  const raw = process.env['AKAPEN_REVIEW_ROOT'] ?? '';
+  return raw === '' ? null : resolve(raw);
+}
+
+/** `abs` as a key relative to the review root, or null when there is no root or it is not under it. */
+export function relativeToRoot(abs: string): string | null {
+  const root = reviewRoot();
+  if (root === null) return null;
+  const rel = relative(root, abs);
+  // `../` and not `..`: a file called `..x.md` right under the root is inside it.
+  return rel === '..' || rel.startsWith('../') ? null : rel;
 }
 
 /**
@@ -118,8 +166,7 @@ export function loadReview(filePath: string): Review {
         const known = new Set(rounds.map((r) => r.n));
         const merged = [...rounds, ...disk.filter((r) => !known.has(r.n))].toSorted((a, b) => a.n - b.n);
         return {
-          version: 2,
-          path: resolve(filePath),
+          ...identity(filePath),
           currentRound: Math.max(currentRound!, merged.at(-1)?.n ?? 0),
           rounds: merged,
         };
@@ -132,7 +179,16 @@ export function loadReview(filePath: string): Review {
   // Resetting currentRound to 0 here would make openRound overwrite round 001,
   // destroying a frozen document and its comments.
   const rounds = roundsOnDisk(filePath);
-  return { version: 2, path: resolve(filePath), currentRound: rounds.at(-1)?.n ?? 0, rounds };
+  return { ...identity(filePath), currentRound: rounds.at(-1)?.n ?? 0, rounds };
+}
+
+/** The part of a Review that names the file, in both the host's and the portable form. */
+function identity(filePath: string): Pick<Review, 'version' | 'path' | 'root' | 'relativePath'> {
+  const abs = resolve(filePath);
+  const rel = relativeToRoot(abs);
+  return rel === null
+    ? { version: 2, path: abs }
+    : { version: 2, path: abs, root: reviewRoot()!, relativePath: rel };
 }
 
 export function saveReview(review: Review): void {

@@ -5,7 +5,7 @@
  * while building the history view, loadAllComments trusted review.json and missed
  * rounds that were on disk.
  */
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -298,5 +298,82 @@ describe('replies', () => {
     openRound(work, EDITED);
     const carried = carriedOver(work).find((c) => c.id === first!.id);
     expect(carried?.replies?.[0]?.body).toBe('why it is still open');
+  });
+});
+
+/**
+ * Keying by a path relative to a root (#191).
+ *
+ * The failure this guards against is silent: a review copied to a host with a
+ * different $HOME is not lost, it is merely never looked up, and the note reads as
+ * never reviewed.
+ */
+describe('AKAPEN_REVIEW_ROOT', () => {
+  afterEach(() => {
+    delete process.env['AKAPEN_REVIEW_ROOT'];
+  });
+
+  /** A `notes/x/note.md` under a root of its own, with SOURCE in it. */
+  const tree = (root: string) => {
+    const file = join(root, 'x', 'note.md');
+    mkdirSync(join(root, 'x'), { recursive: true });
+    writeFileSync(file, SOURCE);
+    return file;
+  };
+
+  it('gives the same key to the same relative path under two different roots', () => {
+    const a = tree(join(sandbox, 'home-a', 'notes'));
+    const b = tree(join(sandbox, 'home-b', 'notes'));
+
+    process.env['AKAPEN_REVIEW_ROOT'] = join(sandbox, 'home-a', 'notes');
+    ensureRound(a, SOURCE);
+    saveComments(a, 1, [makeComment(SOURCE, 6, 6, 'from host a', 't')]);
+    const dirA = storeDir(a);
+
+    process.env['AKAPEN_REVIEW_ROOT'] = join(sandbox, 'home-b', 'notes');
+    // Host b sees the directory host a wrote, under whatever synced ~/.akapen/reviews.
+    expect(storeDir(b)).toBe(dirA);
+    expect(pendingComments(b).map((c) => c.body)).toEqual(['from host a']);
+    expect(loadReview(b)).toMatchObject({
+      path: b,
+      root: join(sandbox, 'home-b', 'notes'),
+      relativePath: join('x', 'note.md'),
+    });
+  });
+
+  it('keys a file outside the root exactly as it did with no root', () => {
+    const unset = storeDir(work);
+    process.env['AKAPEN_REVIEW_ROOT'] = join(sandbox, 'elsewhere');
+    expect(storeDir(work)).toBe(unset);
+    expect(loadReview(work)).not.toHaveProperty('root');
+    // A sibling whose name merely starts with the root's is outside it too.
+    process.env['AKAPEN_REVIEW_ROOT'] = sandbox.slice(0, -1);
+    expect(storeDir(work)).toBe(unset);
+    // And a file whose name starts with `..` is not above the root it sits in.
+    process.env['AKAPEN_REVIEW_ROOT'] = sandbox;
+    expect(loadReview(join(sandbox, '..odd.md')).relativePath).toBe('..odd.md');
+  });
+
+  it('moves a review keyed by the absolute path to the relative key once, comments intact', () => {
+    const root = join(sandbox, 'notes');
+    const file = tree(root);
+    const comments = [makeComment(SOURCE, 6, 6, 'before the root existed', 't')];
+    ensureRound(file, SOURCE);
+    saveComments(file, 1, comments);
+    const legacy = storeDir(file);
+
+    process.env['AKAPEN_REVIEW_ROOT'] = root;
+    const dir = storeDir(file);
+    expect(dir).not.toBe(legacy);
+    expect(existsSync(legacy)).toBe(false);
+    expect(loadComments(file, 1)).toEqual(comments);
+
+    // Second access: a directory reappearing under the legacy name is not moved over
+    // the one already in place.
+    mkdirSync(legacy);
+    writeFileSync(join(legacy, 'marker'), '');
+    expect(storeDir(file)).toBe(dir);
+    expect(existsSync(join(legacy, 'marker'))).toBe(true);
+    expect(loadComments(file, 1)).toEqual(comments);
   });
 });

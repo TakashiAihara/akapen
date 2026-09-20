@@ -14,7 +14,17 @@
 export class UsageError extends Error {}
 
 /** Flags that carry a value. Given without one, they fail rather than becoming `true`. */
-const VALUE_FLAGS = ['host', 'port', 'css', 'keymap', 'author', 'token', 'advertise', 'session'] as const;
+const VALUE_FLAGS = [
+  'host',
+  'port',
+  'css',
+  'keymap',
+  'author',
+  'token',
+  'advertise',
+  'session',
+  'review-root',
+] as const;
 
 /** Flags that are on or off. Given a value, they fail — `--all=false` reads as "off". */
 const BOOLEAN_FLAGS = ['help', 'all', 'json', 'no-auth', 'rotate'] as const;

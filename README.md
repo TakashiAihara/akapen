@@ -70,6 +70,7 @@ The examples below use `bun run packages/cli/src/cli.ts`; read that as `akapen` 
 | `--author <name>` | comment author (default `$USER`) |
 | `--token <s>` | use this token instead of the stored one (`AKAPEN_TOKEN` does the same without appearing in `ps`) |
 | `--no-auth` | serve with no token at all, for running behind something that authenticates |
+| `--review-root <dir>` | key reviews of files under this directory by their path relative to it, so a synced tree keeps its comments across hosts (`AKAPEN_REVIEW_ROOT` sets it once per host) |
 
 Use `--host 0.0.0.0` to run it on a remote machine and read it from a local browser. A wildcard bind is not an address anything connects to, so what gets printed is the machine's own addresses — the section below says which, and how to pin one. An address, not a name: akapen serves literal addresses and `localhost` only, because a name is the one thing another machine on the network can claim and rebind.
 
@@ -430,6 +431,8 @@ The markdown file is never touched.
   <session-id>/<pid>   # the url that instance can be reached at, one line
 ~/.akapen/token        # the shared secret, mode 0600
 ```
+
+`<hash>` is the first twelve hex characters of the sha1 of the file's absolute path — which is a key that contains `$HOME`, so the same note under `/Users/me/notes` and `/root/notes` hashes to two different directories, and a `~/notes` synced between the two hosts arrives without its comments even when `~/.akapen/reviews` is synced along with it. `AKAPEN_REVIEW_ROOT` (or `--review-root`, which wins) names a directory under which files are keyed by their path relative to it instead: set to `~/notes` on both hosts, the two agree on `x/00-judgment-queue.md` and find the same directory. Files outside the root keep the absolute key, and nothing changes while the variable is unset. `review.json` records the root and the relative path beside the absolute one. A review made before the root was set is moved to its new name the first time it is looked up under the root; a root that is not a directory is refused rather than ignored, because ignored it would key everything by the absolute path and say nothing. Syncing the store itself is not akapen's job: `instances/` and `sessions/` are runtime state and are not meant to travel.
 
 `AKAPEN_HOME` replaces `~/.akapen` (the tests use it to avoid touching the real store). `AKAPEN_SETTLE_MS` replaces the 50ms gap between the two reads that decide the file has stopped moving; the test that asserts a moving file is refused hands over a long one, because at 50ms the assertion rested on its writer outrunning that gap and lost the race on CI ([#135](https://github.com/TakashiAihara/akapen/issues/135)).
 
