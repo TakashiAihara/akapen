@@ -265,6 +265,13 @@ describe('review-root', () => {
     expect(cli('review-root').stdout.trim()).toBe('none');
   }, 30_000);
 
+  it('refuses two directories rather than keeping the first', () => {
+    const { sandbox, cli } = sandboxed();
+    const result = cli('review-root', sandbox, tmpdir());
+    expect(result.status).not.toBe(0);
+    expect(cli('review-root').stdout.trim()).toBe('none');
+  }, 30_000);
+
   it('stops comments and serving on a root that has gone missing, and leaves list alone', () => {
     const { sandbox, file, cli } = sandboxed();
     const gone = join(sandbox, 'gone');
@@ -275,6 +282,9 @@ describe('review-root', () => {
     const comments = cli('comments', file);
     expect(comments.status).not.toBe(0);
     expect(comments.stderr).toContain('is not a directory');
+    const serve = cli(file, '-p', '0');
+    expect(serve.status).not.toBe(0);
+    expect(serve.stderr).toContain('is not a directory');
     const list = cli('list');
     expect(list.status).toBe(0);
     expect(list.stdout).toContain('no akapen is running');

@@ -114,12 +114,18 @@ export function legacyLeftBehind(filePath: string): string | null {
  * it would key by a root the person has since replaced.
  */
 export function reviewRoot(): string | null {
+  let raw: string;
   try {
-    const raw = readFileSync(reviewRootPath(), 'utf8').trim();
-    return raw === '' ? null : raw;
-  } catch {
-    return null;
+    raw = readFileSync(reviewRootPath(), 'utf8');
+  } catch (e) {
+    // No file is no root. Anything else (unreadable, a directory) is not: answering
+    // null there would key by the absolute path and look like nothing was set.
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw e;
   }
+  // Only the line ending the writer added: a directory may end in a space.
+  const root = raw.replace(/\n$/, '');
+  return root === '' ? null : root;
 }
 
 function reviewRootPath(): string {
@@ -137,8 +143,8 @@ export function writeReviewRoot(dir: string | null): void {
   if (dir === null) {
     try {
       unlinkSync(reviewRootPath());
-    } catch {
-      /* Already none. */
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
     }
     return;
   }

@@ -27,6 +27,7 @@ import {
   loadComments,
   loadReview,
   makeComment,
+  reviewRoot,
   writeReviewRoot,
   openRound,
   pendingComments,
@@ -464,5 +465,32 @@ describe('a store already under the new key', () => {
     expect(roundContent(work, 1)).toBe(EDITED);
     expect(existsSync(legacy)).toBe(true);
     expect(legacyLeftBehind(work)).toBe(legacy);
+  });
+});
+
+describe('the review-root file', () => {
+  afterEach(() => {
+    writeReviewRoot(null);
+  });
+
+  it('keeps a trailing space in the directory name', () => {
+    const spaced = join(sandbox, 'notes ');
+    mkdirSync(spaced);
+    writeReviewRoot(spaced);
+    expect(reviewRoot()).toBe(realpathSync(spaced));
+  });
+
+  it('is an error when present but unreadable, not an absent root', () => {
+    mkdirSync(join(process.env['AKAPEN_HOME']!, 'review-root'), { recursive: true });
+    expect(() => reviewRoot()).toThrow();
+    rmSync(join(process.env['AKAPEN_HOME']!, 'review-root'), { recursive: true });
+  });
+
+  it('clearing what is not set is fine, and clearing what cannot be removed is not', () => {
+    expect(() => writeReviewRoot(null)).not.toThrow();
+    mkdirSync(join(process.env['AKAPEN_HOME']!, 'review-root'), { recursive: true });
+    writeFileSync(join(process.env['AKAPEN_HOME']!, 'review-root', 'x'), '');
+    expect(() => writeReviewRoot(null)).toThrow();
+    rmSync(join(process.env['AKAPEN_HOME']!, 'review-root'), { recursive: true });
   });
 });

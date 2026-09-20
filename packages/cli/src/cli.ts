@@ -204,6 +204,8 @@ if (positional[0] === 'list') {
  * would key every review by its absolute path and say nothing.
  */
 if (positional[0] === 'review-root') {
+  // A second path is a typo, and the one that would be kept is the first.
+  if (positional.length > 2) fail(`review-root: one directory, got ${positional.length - 1}`);
   const dir = positional[1];
   if (args.clear) {
     if (dir !== undefined) fail('review-root: --clear takes no directory');
@@ -223,7 +225,9 @@ if (positional[0] === 'review-root') {
  * A root that has gone missing since it was set. Checked here, after `list` and
  * `token`, which never open the store (`list` is what a statusline redraws), and
  * before `comments` and serving, which do. Not before the channel either: an MCP
- * server that exits over a stale root is worse than one that keys by the absolute path.
+ * server that exits over a stale root is worse than one that keys files under it by
+ * the absolute path, which is what a missing root amounts to. A root file that cannot
+ * be read is different, and the store throws on it everywhere.
  */
 {
   const root = reviewRoot();
