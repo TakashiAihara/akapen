@@ -21,7 +21,7 @@ export type Review = {
   /** Absolute on the host that wrote it. Rewritten from the argument on every load, so
    * a review.json copied from another host does not carry its path over. */
   path: string;
-  /** Set when the file is under `AKAPEN_REVIEW_ROOT`: the path relative to it that the
+  /** Set when the file is under the store's review root: the path relative to it that the
    * store is keyed by, which is what another host can match, and the root it was
    * relative to when written, which says where. Both are informational: like `path`,
    * they are recomputed from the argument on every load. */
@@ -102,13 +102,48 @@ export function legacyLeftBehind(filePath: string): string | null {
  * A key derived from the absolute path is a key derived from `$HOME`, so a `~/notes`
  * synced between two hosts arrives with its comments looking absent (#191). Keying
  * by the path relative to a root that both hosts set makes them agree. Files outside
- * the root keep the absolute key; unset means that everywhere.
+ * the root keep the absolute key; no root means that everywhere.
  *
- * An empty variable is an unset one, for the same reason `AKAPEN_ADVERTISE=` is.
+ * The root is a file in the store, not a variable in the environment: the key is a
+ * property of the store, and every process reading the same `AKAPEN_HOME` has to
+ * derive the same one. A variable would be read by whatever happened to inherit it,
+ * and a cron job or a shell without the profile would look under the absolute key,
+ * find nothing, and say so with an empty list.
+ *
+ * Read on each call rather than cached: the file is a line, and a server that cached
+ * it would key by a root the person has since replaced.
  */
 export function reviewRoot(): string | null {
-  const raw = process.env['AKAPEN_REVIEW_ROOT'] ?? '';
-  return raw === '' ? null : resolve(raw);
+  try {
+    const raw = readFileSync(reviewRootPath(), 'utf8').trim();
+    return raw === '' ? null : raw;
+  } catch {
+    return null;
+  }
+}
+
+function reviewRootPath(): string {
+  return join(akapenHome(), 'review-root');
+}
+
+/**
+ * Set the root for this store, or clear it with null.
+ *
+ * Stored as a real, absolute path: relative would be relative to whoever reads it,
+ * and a symlink resolved here is resolved the same way relativeToRoot resolves the
+ * file's directories.
+ */
+export function writeReviewRoot(dir: string | null): void {
+  if (dir === null) {
+    try {
+      unlinkSync(reviewRootPath());
+    } catch {
+      /* Already none. */
+    }
+    return;
+  }
+  mkdirSync(akapenHome(), { recursive: true, mode: 0o700 });
+  writeAtomic(reviewRootPath(), `${realpathSync(resolve(dir))}\n`);
 }
 
 /** `abs` as a key relative to the review root, or null when there is no root or it is not under it. */

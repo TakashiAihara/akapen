@@ -10,6 +10,7 @@ import {
   mkdtempSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -26,6 +27,7 @@ import {
   loadComments,
   loadReview,
   makeComment,
+  writeReviewRoot,
   openRound,
   pendingComments,
   roundContent,
@@ -317,9 +319,9 @@ describe('replies', () => {
  * different $HOME is not lost, it is merely never looked up, and the note reads as
  * never reviewed.
  */
-describe('AKAPEN_REVIEW_ROOT', () => {
+describe('the review root', () => {
   afterEach(() => {
-    delete process.env['AKAPEN_REVIEW_ROOT'];
+    writeReviewRoot(null);
   });
 
   /** A `notes/x/note.md` under a root of its own, with SOURCE in it. */
@@ -334,7 +336,7 @@ describe('AKAPEN_REVIEW_ROOT', () => {
     const a = tree(join(sandbox, 'home-a', 'notes'));
     const b = tree(join(sandbox, 'home-b', 'notes'));
 
-    process.env['AKAPEN_REVIEW_ROOT'] = join(sandbox, 'home-a', 'notes');
+    writeReviewRoot(join(sandbox, 'home-a', 'notes'));
     ensureRound(a, SOURCE);
     saveComments(a, 1, [makeComment(SOURCE, 6, 6, 'from host a', 't')]);
     const dirA = storeDir(a);
@@ -342,11 +344,11 @@ describe('AKAPEN_REVIEW_ROOT', () => {
     // What host a wrote to disk names the key in the form host b can match.
     expect(JSON.parse(readFileSync(join(dirA, 'review.json'), 'utf8'))).toMatchObject({
       path: a,
-      root: join(sandbox, 'home-a', 'notes'),
+      root: realpathSync(join(sandbox, 'home-a', 'notes')),
       relativePath: join('x', 'note.md'),
     });
 
-    process.env['AKAPEN_REVIEW_ROOT'] = join(sandbox, 'home-b', 'notes');
+    writeReviewRoot(join(sandbox, 'home-b', 'notes'));
     // Host b sees the directory host a wrote, under whatever synced ~/.akapen/reviews.
     expect(storeDir(b)).toBe(dirA);
     expect(pendingComments(b).map((c) => c.body)).toEqual(['from host a']);
@@ -354,14 +356,16 @@ describe('AKAPEN_REVIEW_ROOT', () => {
 
   it('keys a file outside the root exactly as it did with no root', () => {
     const unset = storeDir(work);
-    process.env['AKAPEN_REVIEW_ROOT'] = join(sandbox, 'elsewhere');
+    mkdirSync(join(sandbox, 'elsewhere'));
+    writeReviewRoot(join(sandbox, 'elsewhere'));
     expect(storeDir(work)).toBe(unset);
     expect(loadReview(work)).not.toHaveProperty('root');
     // A sibling whose name merely starts with the root's is outside it too.
-    process.env['AKAPEN_REVIEW_ROOT'] = sandbox.slice(0, -1);
+    mkdirSync(sandbox.slice(0, -1));
+    writeReviewRoot(sandbox.slice(0, -1));
     expect(storeDir(work)).toBe(unset);
     // And a file whose name starts with `..` is not above the root it sits in.
-    process.env['AKAPEN_REVIEW_ROOT'] = sandbox;
+    writeReviewRoot(sandbox);
     expect(loadReview(join(sandbox, '..odd.md')).relativePath).toBe('..odd.md');
   });
 
@@ -373,7 +377,7 @@ describe('AKAPEN_REVIEW_ROOT', () => {
     saveComments(file, 1, comments);
     const legacy = storeDir(file);
 
-    process.env['AKAPEN_REVIEW_ROOT'] = root;
+    writeReviewRoot(root);
     // The move happens on the read, not on naming the directory.
     const dir = storeDir(file);
     expect(existsSync(legacy)).toBe(true);
@@ -404,7 +408,7 @@ describe('AKAPEN_REVIEW_ROOT', () => {
     saveComments(file, 1, [makeComment(SOURCE, 6, 6, 'on this host, before the root', 't')]);
     const legacy = storeDir(file);
 
-    process.env['AKAPEN_REVIEW_ROOT'] = root;
+    writeReviewRoot(root);
     // The other host's store arrives by sync under the relative key — rounds only, as a
     // sync that has not finished, or a review.json lost along the way, would leave it.
     const arrived = storeDir(file);
@@ -427,10 +431,10 @@ describe('AKAPEN_REVIEW_ROOT', () => {
     symlinkSync(real, join(sandbox, 'link-notes'));
 
     // Mixed spellings: the root through the link, the file by its real path, and back.
-    process.env['AKAPEN_REVIEW_ROOT'] = join(sandbox, 'link-notes');
+    writeReviewRoot(join(sandbox, 'link-notes'));
     const viaLink = storeDir(file);
     expect(loadReview(file).relativePath).toBe(join('x', 'note.md'));
-    process.env['AKAPEN_REVIEW_ROOT'] = real;
+    writeReviewRoot(real);
     expect(storeDir(join(sandbox, 'link-notes', 'x', 'note.md'))).toBe(viaLink);
     // A note that is itself a symlink to somewhere outside is still the note under the root.
     symlinkSync(work, join(real, 'x', 'elsewhere.md'));
@@ -440,7 +444,7 @@ describe('AKAPEN_REVIEW_ROOT', () => {
 
 describe('a store already under the new key', () => {
   afterEach(() => {
-    delete process.env['AKAPEN_REVIEW_ROOT'];
+    writeReviewRoot(null);
   });
 
   it('is not moved onto, even when it holds no review.json yet', () => {
@@ -449,7 +453,7 @@ describe('a store already under the new key', () => {
     saveComments(work, 1, comments);
     const legacy = storeDir(work);
 
-    process.env['AKAPEN_REVIEW_ROOT'] = sandbox;
+    writeReviewRoot(sandbox);
     // Rounds only under the new key: the state a sync in progress leaves. The move is
     // refused by the filesystem, not by anything that first makes room for it.
     const dir = storeDir(work);
