@@ -196,7 +196,7 @@ bun run packages/cli/src/cli.ts comments <file.md> --all    # include resolved o
         "body": "could not fix, because X",
         "author": "agent-1",
         "author_kind": "agent",
-        "session_id": "41a509d2-f6f7-485d-b346-c8246e6fe2f5",
+        "session_id": "00000000-0000-4000-8000-000000000000",
         "created_at": "2026-08-12T14:03:11.000Z"
       }
     ]
@@ -210,7 +210,7 @@ bun run packages/cli/src/cli.ts comments <file.md> --all    # include resolved o
 
 Current-round comments come first, ordered by line. Entries with `current_round: false` are feedback on the document as it was, so treat their line numbers as already shifted.
 
-`replies` is the thread on that comment, oldest first, one level deep — a reply cannot be replied to. An agent's own replies are noise to it, but a person's answer to one is not: "could not fix, because X" met with "then do Y instead" makes Y new feedback, and it only arrives if the thread comes with the comment. `author_kind` says which side wrote it, and `session_id` which Claude Code session. An agent replies with `POST /api/comments/<id>/replies`, the body `{"body": "..."}`, and the header `X-Akapen-Session: $CLAUDE_CODE_SESSION_ID`; the server files a reply carrying that header as `agent` and keeps the id, and one without it as `human` with `session_id: null`. The header is a claim made by whoever holds the token, not an identity.
+`replies` is the thread on that comment, oldest first, one level deep — a reply cannot be replied to. An agent's own replies are noise to it, but a person's answer to one is not: "could not fix, because X" met with "then do Y instead" makes Y new feedback, and it only arrives if the thread comes with the comment. `author_kind` says which side wrote it, and `session_id` which Claude Code session. An agent replies with `POST /api/comments/<id>/replies`, the body `{"body": "..."}`, and the headers `Authorization: Bearer $(akapen token)` and `X-Akapen-Session: ${CLAUDE_CODE_SESSION_ID:?}`. The server files a reply carrying the second header as `agent` and keeps the id; one without it is `human`, printed here with `session_id: null`. Write `:?` rather than a bare `$`: curl leaves out a header whose value is empty, so an unset variable would file the reply as a person's without a word. Replies written before this existed are all `human`, whoever wrote them. The header is a claim made by whoever holds the token, not an identity.
 
 There is an example stylesheet in `examples/dense.css`.
 

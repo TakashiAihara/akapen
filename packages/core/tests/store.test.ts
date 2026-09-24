@@ -272,8 +272,10 @@ describe('replies', () => {
     addReply(work, first!.id, 'from a session', 'root', 'agent', 'sess-1');
     addReply(work, first!.id, 'from a person', 'root');
     const replies = loadComments(work, 1)[0]?.replies ?? [];
+    expect(replies[0]?.authorKind).toBe('agent');
     expect(replies[0]?.sessionId).toBe('sess-1');
-    expect(replies[1]).not.toHaveProperty('sessionId');
+    expect(replies[1]?.authorKind).toBe('human');
+    expect(replies[1]?.sessionId).toBeUndefined();
   });
 
   it('keeps them in the order they were written', () => {

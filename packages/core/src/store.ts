@@ -286,7 +286,7 @@ export function addReply(
     body,
     author,
     authorKind,
-    ...(sessionId === undefined ? {} : { sessionId }),
+    sessionId,
     createdAt: new Date().toISOString(),
   };
   const comment = updateComment(filePath, commentId, (c) => {

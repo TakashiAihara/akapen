@@ -866,7 +866,7 @@ describe('replying', () => {
 
   it('files a reply that names its session as an agent, and keeps the session', async () => {
     const parent = await createComment();
-    const session = '41a509d2-f6f7-485d-b346-c8246e6fe2f5';
+    const session = '00000000-0000-4000-8000-000000000000';
     const res = await postAs(`/api/comments/${parent.id}/replies`, { body: 'fixed' }, session);
     const payload = v.parse(CommentsPayloadSchema, await res.json());
     expect(payload.comment.replies[0]?.authorKind).toBe('agent');
@@ -879,6 +879,8 @@ describe('replying', () => {
       CommentsPayloadSchema,
       await (await post(`/api/comments/${parent.id}/replies`, { body: 'x' })).json(),
     );
+    expect(payload.comment.replies).toHaveLength(1);
+    expect(payload.comment.replies[0]?.authorKind).toBe('human');
     expect(payload.comment.replies[0]?.sessionId).toBeUndefined();
   });
 
@@ -888,6 +890,11 @@ describe('replying', () => {
   ])('refuses a session header that is %s', async (_label, session) => {
     const parent = await createComment();
     expect((await postAs(`/api/comments/${parent.id}/replies`, { body: 'x' }, session)).status).toBe(400);
+    const stored = (await (await fetch(`${base}/api/comments`)).json()) as {
+      id: string;
+      replies: unknown[];
+    }[];
+    expect(stored.find((c) => c.id === parent.id)?.replies).toEqual([]);
   });
 
   it.each([

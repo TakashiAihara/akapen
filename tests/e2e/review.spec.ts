@@ -502,7 +502,7 @@ test('marks a reply sent with a session as the agent, and names the session', as
   request,
   akapen,
 }) => {
-  const session = '41a509d2-f6f7-485d-b346-c8246e6fe2f5';
+  const session = '00000000-0000-4000-8000-000000000000';
   const res = await request.post(`${akapen.url}/api/comments`, {
     headers: AUTH,
     data: { startLine: 10, endLine: 10, body: 'about this line' },

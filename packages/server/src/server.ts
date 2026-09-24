@@ -85,9 +85,13 @@ const COOKIE = 'akapen_token';
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
 /**
- * What `x-akapen-session` may hold: a session id, not free text. It is stored and shown,
- * and an empty value is a shell whose `$CLAUDE_CODE_SESSION_ID` was unset, which is a
- * mistake to report rather than a reply to file as an agent with no session.
+ * What `x-akapen-session` may hold: a session id, not free text, since it is stored and
+ * shown. An empty value is refused rather than filed as an agent with no session.
+ *
+ * NOTE: this does not catch an unset `$CLAUDE_CODE_SESSION_ID`. curl drops a header whose
+ * value is empty, so the reply arrives with no header and is filed as a person's. The
+ * channel's instructions write `${CLAUDE_CODE_SESSION_ID:?}` for that reason: the shell
+ * refuses to run the command instead.
  */
 const SESSION_ID = /^[A-Za-z0-9_-]{1,128}$/;
 
@@ -564,8 +568,11 @@ export function startServer(opts: ServeOptions) {
    * when it names the Claude Code session that wrote it in `x-akapen-session`, which the
    * channel's instructions have every session send from `$CLAUDE_CODE_SESSION_ID`. A
    * browser never sends it. The header is a claim, not an identity: whoever holds the
-   * token (#112) can make it, and until people are told apart (#10) that is the same
-   * trust the token already carries.
+   * token (#112) can make it, which is the trust the token already carries.
+   *
+   * Not decided by the credential (cookie against bearer), as #161 first suggested. That
+   * tells a browser from everything else, not an agent from a person running curl, and
+   * it names no session.
    */
   app.post('/api/comments/:id/replies', vValidator('json', CreateReplySchema), (c) => {
     const session = c.req.header('x-akapen-session');
