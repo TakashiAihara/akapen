@@ -857,6 +857,46 @@ describe('replying', () => {
     expect(payload.comment.replies[0]?.authorKind).toBe('human');
   });
 
+  const postAs = (path: string, body: unknown, session: string) =>
+    fetch(`${base}${path}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-akapen-session': session },
+      body: JSON.stringify(body),
+    });
+
+  it('files a reply that names its session as an agent, and keeps the session', async () => {
+    const parent = await createComment();
+    const session = '00000000-0000-4000-8000-000000000000';
+    const res = await postAs(`/api/comments/${parent.id}/replies`, { body: 'fixed' }, session);
+    const payload = v.parse(CommentsPayloadSchema, await res.json());
+    expect(payload.comment.replies[0]?.authorKind).toBe('agent');
+    expect(payload.comment.replies[0]?.sessionId).toBe(session);
+  });
+
+  it('leaves a reply without the header as a person, with no session', async () => {
+    const parent = await createComment();
+    const payload = v.parse(
+      CommentsPayloadSchema,
+      await (await post(`/api/comments/${parent.id}/replies`, { body: 'x' })).json(),
+    );
+    expect(payload.comment.replies).toHaveLength(1);
+    expect(payload.comment.replies[0]?.authorKind).toBe('human');
+    expect(payload.comment.replies[0]?.sessionId).toBeUndefined();
+  });
+
+  it.each([
+    ['empty, as from an unset variable', ''],
+    ['not an id', 'a b<script>'],
+  ])('refuses a session header that is %s', async (_label, session) => {
+    const parent = await createComment();
+    expect((await postAs(`/api/comments/${parent.id}/replies`, { body: 'x' }, session)).status).toBe(400);
+    const stored = (await (await fetch(`${base}/api/comments`)).json()) as {
+      id: string;
+      replies: unknown[];
+    }[];
+    expect(stored.find((c) => c.id === parent.id)?.replies).toEqual([]);
+  });
+
   it.each([
     ['a missing body', {}],
     ['an empty body', { body: '' }],

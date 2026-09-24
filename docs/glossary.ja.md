@@ -102,7 +102,7 @@ row の状態。重なって付く。
 | 語 | 何か | 実体 |
 |---|---|---|
 | author | 名前であって、それ以上のものではない。何とでも書ける | `Comment.author`、`--author` |
-| author kind | 返信を人が書いたのかエージェントが書いたのか。`Reply` にだけあり、コメントにはこのフィールドが無い。サーバが刻印してクライアントの自称は無視するが、現状はすべて `human` を刻印する。自称を認証する手段が無く、エージェントが書き返す経路もまだ無いため | `AuthorKind`（`human` \| `agent`）、`Reply.authorKind` |
+| author kind | 返信を人が書いたのかエージェントが書いたのか。`Reply` にだけあり、コメントにはこのフィールドが無い。サーバがリクエストから刻印し、本文の自称は見ない。`X-Akapen-Session` 付きの返信は `agent` になり、その Claude Code セッションを `Reply.sessionId` に残す。ヘッダが無ければ `human`。ヘッダは token を持つ者の自称であって本人確認ではない。この仕組みより前に保存された返信はすべて `human` | `AuthorKind`（`human` \| `agent`）、`Reply.authorKind`、`Reply.sessionId` |
 | エージェント | 指摘を渡す先のプログラム。コメントを JSON で読み、アンカーテキストで現在のファイルに突き合わせる | `akapen comments <file.md>` |
 | resolved | 対応が済んだコメント。状態は過去ラウンドのコメントにも適用される。そうでないと指摘を閉じる手段が無くなる | `Comment.resolved`、`--all` |
 

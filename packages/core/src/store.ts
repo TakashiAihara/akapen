@@ -279,12 +279,14 @@ export function addReply(
   body: string,
   author: string,
   authorKind: AuthorKind = 'human',
+  sessionId?: string,
 ): { comment: RoundComment; reply: Reply } | null {
   const reply: Reply = {
     id: `r_${randomBytes(4).toString('hex')}`,
     body,
     author,
     authorKind,
+    sessionId,
     createdAt: new Date().toISOString(),
   };
   const comment = updateComment(filePath, commentId, (c) => {

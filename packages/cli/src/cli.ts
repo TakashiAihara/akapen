@@ -212,6 +212,7 @@ if (positional[0] === 'comments') {
           body: r.body,
           author: r.author,
           author_kind: r.authorKind,
+          session_id: r.sessionId ?? null,
           created_at: r.createdAt,
         })),
       })),

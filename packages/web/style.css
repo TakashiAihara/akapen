@@ -723,6 +723,7 @@ body.rail-overlay .marker { display: inline-flex; align-items: center; justify-c
   border-radius: 3px;
   font-size: 0.7rem;
 }
+.reply .session { margin-left: 4px; font-family: var(--ak-mono); font-size: 0.7rem; }
 .reply-body { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.85rem; }
 .reply-form { display: flex; gap: 6px; padding: 6px 10px; }
 .reply-input {

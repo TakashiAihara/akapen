@@ -496,3 +496,26 @@ test('leaves + hidden outside the row, so the wider gutter is not a hover trap',
   expect(await addOpacityAt(page, row, gutter.x + 4, otherBox.y + 4), 'the gutter of another row').toBe('0');
   expect(await addOpacityAt(page, row, otherBox.x + 40, otherBox.y + 4), 'the text of another row').toBe('0');
 });
+
+test('marks a reply sent with a session as the agent, and names the session', async ({
+  page,
+  request,
+  akapen,
+}) => {
+  const session = '00000000-0000-4000-8000-000000000000';
+  const res = await request.post(`${akapen.url}/api/comments`, {
+    headers: AUTH,
+    data: { startLine: 10, endLine: 10, body: 'about this line' },
+  });
+  const { comment } = (await res.json()) as { comment: { id: string } };
+  await request.post(`${akapen.url}/api/comments/${comment.id}/replies`, {
+    headers: { ...AUTH, 'x-akapen-session': session },
+    data: { body: 'fixed' },
+  });
+
+  await page.goto(akapen.url);
+  const reply = page.locator('.reply').first();
+  await expect(reply.locator('.kind')).toHaveText('agent');
+  await expect(reply.locator('.session')).toHaveText(session.slice(0, 8));
+  await expect(reply.locator('.session')).toHaveAttribute('title', session);
+});
