@@ -184,6 +184,9 @@ describe('collect', () => {
     ];
     const events = collect('S1', seen, store(['/n/a.md'], { '/n/a.md': [comment('c1', { replies })] }));
     expect(events.map((e) => e.meta['reply_id'])).toEqual(['sibling', 'person']);
+    // Never marked sent, so the filter is what holds it back on every later pass too.
+    for (const e of events) markSent(seen, e);
+    expect(collect('S1', seen, store(['/n/a.md'], { '/n/a.md': [comment('c1', { replies })] }))).toEqual([]);
   });
 
   it('forgets a document whose akapen has stopped', () => {
