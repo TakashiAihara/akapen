@@ -1683,3 +1683,73 @@ describe('authentication', () => {
     }
   });
 });
+
+describe('images beside the document', () => {
+  // A small but real PNG header is not needed: the server never looks inside the file.
+  const PNG = 'png-bytes';
+
+  beforeEach(() => {
+    mkdirSync(join(sandbox, 'png'));
+    writeFileSync(join(sandbox, 'png', 'a.png'), PNG);
+    writeFileSync(join(sandbox, 'd.svg'), '<svg xmlns="http://www.w3.org/2000/svg"/>');
+    writeFileSync(join(sandbox, '.env'), 'SECRET=1');
+  });
+
+  const file = (path: string) => fetch(`${base}/file?path=${encodeURIComponent(path)}`);
+
+  it('serves an image the document refers to, uncached', async () => {
+    const res = await file('png/a.png');
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('image/png');
+    expect(res.headers.get('cache-control')).toBe('no-cache');
+    expect(await res.text()).toBe(PNG);
+  });
+
+  it('refuses what is not an image, and a path that leaves the root, with the same 404', async () => {
+    for (const path of ['.env', 'note.md', '../../../../etc/passwd', '../x.png', '']) {
+      const res = await file(path);
+      expect(res.status, path).toBe(404);
+    }
+  });
+
+  it('is behind the token like everything else', async () => {
+    const res = await globalThis.fetch(`${base}/file?path=png%2Fa.png`);
+    expect(res.status).toBe(401);
+  });
+
+  it('serves an SVG with its script held inert when opened directly', async () => {
+    const res = await file('d.svg');
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('image/svg+xml');
+    expect(res.headers.get('content-security-policy')).toContain('sandbox');
+    expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+  });
+
+  it('points a relative image in the document at the file route, and leaves a remote one alone', async () => {
+    writeFileSync(work, '![a](png/a.png)\n\n![r](https://example.com/r.png)\n');
+    // Read through a new round so the rendered document is the one just written.
+    expect((await post('/api/rounds')).ok).toBe(true);
+    const doc = v.parse(DocPayloadSchema, await (await fetch(`${base}/api/doc`)).json());
+    const html = doc.doc.blocks.map((b) => b.html).join('');
+    expect(html).toContain('src="/file?path=png%2Fa.png"');
+    expect(html).toContain('src="https://example.com/r.png"');
+  });
+
+  it('serves from above the document only under a wider --root', async () => {
+    mkdirSync(join(sandbox, 'sub'));
+    const nested = join(sandbox, 'sub', 'nested.md');
+    writeFileSync(nested, '![](../png/a.png)\n');
+
+    const narrow = await start(nested, join(sandbox, 'home-narrow'));
+    const wide = await start(nested, join(sandbox, 'home-wide'), ['--root', sandbox]);
+    try {
+      const ask = (s: Server) => fetch(`${s.url}/file?path=${encodeURIComponent('../png/a.png')}`);
+      expect((await ask(narrow)).status).toBe(404);
+      expect((await ask(wide)).status).toBe(200);
+    } finally {
+      narrow.stop();
+      wide.stop();
+      await Promise.all([narrow.stopped, wide.stopped]);
+    }
+  }, 30_000);
+});

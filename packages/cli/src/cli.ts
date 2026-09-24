@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import { AdvertiseError, localAddresses, resolveAdvertised, urlsFor } from '@akapen/core/addresses';
@@ -25,6 +25,8 @@ options:
                            from ($AKAPEN_ADVERTISE sets it once per host)
   --css <file>             extra stylesheet to load
   --keymap <file>          JSON overriding the keymap ({ "action": ["key"] })
+  --root <dir>             serve images the document refers to from anywhere under this
+                           directory (default: the document's own directory)
   --author <name>          comment author (default $USER)
   --token <s>              use this token instead of the stored one
   --no-auth                serve with no token at all (only behind something that authenticates)
@@ -225,6 +227,11 @@ if (positional[0] === 'comments') {
 
 const file = positional[0]!;
 if (!existsSync(file)) fail(`no such file: ${file}`);
+// Checked here rather than left to 404: a mistyped root would otherwise show every
+// image as broken with nothing saying why.
+if (args.root !== undefined && !statSync(args.root, { throwIfNoEntry: false })?.isDirectory()) {
+  fail(`--root is not a directory: ${args.root}`);
+}
 
 // Every value below is a string or absent — parseArgs rejects the boolean case — so
 // there is nothing left here to cast.
@@ -293,6 +300,7 @@ const { server, stop, storeDir, round } = startServer({
   // With no value given, drop the key entirely.
   ...(args.css ? { cssPath: resolve(args.css) } : {}),
   ...(args.keymap ? { keymapPath: resolve(args.keymap) } : {}),
+  ...(args.root ? { root: resolve(args.root) } : {}),
 });
 
 /**

@@ -553,6 +553,8 @@ body.rail-overlay .marker { display: inline-flex; align-items: center; justify-c
 
 /* ===== markdown ===== */
 .body p { margin: 0 0 var(--ak-para-gap); }
+/* A 2x export is wider than the sheet; drawn at its natural size it runs off the edge. */
+.body img { max-width: 100%; height: auto; }
 /*
  * The levels are separated by space, not by rules. The space before a heading is large and
  * the space after it small, so a heading belongs to what follows it.
