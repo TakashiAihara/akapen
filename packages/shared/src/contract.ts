@@ -84,6 +84,15 @@ export const ReplySchema = v.object({
   body: v.string(),
   author: v.string(),
   authorKind: AuthorKindSchema,
+  /**
+   * The Claude Code session that wrote it, when an agent did.
+   *
+   * `author` is the name the server was started with, the same for every reply, so it
+   * cannot say which of the sessions sharing a host answered. This can, and a session id
+   * is what leads back to the transcript where the reasoning behind the reply lives.
+   * Absent on a person's reply and on everything written before it existed.
+   */
+  sessionId: v.optional(v.string()),
   createdAt: v.string(),
 });
 export type Reply = v.InferOutput<typeof ReplySchema>;

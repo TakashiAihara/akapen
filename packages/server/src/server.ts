@@ -85,6 +85,13 @@ const COOKIE = 'akapen_token';
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
 /**
+ * What `x-akapen-session` may hold: a session id, not free text. It is stored and shown,
+ * and an empty value is a shell whose `$CLAUDE_CODE_SESSION_ID` was unset, which is a
+ * mistake to report rather than a reply to file as an agent with no session.
+ */
+const SESSION_ID = /^[A-Za-z0-9_-]{1,128}$/;
+
+/**
  * How long to wait between the two reads that decide the file has stopped moving.
  *
  * 50ms everywhere, and `AKAPEN_SETTLE_MS` for the one test that asserts a moving file is
@@ -553,12 +560,18 @@ export function startServer(opts: ServeOptions) {
    * the conversation about it is the same side of that line as `resolved`, which #4
    * already decided can still move.
    *
-   * `authorKind` is stamped here rather than taken from the request. Without
-   * authentication (#10) a client saying "I am the agent" means nothing, and #12 turns
-   * that distinction into whether the conversation can be read at all.
+   * `authorKind` is stamped here rather than taken from the body. A reply is an agent's
+   * when it names the Claude Code session that wrote it in `x-akapen-session`, which the
+   * channel's instructions have every session send from `$CLAUDE_CODE_SESSION_ID`. A
+   * browser never sends it. The header is a claim, not an identity: whoever holds the
+   * token (#112) can make it, and until people are told apart (#10) that is the same
+   * trust the token already carries.
    */
   app.post('/api/comments/:id/replies', vValidator('json', CreateReplySchema), (c) => {
-    const added = addReply(file, c.req.param('id'), c.req.valid('json').body, opts.author, 'human');
+    const session = c.req.header('x-akapen-session');
+    if (session !== undefined && !SESSION_ID.test(session)) return c.text('bad x-akapen-session', 400);
+    const kind = session === undefined ? 'human' : 'agent';
+    const added = addReply(file, c.req.param('id'), c.req.valid('json').body, opts.author, kind, session);
     if (!added) return c.text('not found', 404);
     if (added.comment.round === review.currentRound) comments = loadComments(file, review.currentRound);
     return c.json({ comment: added.comment, comments, carried: carriedOver(file) });

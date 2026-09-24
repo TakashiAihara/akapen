@@ -267,6 +267,15 @@ describe('replies', () => {
     expect(loadComments(work, 2)).toEqual([]);
   });
 
+  it('stores the session an agent reply names, and none for a person', () => {
+    const [first] = seed();
+    addReply(work, first!.id, 'from a session', 'root', 'agent', 'sess-1');
+    addReply(work, first!.id, 'from a person', 'root');
+    const replies = loadComments(work, 1)[0]?.replies ?? [];
+    expect(replies[0]?.sessionId).toBe('sess-1');
+    expect(replies[1]).not.toHaveProperty('sessionId');
+  });
+
   it('keeps them in the order they were written', () => {
     const [first] = seed();
     addReply(work, first!.id, 'one', 't');

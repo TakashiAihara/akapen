@@ -507,6 +507,13 @@ function repliesFor(c: Comment | RoundComment, past: boolean): HTMLElement {
     // Named, not just styled: colour alone would not survive a custom.css that drops it,
     // and telling a person from an agent is the point once #12 lands.
     if (r.authorKind === 'agent') who.append(el('span', 'kind', 'agent'));
+    // The first 8 characters, as `akapen list` prints them; the whole id is on hover for
+    // `claude --resume`.
+    if (r.sessionId !== undefined) {
+      const s = el('span', 'session', escapeHtml(r.sessionId.slice(0, 8)));
+      s.title = r.sessionId;
+      who.append(s);
+    }
     item.append(who, el('div', 'reply-body', escapeHtml(r.body)));
     wrap.append(item);
   }
