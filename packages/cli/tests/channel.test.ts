@@ -170,7 +170,9 @@ describe('collect', () => {
     const seen = new Map<string, Set<string>>();
     collect('S1', seen, store(['/n/a.md'], { '/n/a.md': [] }));
     const withReply = [comment('c1', { replies: [reply('r1')] })];
-    for (const e of collect('S1', seen, store(['/n/a.md'], { '/n/a.md': withReply }))) markSent(seen, e);
+    const first = collect('S1', seen, store(['/n/a.md'], { '/n/a.md': withReply }));
+    expect(first).toHaveLength(2);
+    for (const e of first) markSent(seen, e);
     expect(collect('S1', seen, store(['/n/a.md'], { '/n/a.md': withReply }))).toEqual([]);
   });
 
@@ -178,8 +180,8 @@ describe('collect', () => {
     const seen = new Map<string, Set<string>>();
     collect('S1', seen, store(['/n/a.md'], { '/n/a.md': [comment('c1')] }));
     const replies = [
-      { ...reply('mine'), sessionId: 'S1' },
       { ...reply('sibling'), sessionId: 'S2' },
+      { ...reply('mine'), sessionId: 'S1' },
       reply('person'),
     ];
     const events = collect('S1', seen, store(['/n/a.md'], { '/n/a.md': [comment('c1', { replies })] }));
