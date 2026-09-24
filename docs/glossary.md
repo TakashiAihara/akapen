@@ -103,7 +103,7 @@ Row states, which stack:
 | Term | What it is | Where it exists |
 |---|---|---|
 | author | a name, and nothing more. Anything can be put in it | `Comment.author`, `--author` |
-| author kind | whether a person or an agent wrote a reply. It is on `Reply` only; a comment has no such field. The server stamps it and ignores what a client claims, and today it stamps every reply `human` — nothing authenticates a claim to be otherwise and the path by which an agent writes back is not built yet | `AuthorKind` (`human` \| `agent`), `Reply.authorKind` |
+| author kind | whether a person or an agent wrote a reply. It is on `Reply` only; a comment has no such field. The server stamps it from the request, never from the body: a reply sent with `X-Akapen-Session` is `agent` and keeps that Claude Code session in `Reply.sessionId`; one without it is `human`. The header is a claim by whoever holds the token, not an identity. Replies stored before this existed are all `human` | `AuthorKind` (`human` \| `agent`), `Reply.authorKind`, `Reply.sessionId` |
 | agent | the program the feedback is being handed to. It reads comments as JSON and matches them by anchor text | `akapen comments <file.md>` |
 | resolved | a comment that has been dealt with. Status applies to earlier rounds too, or feedback could never be closed | `Comment.resolved`, `--all` |
 
