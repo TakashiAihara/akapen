@@ -3,6 +3,7 @@
 import MarkdownIt, { type Token } from 'markdown-it';
 import type { Block, BlockKind, Doc } from '@akapen/shared';
 import hljs from 'highlight.js';
+import { documentFileSrc } from './files.ts';
 
 /**
  * html: false. HTML written directly in the markdown is escaped and shown as text.
@@ -22,6 +23,19 @@ import hljs from 'highlight.js';
  * gets through, and the tab title and the outline row both stop at it mid-heading.
  */
 const md = new MarkdownIt({ html: false, linkify: true, typographer: false });
+
+/**
+ * A relative image points at the server's file route, which resolves it against the
+ * document (#81). Left as written, the browser would resolve it against `/` and a `..`
+ * in it would be normalised away before it ever reached the server.
+ */
+const renderImage = md.renderer.rules['image']!;
+md.renderer.rules['image'] = (tokens, idx, options, env, self) => {
+  const token = tokens[idx]!;
+  const src = documentFileSrc(String(token.attrGet('src') ?? ''));
+  if (src !== null) token.attrSet('src', src);
+  return renderImage(tokens, idx, options, env, self);
+};
 
 /**
  * crit enables typographer, so "..." in frontmatter turns into “...”. We keep the

@@ -20,11 +20,12 @@ import {
   readdirSync,
   rmSync,
   statSync,
+  utimesSync,
   writeFileSync,
 } from 'node:fs';
 import { connect } from 'node:net';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   CommentsPayloadSchema,
@@ -1682,4 +1683,130 @@ describe('authentication', () => {
       await served.stopped;
     }
   });
+});
+
+describe('images beside the document', () => {
+  // A small but real PNG header is not needed: the server never looks inside the file.
+  const PNG = 'png-bytes';
+
+  beforeEach(() => {
+    mkdirSync(join(sandbox, 'png'));
+    writeFileSync(join(sandbox, 'png', 'a.png'), PNG);
+    writeFileSync(join(sandbox, 'd.svg'), '<svg xmlns="http://www.w3.org/2000/svg"/>');
+    writeFileSync(join(sandbox, '.env'), 'SECRET=1');
+  });
+
+  const file = (path: string) => fetch(`${base}/file?path=${encodeURIComponent(path)}`);
+
+  it('serves an image the document refers to, uncached', async () => {
+    const res = await file('png/a.png');
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('image/png');
+    expect(res.headers.get('cache-control')).toBe('no-cache');
+    expect(await res.text()).toBe(PNG);
+  });
+
+  it('refuses what is not an image, and a path that leaves the root, with the same 404', async () => {
+    // Leaving the file root is in the --root test below, against a file that exists.
+    for (const path of ['.env', 'note.md', 'png', 'missing.png', '']) {
+      const res = await file(path);
+      expect(res.status, path).toBe(404);
+    }
+  });
+
+  it('answers a repeat request with a 304 until the image changes', async () => {
+    const first = await file('png/a.png');
+    const etag = first.headers.get('etag')!;
+    expect(etag).toBeTruthy();
+    const ask = () =>
+      fetch(`${base}/file?path=${encodeURIComponent('png/a.png')}`, { headers: { 'if-none-match': etag } });
+    expect((await ask()).status).toBe(304);
+
+    writeFileSync(join(sandbox, 'png', 'a.png'), `${PNG}-re-exported`);
+    const changed = await ask();
+    expect(changed.status).toBe(200);
+    expect(await changed.text()).toBe(`${PNG}-re-exported`);
+  });
+
+  it('changes the ETag for a same-size rewrite less than a millisecond later', async () => {
+    const png = join(sandbox, 'png', 'a.png');
+    // A whole second, so both times fall in the same millisecond and only the
+    // sub-millisecond part tells them apart.
+    const at = Math.floor(Date.now() / 1000);
+    utimesSync(png, at, at);
+    const before = (await file('png/a.png')).headers.get('etag');
+    utimesSync(png, at, at + 0.0004);
+    const after = (await file('png/a.png')).headers.get('etag');
+    expect(after).not.toBe(before);
+  });
+
+  it('gives HEAD the length GET sends', async () => {
+    const res = await fetch(`${base}/file?path=${encodeURIComponent('png/a.png')}`, { method: 'HEAD' });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-length')).toBe(String(PNG.length));
+  });
+
+  it('is behind the token like everything else', async () => {
+    const res = await globalThis.fetch(`${base}/file?path=png%2Fa.png`);
+    expect(res.status).toBe(401);
+  });
+
+  it('serves an SVG with its script held inert when opened directly', async () => {
+    const res = await file('d.svg');
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('image/svg+xml');
+    // Whole string: `toContain('sandbox')` would pass `sandbox allow-scripts`, and a CSP
+    // cut down to `sandbox` alone.
+    expect(res.headers.get('content-security-policy')).toBe(
+      "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+    );
+    expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+  });
+
+  it('points a relative image in the document at the file route, and leaves a remote one alone', async () => {
+    writeFileSync(work, '![a](png/a.png)\n\n![r](https://example.com/r.png)\n');
+    // Read through a new round so the rendered document is the one just written.
+    expect((await post('/api/rounds')).ok).toBe(true);
+    const doc = v.parse(DocPayloadSchema, await (await fetch(`${base}/api/doc`)).json());
+    const html = doc.doc.blocks.map((b) => b.html).join('');
+    expect(html).toContain('src="/file?path=png%2Fa.png"');
+    expect(html).toContain('src="https://example.com/r.png"');
+  });
+
+  it('serves from above the document only under a wider --root', async () => {
+    mkdirSync(join(sandbox, 'sub'));
+    const nested = join(sandbox, 'sub', 'nested.md');
+    writeFileSync(nested, '![](../png/a.png)\n');
+
+    // An image that exists outside even the wide root, so a 404 for it is containment and
+    // not a missing file.
+    const outside = mkdtempSync(join(tmpdir(), 'akapen-outside-'));
+    writeFileSync(join(outside, 'o.png'), PNG);
+    const escape = relative(join(sandbox, 'sub'), join(outside, 'o.png'));
+
+    const narrow = await start(nested, join(sandbox, 'home-narrow'));
+    const wide = await start(nested, join(sandbox, 'home-wide'), ['--root', sandbox]);
+    try {
+      const ask = (s: Server, path: string) => fetch(`${s.url}/file?path=${encodeURIComponent(path)}`);
+      expect((await ask(narrow, '../png/a.png')).status).toBe(404);
+      expect((await ask(wide, '../png/a.png')).status).toBe(200);
+      expect((await ask(wide, escape)).status).toBe(404);
+    } finally {
+      narrow.stop();
+      wide.stop();
+      await Promise.all([narrow.stopped, wide.stopped]);
+      rmSync(outside, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it('refuses at startup a --root that does not contain the document', async () => {
+    const elsewhere = mkdtempSync(join(tmpdir(), 'akapen-elsewhere-'));
+    try {
+      await expect(start(work, join(sandbox, 'home-bad'), ['--root', elsewhere])).rejects.toThrow(
+        /--root does not contain the document/,
+      );
+    } finally {
+      rmSync(elsewhere, { recursive: true, force: true });
+    }
+  }, 30_000);
 });

@@ -6,6 +6,7 @@
   "exports": {
     "./addresses": "./src/addresses.ts",
     "./blocks": "./src/blocks.ts",
+    "./files": "./src/files.ts",
     "./hosts": "./src/hosts.ts",
     "./instances": "./src/instances.ts",
     "./sessions": "./src/sessions.ts",

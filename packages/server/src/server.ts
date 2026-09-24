@@ -1,10 +1,11 @@
-import { readFileSync, watch, existsSync } from 'node:fs';
-import { basename, resolve } from 'node:path';
+import { readFileSync, statSync, watch, existsSync } from 'node:fs';
+import { basename, dirname, resolve } from 'node:path';
 import { Hono, type Context } from 'hono';
 import { getCookie, setCookie } from 'hono/cookie';
 import { vValidator } from '@hono/valibot-validator';
 import { ASSETS, mimeFor } from './assets.ts';
 import { buildDoc } from '@akapen/core/blocks';
+import { FILE_ROUTE, imageMime, resolveDocumentFile } from '@akapen/core/files';
 import { allowedHostnames, hostnameOf } from '@akapen/core/hosts';
 import { readToken, tokensMatch } from '@akapen/core/token';
 import {
@@ -53,6 +54,11 @@ export type ServeOptions = {
   advertised?: string | null;
   cssPath?: string;
   keymapPath?: string;
+  /**
+   * The directory images beside the document may be served from (#81). Absent means
+   * the document's own directory, the narrowest root that makes ordinary documents work.
+   */
+  root?: string;
   /**
    * The shared secret every request must present, or null for `--no-auth`.
    *
@@ -738,8 +744,41 @@ export function startServer(opts: ServeOptions) {
     return c.body(body, 200, { 'content-type': 'application/json' });
   });
 
-  // Only what ASSETS names is served. No directory walking means there is no path
-  // traversal to begin with, and it works unchanged inside the single binary.
+  /**
+   * An image the document refers to. Every refusal is the same 404, so the answer does
+   * not tell a reader what exists outside the root.
+   *
+   * Images are not frozen with a round, so a diagram re-exported beside the document
+   * has to show when the page next asks for it. `no-cache` makes the browser ask, and
+   * the ETag keeps that asking to a 304 instead of the whole file each time.
+   *
+   * The SVG headers are for someone opening this URL directly: from an `<img>` its
+   * script never runs, but as a document it would run on this origin, with the cookie.
+   */
+  const fileRoot = resolve(opts.root ?? dirname(file));
+  app.get(FILE_ROUTE, (c) => {
+    const found = resolveDocumentFile(file, fileRoot, c.req.query('path') ?? '');
+    if (found === null) return c.text('not found', 404);
+    const st = statSync(found, { throwIfNoEntry: false });
+    if (st === undefined) return c.text('not found', 404);
+
+    // Full precision: a same-size re-export within one millisecond must still change it.
+    const etag = `"${st.size}-${st.mtimeMs}"`;
+    const cache = { etag, 'cache-control': 'no-cache' };
+    if (c.req.header('if-none-match') === etag) return c.body(null, 304, cache);
+    // Set by hand: Bun answers HEAD on a streamed body with a length of 0.
+    return c.body(Bun.file(found).stream(), 200, {
+      ...cache,
+      'content-type': imageMime(found),
+      'content-length': String(st.size),
+      'x-content-type-options': 'nosniff',
+      'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+    });
+  });
+
+  // Only what ASSETS names is served here. No directory walking means this route has no
+  // path traversal to begin with (the file route above has its own containment), and it
+  // works unchanged inside the single binary.
   app.get('*', (c) => {
     const path = new URL(c.req.url).pathname;
     const name = path === '/' ? 'index.html' : path.slice(1);
