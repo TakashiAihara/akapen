@@ -16,11 +16,11 @@ flowchart TD
     ABS["![](/abs/x.png) or https://…"] --> KEEP["left as written"]
     RENDER --> AUTH{"token middleware<br>(same as every route)"}
     AUTH -- "no" --> F401["401"]
-    AUTH -- "yes" --> EXT{"extension is on<br>the allowlist"}
-    EXT -- "no" --> F404["404"]
-    EXT -- "yes" --> REAL{"realpath(dir of document + path)<br>is inside realpath(root)"}
-    REAL -- "no, or does not exist" --> F404
-    REAL -- "yes" --> FILE{"is a regular file"}
+    AUTH -- "yes" --> REAL{"realpath(dir of document + path)<br>is inside realpath(root)"}
+    REAL -- "no, or does not exist" --> F404["404"]
+    REAL -- "yes" --> EXT{"extension of the real path<br>is on the allowlist"}
+    EXT -- "no" --> F404
+    EXT -- "yes" --> FILE{"is a regular file"}
     FILE -- "no" --> F404
     FILE -- "yes" --> OK["200, image/*, no-cache"]
 ```

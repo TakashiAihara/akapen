@@ -20,6 +20,7 @@ import {
   readdirSync,
   rmSync,
   statSync,
+  utimesSync,
   writeFileSync,
 } from 'node:fs';
 import { connect } from 'node:net';
@@ -1725,6 +1726,18 @@ describe('images beside the document', () => {
     const changed = await ask();
     expect(changed.status).toBe(200);
     expect(await changed.text()).toBe(`${PNG}-re-exported`);
+  });
+
+  it('changes the ETag for a same-size rewrite less than a millisecond later', async () => {
+    const png = join(sandbox, 'png', 'a.png');
+    // A whole second, so both times fall in the same millisecond and only the
+    // sub-millisecond part tells them apart.
+    const at = Math.floor(Date.now() / 1000);
+    utimesSync(png, at, at);
+    const before = (await file('png/a.png')).headers.get('etag');
+    utimesSync(png, at, at + 0.0004);
+    const after = (await file('png/a.png')).headers.get('etag');
+    expect(after).not.toBe(before);
   });
 
   it('gives HEAD the length GET sends', async () => {

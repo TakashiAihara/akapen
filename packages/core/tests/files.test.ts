@@ -124,6 +124,7 @@ describe('whether a path is inside a root', () => {
   it('reads below as inside and beside as outside, whatever the name starts with', () => {
     expect(isInside('/a/b', '/a/b/c.png')).toBe(true);
     expect(isInside('/a/b', '/a/c.png')).toBe(false);
+    expect(isInside('/a/b', '/a')).toBe(false);
     expect(isInside('/a/b', '/a/b/..c.png')).toBe(true);
   });
 });

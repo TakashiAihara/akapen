@@ -93,7 +93,8 @@ export function resolveDocumentFile(docFile: string, root: string, requested: st
  * Only linux and darwin ship, where `relative` of two absolute paths is never absolute.
  */
 export function isInside(realRoot: string, real: string): boolean {
-  return !relative(realRoot, real).startsWith(`..${sep}`);
+  const rel = relative(realRoot, real);
+  return rel !== '..' && !rel.startsWith(`..${sep}`);
 }
 
 export function imageMime(path: string): string {

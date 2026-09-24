@@ -762,7 +762,8 @@ export function startServer(opts: ServeOptions) {
     const st = statSync(found, { throwIfNoEntry: false });
     if (st === undefined) return c.text('not found', 404);
 
-    const etag = `"${st.size.toString(36)}-${Math.trunc(st.mtimeMs).toString(36)}"`;
+    // Full precision: a same-size re-export within one millisecond must still change it.
+    const etag = `"${st.size}-${st.mtimeMs}"`;
     const cache = { etag, 'cache-control': 'no-cache' };
     if (c.req.header('if-none-match') === etag) return c.body(null, 304, cache);
     // Set by hand: Bun answers HEAD on a streamed body with a length of 0.
