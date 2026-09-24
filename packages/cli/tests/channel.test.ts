@@ -174,6 +174,18 @@ describe('collect', () => {
     expect(collect('S1', seen, store(['/n/a.md'], { '/n/a.md': withReply }))).toEqual([]);
   });
 
+  it("does not push this session's own reply back to it, and still pushes everyone else's", () => {
+    const seen = new Map<string, Set<string>>();
+    collect('S1', seen, store(['/n/a.md'], { '/n/a.md': [comment('c1')] }));
+    const replies = [
+      { ...reply('mine'), sessionId: 'S1' },
+      { ...reply('sibling'), sessionId: 'S2' },
+      reply('person'),
+    ];
+    const events = collect('S1', seen, store(['/n/a.md'], { '/n/a.md': [comment('c1', { replies })] }));
+    expect(events.map((e) => e.meta['reply_id'])).toEqual(['sibling', 'person']);
+  });
+
   it('forgets a document whose akapen has stopped', () => {
     const seen = new Map<string, Set<string>>();
     collect('S1', seen, store(['/n/a.md'], { '/n/a.md': [comment('c1')] }));
