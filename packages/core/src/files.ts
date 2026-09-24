@@ -74,8 +74,7 @@ export function resolveDocumentFile(docFile: string, root: string, requested: st
     return null;
   }
 
-  const rel = relative(realRoot, real);
-  if (rel.startsWith(`..${sep}`) || isAbsolute(rel)) return null;
+  if (!isInside(realRoot, real)) return null;
   // Checked on the real name, the one that gets read: a symlink named `a.png` pointing
   // at `.env` inside the root must not get through.
   if (!(extname(real).toLowerCase() in IMAGE_MIME)) return null;
@@ -86,6 +85,15 @@ export function resolveDocumentFile(docFile: string, root: string, requested: st
     return null;
   }
   return real;
+}
+
+/**
+ * Whether a real path is inside a real root. One rule for the server and for the CLI's
+ * startup check. `..${sep}` rather than `..`, so a file named `..b.png` stays inside.
+ * Only linux and darwin ship, where `relative` of two absolute paths is never absolute.
+ */
+export function isInside(realRoot: string, real: string): boolean {
+  return !relative(realRoot, real).startsWith(`..${sep}`);
 }
 
 export function imageMime(path: string): string {

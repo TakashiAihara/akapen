@@ -1,9 +1,10 @@
 #!/usr/bin/env bun
 import { existsSync, realpathSync, statSync } from 'node:fs';
-import { relative, resolve, sep } from 'node:path';
+import { resolve } from 'node:path';
 
 import { AdvertiseError, localAddresses, resolveAdvertised, urlsFor } from '@akapen/core/addresses';
 
+import { isInside } from '@akapen/core/files';
 import { loadReview, pendingComments } from '@akapen/core/store';
 import { liveInstances } from '@akapen/core/instances';
 import { liveEntries, sweep as sweepSessions } from '@akapen/core/sessions';
@@ -234,7 +235,7 @@ if (args.root !== undefined) {
     fail(`--root is not a directory: ${args.root}`);
   // Images resolve against the document, so a root that does not hold it can serve none
   // of them; say so rather than start with every image a 404.
-  if (relative(realpathSync(args.root), realpathSync(file)).startsWith(`..${sep}`)) {
+  if (!isInside(realpathSync(args.root), realpathSync(file))) {
     fail(`--root does not contain the document: ${args.root}`);
   }
 }

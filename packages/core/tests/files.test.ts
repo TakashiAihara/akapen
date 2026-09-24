@@ -9,7 +9,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { documentFileSrc, imageMime, resolveDocumentFile } from '../src/files.ts';
+import { documentFileSrc, imageMime, isInside, resolveDocumentFile } from '../src/files.ts';
 
 describe('which image srcs point at the file route', () => {
   it('takes a document-relative path, decoded back to what was typed', () => {
@@ -117,5 +117,13 @@ describe('resolving a requested image', () => {
     writeFileSync(join(notes(), 'UP.PNG'), 'png');
     expect(resolveDocumentFile(doc, notes(), 'UP.PNG')).toBe(join(notes(), 'UP.PNG'));
     expect(imageMime('UP.PNG')).toBe('image/png');
+  });
+});
+
+describe('whether a path is inside a root', () => {
+  it('reads below as inside and beside as outside, whatever the name starts with', () => {
+    expect(isInside('/a/b', '/a/b/c.png')).toBe(true);
+    expect(isInside('/a/b', '/a/c.png')).toBe(false);
+    expect(isInside('/a/b', '/a/b/..c.png')).toBe(true);
   });
 });
