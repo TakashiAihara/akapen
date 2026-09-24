@@ -1,4 +1,4 @@
-import { readFileSync, watch, existsSync } from 'node:fs';
+import { readFileSync, statSync, watch, existsSync } from 'node:fs';
 import { basename, dirname, resolve } from 'node:path';
 import { Hono, type Context } from 'hono';
 import { getCookie, setCookie } from 'hono/cookie';
@@ -748,25 +748,36 @@ export function startServer(opts: ServeOptions) {
    * An image the document refers to. Every refusal is the same 404, so the answer does
    * not tell a reader what exists outside the root.
    *
-   * `no-cache` because a re-exported diagram beside a live document should appear on
-   * the next render. The SVG headers are for someone opening this URL directly: from an
-   * `<img>` its script never runs, but as a document it would run on this origin, with
-   * the cookie.
+   * Images are not frozen with a round, so a diagram re-exported beside the document
+   * has to show when the page next asks for it. `no-cache` makes the browser ask, and
+   * the ETag keeps that asking to a 304 instead of the whole file each time.
+   *
+   * The SVG headers are for someone opening this URL directly: from an `<img>` its
+   * script never runs, but as a document it would run on this origin, with the cookie.
    */
   const fileRoot = resolve(opts.root ?? dirname(file));
   app.get(FILE_ROUTE, (c) => {
     const found = resolveDocumentFile(file, fileRoot, c.req.query('path') ?? '');
     if (found === null) return c.text('not found', 404);
+    const st = statSync(found, { throwIfNoEntry: false });
+    if (st === undefined) return c.text('not found', 404);
+
+    const etag = `"${st.size.toString(36)}-${Math.trunc(st.mtimeMs).toString(36)}"`;
+    const cache = { etag, 'cache-control': 'no-cache' };
+    if (c.req.header('if-none-match') === etag) return c.body(null, 304, cache);
+    // Set by hand: Bun answers HEAD on a streamed body with a length of 0.
     return c.body(Bun.file(found).stream(), 200, {
+      ...cache,
       'content-type': imageMime(found),
-      'cache-control': 'no-cache',
+      'content-length': String(st.size),
       'x-content-type-options': 'nosniff',
       'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox",
     });
   });
 
-  // Only what ASSETS names is served. No directory walking means there is no path
-  // traversal to begin with, and it works unchanged inside the single binary.
+  // Only what ASSETS names is served here. No directory walking means this route has no
+  // path traversal to begin with (the file route above has its own containment), and it
+  // works unchanged inside the single binary.
   app.get('*', (c) => {
     const path = new URL(c.req.url).pathname;
     const name = path === '/' ? 'index.html' : path.slice(1);

@@ -38,7 +38,7 @@ export const FILE_ROUTE = '/file';
  * the writer typed; the query and fragment are dropped because a file has neither.
  */
 export function documentFileSrc(src: string): string | null {
-  if (src === '' || src.startsWith('/') || src.startsWith('#') || src.startsWith('?')) return null;
+  if (src.startsWith('/')) return null;
   if (/^[a-z][a-z0-9+.-]*:/i.test(src)) return null;
 
   const bare = src.replace(/[?#].*$/, '');
@@ -63,7 +63,7 @@ export function documentFileSrc(src: string): string | null {
  * root that is itself a symlink would refuse everything if only one side were resolved.
  */
 export function resolveDocumentFile(docFile: string, root: string, requested: string): string | null {
-  if (requested === '' || requested.includes('\0') || isAbsolute(requested)) return null;
+  if (isAbsolute(requested)) return null;
 
   let real: string;
   let realRoot: string;
@@ -75,7 +75,7 @@ export function resolveDocumentFile(docFile: string, root: string, requested: st
   }
 
   const rel = relative(realRoot, real);
-  if (rel === '' || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) return null;
+  if (rel.startsWith(`..${sep}`) || isAbsolute(rel)) return null;
   // Checked on the real name, the one that gets read: a symlink named `a.png` pointing
   // at `.env` inside the root must not get through.
   if (!(extname(real).toLowerCase() in IMAGE_MIME)) return null;

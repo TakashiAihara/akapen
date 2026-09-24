@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
-import { existsSync, statSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { existsSync, realpathSync, statSync } from 'node:fs';
+import { relative, resolve, sep } from 'node:path';
 
 import { AdvertiseError, localAddresses, resolveAdvertised, urlsFor } from '@akapen/core/addresses';
 
@@ -25,8 +25,8 @@ options:
                            from ($AKAPEN_ADVERTISE sets it once per host)
   --css <file>             extra stylesheet to load
   --keymap <file>          JSON overriding the keymap ({ "action": ["key"] })
-  --root <dir>             serve images the document refers to from anywhere under this
-                           directory (default: the document's own directory)
+  --root <dir>             file root: serve images the document refers to from anywhere
+                           under this directory (default: the document's own directory)
   --author <name>          comment author (default $USER)
   --token <s>              use this token instead of the stored one
   --no-auth                serve with no token at all (only behind something that authenticates)
@@ -229,8 +229,14 @@ const file = positional[0]!;
 if (!existsSync(file)) fail(`no such file: ${file}`);
 // Checked here rather than left to 404: a mistyped root would otherwise show every
 // image as broken with nothing saying why.
-if (args.root !== undefined && !statSync(args.root, { throwIfNoEntry: false })?.isDirectory()) {
-  fail(`--root is not a directory: ${args.root}`);
+if (args.root !== undefined) {
+  if (!statSync(args.root, { throwIfNoEntry: false })?.isDirectory())
+    fail(`--root is not a directory: ${args.root}`);
+  // Images resolve against the document, so a root that does not hold it can serve none
+  // of them; say so rather than start with every image a 404.
+  if (relative(realpathSync(args.root), realpathSync(file)).startsWith(`..${sep}`)) {
+    fail(`--root does not contain the document: ${args.root}`);
+  }
 }
 
 // Every value below is a string or absent — parseArgs rejects the boolean case — so

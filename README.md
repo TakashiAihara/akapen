@@ -67,7 +67,7 @@ The examples below use `bun run packages/cli/src/cli.ts`; read that as `akapen` 
 | `-A, --advertise <addr\|iface>` | address to print in the URL, or an interface to take one from (`AKAPEN_ADVERTISE` sets it once per host) |
 | `--css <file>` | extra stylesheet, loaded after the defaults so it can override everything |
 | `--keymap <file>` | JSON overriding the keymap, merged over the defaults |
-| `--root <dir>` | serve images the document refers to from anywhere under this directory (default: the document's own directory) |
+| `--root <dir>` | file root: serve images the document refers to from anywhere under this directory (default: the document's own directory) |
 | `--author <name>` | comment author (default `$USER`) |
 | `--token <s>` | use this token instead of the stored one (`AKAPEN_TOKEN` does the same without appearing in `ps`) |
 | `--no-auth` | serve with no token at all, for running behind something that authenticates |
@@ -235,7 +235,7 @@ There is one invariant: every non-blank source line belongs to exactly one block
 
 ### Images beside the document
 
-`![](png/overview.png)` shows the image, resolved relative to the document the way any markdown renderer resolves it. Only images are served (`png` / `jpg` / `jpeg` / `gif` / `webp` / `avif` / `svg`), only from under the root, and behind the same token as everything else. The root is the document's directory; `--root` widens it for a vault that writes `../images/foo.png`. A closed round shows an image as it is now: rounds freeze the text, not the files beside it. The decisions are in `docs/design/document-images.md`.
+`![](png/overview.png)` shows the image, resolved relative to the document the way any markdown renderer resolves it. Only images are served (`png` / `jpg` / `jpeg` / `gif` / `webp` / `avif` / `svg`), only from under the file root, and behind the same token as everything else. The file root is the document's directory; `--root` widens it for a vault that writes `../images/foo.png`. A closed round shows an image as it is now: rounds freeze the text, not the files beside it. The decisions are in `docs/design/document-images.md`.
 
 ### HTML written directly in the markdown
 

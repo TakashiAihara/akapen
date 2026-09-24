@@ -28,6 +28,7 @@ describe('which image srcs point at the file route', () => {
       '//cdn/a.png',
       '/abs/a.png',
       '#a',
+      '?x=1',
       '',
     ]) {
       expect(documentFileSrc(src)).toBeNull();
@@ -70,7 +71,7 @@ describe('resolving a requested image', () => {
   });
 
   it('refuses a traversal however deep it goes', () => {
-    expect(resolveDocumentFile(doc, notes(), '../../../../../../etc/passwd')).toBeNull();
+    expect(resolveDocumentFile(doc, notes(), `${'../'.repeat(12)}${root.slice(1)}/outside.png`)).toBeNull();
     expect(resolveDocumentFile(doc, notes(), '../outside.png')).toBeNull();
   });
 
