@@ -170,8 +170,25 @@ describe('collect', () => {
     const seen = new Map<string, Set<string>>();
     collect('S1', seen, store(['/n/a.md'], { '/n/a.md': [] }));
     const withReply = [comment('c1', { replies: [reply('r1')] })];
-    for (const e of collect('S1', seen, store(['/n/a.md'], { '/n/a.md': withReply }))) markSent(seen, e);
+    const first = collect('S1', seen, store(['/n/a.md'], { '/n/a.md': withReply }));
+    expect(first).toHaveLength(2);
+    for (const e of first) markSent(seen, e);
     expect(collect('S1', seen, store(['/n/a.md'], { '/n/a.md': withReply }))).toEqual([]);
+  });
+
+  it("does not push this session's own reply back to it, and still pushes everyone else's", () => {
+    const seen = new Map<string, Set<string>>();
+    collect('S1', seen, store(['/n/a.md'], { '/n/a.md': [comment('c1')] }));
+    const replies = [
+      { ...reply('sibling'), sessionId: 'S2' },
+      { ...reply('mine'), sessionId: 'S1' },
+      reply('person'),
+    ];
+    const events = collect('S1', seen, store(['/n/a.md'], { '/n/a.md': [comment('c1', { replies })] }));
+    expect(events.map((e) => e.meta['reply_id'])).toEqual(['sibling', 'person']);
+    // Never marked sent, so the filter is what holds it back on every later pass too.
+    for (const e of events) markSent(seen, e);
+    expect(collect('S1', seen, store(['/n/a.md'], { '/n/a.md': [comment('c1', { replies })] }))).toEqual([]);
   });
 
   it('forgets a document whose akapen has stopped', () => {
