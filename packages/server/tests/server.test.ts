@@ -990,6 +990,10 @@ describe('the other instances on this host', () => {
     writeFileSync(work, '## Only a subheading\n');
     expect((await post('/api/rounds')).ok).toBe(true);
     expect(await titleOf(base)).toBe('');
+    // The tab falls back to the file name; the status leaves that to the reader, who
+    // already has `file` beside it.
+    const doc = v.parse(DocPayloadSchema, await (await fetch(`${base}/api/doc`)).json()).doc;
+    expect(pageTitle(doc)).toBe('note.md — akapen');
   });
 
   it('gives the same name the tab does', async () => {
@@ -1018,6 +1022,9 @@ describe('the other instances on this host', () => {
       // but excluding yourself is decided by each server separately.
       const theirs = await peers(peer.url);
       expect(theirs.map((p) => p.file)).toEqual(['note.md']);
+      // The peer's heading stays with the peer. Its status has one; this row does not.
+      expect(await titleOf(base)).toBe('Heading');
+      expect(await (await fetch(`${peer.url}/api/instances`)).text()).not.toContain('Heading');
     } finally {
       peer.stop();
     }

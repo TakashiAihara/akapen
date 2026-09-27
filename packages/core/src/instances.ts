@@ -213,7 +213,8 @@ function removeStale(path: string): void {
   }
 }
 
-function isStatus(v: unknown): v is StatusPayload {
+/** `title` is left to the caller: a peer from before #169 does not send one. */
+function isStatus(v: unknown): v is Omit<StatusPayload, 'title'> & { title?: unknown } {
   if (typeof v !== 'object' || v === null) return false;
   const s = v as StatusPayload;
   return typeof s.file === 'string' && Number.isInteger(s.round) && Number.isInteger(s.unresolved);

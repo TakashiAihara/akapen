@@ -3,9 +3,8 @@
  *
  * Two places need exactly this. The title is one (title.ts, which the tab and
  * `/api/status` share), the outline is the other — and both want `# The **rail**` to
- * read as `The rail`. Deriving it twice would
- * mean two answers to "what does this heading say", and the one that is not being looked
- * at is the one that drifts.
+ * read as `The rail`. Deriving it twice would mean two answers to "what does this heading
+ * say", and the one that is not being looked at is the one that drifts.
  *
  * DOM-free on purpose, so what the string ends up being can be tested without a browser.
  * The whole point is the string.

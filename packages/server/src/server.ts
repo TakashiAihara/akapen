@@ -683,7 +683,6 @@ export function startServer(opts: ServeOptions) {
         host: record.host,
         port: record.port,
         file: status.file,
-        title: status.title,
         round: status.round,
         unresolved: status.unresolved,
         // A loopback bind answers here, next to it, and nowhere the reader's browser

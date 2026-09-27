@@ -287,7 +287,7 @@ export type RoundsPayload = v.InferOutput<typeof RoundsPayloadSchema>;
 export const StatusPayloadSchema = v.object({
   file: v.string(),
   /**
-   * The first top-level heading as plain text, the same string the tab shows (#169).
+   * The first top-level heading as plain text, the heading the tab is named after (#169).
    * Empty when the document has none: `file` is already beside it, so the fallback is
    * the reader's to pick rather than a guess made here.
    */
@@ -308,7 +308,9 @@ export const InstancePeerSchema = v.object({
   /** The address it bound. Kept so a row can say why it cannot be linked to. */
   host: v.string(),
   port: v.pipe(v.number(), v.integer(), v.minValue(1)),
-  ...StatusPayloadSchema.entries,
+  // Not the title: nothing on the switcher shows it, and a heading is document content
+  // handed to whoever can read this instance, which is not who can read that one.
+  ...v.omit(StatusPayloadSchema, ['title']).entries,
   /**
    * Whether a link to it can work at all.
    *
