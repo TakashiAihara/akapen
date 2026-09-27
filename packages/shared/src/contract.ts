@@ -286,6 +286,12 @@ export type RoundsPayload = v.InferOutput<typeof RoundsPayloadSchema>;
  */
 export const StatusPayloadSchema = v.object({
   file: v.string(),
+  /**
+   * The first top-level heading as plain text, the heading the tab is named after (#169).
+   * Empty when the document has none: `file` is already beside it, so the fallback is
+   * the reader's to pick rather than a guess made here.
+   */
+  title: v.string(),
   round: v.pipe(v.number(), v.integer(), v.minValue(1)),
   /** Unresolved comments across every round: the same set `akapen comments` would emit. */
   unresolved: v.pipe(v.number(), v.integer(), v.minValue(0)),
@@ -302,7 +308,9 @@ export const InstancePeerSchema = v.object({
   /** The address it bound. Kept so a row can say why it cannot be linked to. */
   host: v.string(),
   port: v.pipe(v.number(), v.integer(), v.minValue(1)),
-  ...StatusPayloadSchema.entries,
+  // Not the title: nothing on the switcher shows it, and a row carries only what the
+  // switcher needs.
+  ...v.omit(StatusPayloadSchema, ['title']).entries,
   /**
    * Whether a link to it can work at all.
    *

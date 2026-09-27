@@ -213,7 +213,8 @@ function removeStale(path: string): void {
   }
 }
 
-function isStatus(v: unknown): v is StatusPayload {
+/** `title` is left to the caller: a peer from before #169 does not send one. */
+function isStatus(v: unknown): v is Omit<StatusPayload, 'title'> & { title?: unknown } {
   if (typeof v !== 'object' || v === null) return false;
   const s = v as StatusPayload;
   return typeof s.file === 'string' && Number.isInteger(s.round) && Number.isInteger(s.unresolved);
@@ -263,7 +264,11 @@ async function askStatus(
     });
     if (!res.ok) return null;
     const parsed: unknown = await res.json();
-    return isStatus(parsed) ? parsed : null;
+    // A peer from before #169 answers without a title. It is still alive, and reads as
+    // a document with no heading rather than as dead.
+    return isStatus(parsed)
+      ? { ...parsed, title: typeof parsed.title === 'string' ? parsed.title : '' }
+      : null;
   } catch {
     return null;
   }

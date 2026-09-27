@@ -145,6 +145,8 @@ PID     URL                          ROUND  UNRESOLVED  FILE
 
 The column is a URL rather than the address each was bound to, for the same reason the startup block is one: `0.0.0.0:4300` is not somewhere to go. It carries no token — the terminal it is read in belongs to whoever started them, and a secret printed on every row would be in the scrollback of every other thing they did. `akapen token` prints it when a script needs one.
 
+`--json` also carries `title`: the document's first top-level heading with the markup taken off, the heading the browser tab is named after. It is empty for a document with none — `file` is beside it, so the fallback is yours to pick.
+
 `0.0.0.0` names every interface and no machine, so it is not printed back. When the bound address is a wildcard, the startup block lists the machine's own non-loopback IPv4 addresses instead — the one carrying the default route first, the rest as `also`, because which one your browser can reach is knowledge akapen does not have.
 
 ```text
@@ -360,7 +362,7 @@ The list is built by the server, at `GET /api/instances`. The browser cannot bui
 
 A link is built from the address the page was opened on, `location.hostname`, not from what the peer bound. The browser is usually not on this host — akapen is started with `--host 0.0.0.0` and read over the LAN — so `localhost` and `127.0.0.1` point at the reader's own machine. Which leaves the default bind as a case to handle rather than ignore: a peer on `127.0.0.1` cannot be opened from that browser however the link is built, so its row is listed and marked unreachable instead of carrying a link that will time out. Where a review you cannot reach is running is still worth knowing.
 
-A row shows the basename, the round and the unresolved count. **Not the path**: directory layout is not something to hand out, and the token says a reader may see the review rather than everything about the machine holding it. `akapen list` does print it in full — that is read on the host, by whoever started them.
+A row shows the basename, the round and the unresolved count. Not the title either, which nothing on the switcher uses (`akapen list --json` has it). **Not the path**: directory layout is not something to hand out, and the token says a reader may see the review rather than everything about the machine holding it. `akapen list` does print it in full — that is read on the host, by whoever started them.
 
 Instances find each other by asking, and the request carries the same token, so a peer started with a different one reads as not running.
 

@@ -8,6 +8,7 @@
  */
 import { buildDoc } from '@akapen/core/blocks';
 import { describe, expect, it } from 'vitest';
+import { documentTitle } from '@akapen/shared/title';
 import { pageTitle } from '../src/title.ts';
 
 const doc = (source: string, path = '/home/x/notes/20-auth.md') => buildDoc(path, source);
@@ -79,5 +80,19 @@ describe('pageTitle', () => {
 
   it('is the brand alone when there is neither a heading nor a name', () => {
     expect(pageTitle(doc('A paragraph.\n', ''))).toBe('akapen');
+  });
+});
+
+/**
+ * What `/api/status` reports. Here beside pageTitle rather than in packages/shared, which
+ * has no parser to build a document with.
+ */
+describe('documentTitle', () => {
+  it('is the first heading with the markup taken off', () => {
+    expect(documentTitle(doc('# The **rail**\n\n# Second\n'))).toBe('The rail');
+  });
+
+  it('is empty rather than the file name when there is no top-level heading', () => {
+    expect(documentTitle(doc('## Only a subheading\n'))).toBe('');
   });
 });
