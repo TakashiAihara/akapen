@@ -1022,9 +1022,14 @@ describe('the other instances on this host', () => {
       // but excluding yourself is decided by each server separately.
       const theirs = await peers(peer.url);
       expect(theirs.map((p) => p.file)).toEqual(['note.md']);
-      // The peer's heading stays with the peer. Its status has one; this row does not.
+      // A row has no title, even though the status it is built from does. Read raw, since
+      // parsing against the schema would strip one that was sent.
       expect(await titleOf(base)).toBe('Heading');
-      expect(await (await fetch(`${peer.url}/api/instances`)).text()).not.toContain('Heading');
+      const res = await fetch(`${peer.url}/api/instances`);
+      expect(res.ok).toBe(true);
+      const raw = (await res.json()) as { instances: Record<string, unknown>[] };
+      expect(raw.instances).toHaveLength(1);
+      expect(raw.instances.every((row) => !('title' in row))).toBe(true);
     } finally {
       peer.stop();
     }

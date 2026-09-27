@@ -308,8 +308,8 @@ export const InstancePeerSchema = v.object({
   /** The address it bound. Kept so a row can say why it cannot be linked to. */
   host: v.string(),
   port: v.pipe(v.number(), v.integer(), v.minValue(1)),
-  // Not the title: nothing on the switcher shows it, and a heading is document content
-  // handed to whoever can read this instance, which is not who can read that one.
+  // Not the title: nothing on the switcher shows it, and a row carries only what the
+  // switcher needs.
   ...v.omit(StatusPayloadSchema, ['title']).entries,
   /**
    * Whether a link to it can work at all.

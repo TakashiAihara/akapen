@@ -658,7 +658,8 @@ export function startServer(opts: ServeOptions) {
   app.get('/api/status', (c) => {
     const status: StatusPayload = {
       file: basename(file),
-      // `doc` is the current round's, so a heading edited since is reported as it now reads.
+      // `doc` is the round being shown, not the file: a heading edited on disk is reported
+      // once a round is closed on it, the same moment the tab picks it up.
       title: documentTitle(doc),
       round: review.currentRound,
       // Across every round, matching `akapen comments`: closing a round hands the

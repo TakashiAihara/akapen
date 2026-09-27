@@ -248,6 +248,15 @@ describe('proving an instance is alive', () => {
     await peer.stop();
   });
 
+  it('reads a title that is not a string as none, rather than passing it on', async () => {
+    const peer = await listening({ file: 'note.md', title: 5, round: 1, unresolved: 0 });
+    registerInstance(record({ pid: process.pid, port: peer.port }));
+
+    expect((await liveInstances({ timeoutMs: 2_000 }))[0]!.status.title).toBe('');
+
+    await peer.stop();
+  });
+
   it('leaves out the caller when asked to', async () => {
     const own = await listening({ file: 'note.md', round: 1, unresolved: 0 });
     registerInstance(record({ pid: process.pid, port: own.port }));
