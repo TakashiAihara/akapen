@@ -15,8 +15,14 @@ import { plainText } from './inline-text.ts';
 /**
  * `#` or the setext form, whichever the document uses. A document with two is unusual
  * enough not to be designed for; the first is what a reader would call it anyway.
+ *
+ * Only a heading the document itself stands under: one in a quote or a list item is
+ * something the document shows, not its name (#197). The same line the outline draws
+ * (`outlineHeadings` in packages/web/src/outline.ts), so the two readers of headings agree.
  */
 export function documentTitle(doc: Doc): string {
-  const h1 = doc.blocks.find((b) => b.kind === 'heading' && b.flags.includes('h1'));
+  const h1 = doc.blocks.find(
+    (b) => b.kind === 'heading' && b.flags.includes('h1') && !b.quoted && b.depth === 0,
+  );
   return h1 ? plainText(h1.html) : '';
 }
