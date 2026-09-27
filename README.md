@@ -145,6 +145,8 @@ PID     URL                          ROUND  UNRESOLVED  FILE
 
 The column is a URL rather than the address each was bound to, for the same reason the startup block is one: `0.0.0.0:4300` is not somewhere to go. It carries no token — the terminal it is read in belongs to whoever started them, and a secret printed on every row would be in the scrollback of every other thing they did. `akapen token` prints it when a script needs one.
 
+`--json` also carries `title`: the document's first top-level heading with the markup taken off, the same string the browser tab shows. It is empty for a document with none — `file` is beside it, so the fallback is yours to pick.
+
 `0.0.0.0` names every interface and no machine, so it is not printed back. When the bound address is a wildcard, the startup block lists the machine's own non-loopback IPv4 addresses instead — the one carrying the default route first, the rest as `also`, because which one your browser can reach is knowledge akapen does not have.
 
 ```text

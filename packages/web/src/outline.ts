@@ -12,7 +12,7 @@
  * DOM-free, so the derivation is testable without a browser (title.ts, same reason).
  */
 import type { Block, Doc } from '@akapen/shared';
-import { plainText } from './inline-text.ts';
+import { plainText } from '@akapen/shared/inline-text';
 
 export type OutlineEntry = {
   /** The heading's first source line. What the jump goes to. */

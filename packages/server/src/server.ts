@@ -38,6 +38,7 @@ import {
   type RoundState,
   type StatusPayload,
 } from '@akapen/shared';
+import { documentTitle } from '@akapen/shared/title';
 
 export type ServeOptions = {
   file: string;
@@ -657,6 +658,8 @@ export function startServer(opts: ServeOptions) {
   app.get('/api/status', (c) => {
     const status: StatusPayload = {
       file: basename(file),
+      // `doc` is the current round's, so a heading edited since is reported as it now reads.
+      title: documentTitle(doc),
       round: review.currentRound,
       // Across every round, matching `akapen comments`: closing a round hands the
       // unresolved ones over, so they are still what the document is waiting on.
@@ -680,6 +683,7 @@ export function startServer(opts: ServeOptions) {
         host: record.host,
         port: record.port,
         file: status.file,
+        title: status.title,
         round: status.round,
         unresolved: status.unresolved,
         // A loopback bind answers here, next to it, and nowhere the reader's browser

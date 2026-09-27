@@ -35,6 +35,7 @@ import {
   StatusPayloadSchema,
 } from '@akapen/shared';
 import * as v from 'valibot';
+import { pageTitle } from '../../web/src/title.ts';
 
 const SOURCE = ['---', 'title: t', '---', '', '# Heading', '', 'A paragraph.', ''].join('\n');
 
@@ -964,7 +965,7 @@ describe('the other instances on this host', () => {
 
   it('reports what it is showing, by basename', async () => {
     const before = v.parse(StatusPayloadSchema, await (await fetch(`${base}/api/status`)).json());
-    expect(before).toEqual({ file: 'note.md', round: 1, unresolved: 0 });
+    expect(before).toEqual({ file: 'note.md', title: 'Heading', round: 1, unresolved: 0 });
 
     await post('/api/comments', { startLine: 5, endLine: 5, body: 'x' });
 
@@ -973,6 +974,36 @@ describe('the other instances on this host', () => {
     // The path is not in the payload at all. The switcher is read over the LAN with
     // nothing authenticating a reader, and directory layout is not something to hand out.
     expect(JSON.stringify(after)).not.toContain(sandbox);
+  });
+
+  /** What a document is called, where `akapen list` can reach it (#169). */
+  const titleOf = async (url: string) =>
+    v.parse(StatusPayloadSchema, await (await fetch(`${url}/api/status`)).json()).title;
+
+  it('names the document by its heading, with the markup taken off', async () => {
+    writeFileSync(work, '# The **rail**\n\nA paragraph.\n');
+    expect((await post('/api/rounds')).ok).toBe(true);
+    expect(await titleOf(base)).toBe('The rail');
+  });
+
+  it('reports an empty title for a document with no top-level heading', async () => {
+    writeFileSync(work, '## Only a subheading\n');
+    expect((await post('/api/rounds')).ok).toBe(true);
+    expect(await titleOf(base)).toBe('');
+  });
+
+  it('gives the same name the tab does', async () => {
+    const doc = v.parse(DocPayloadSchema, await (await fetch(`${base}/api/doc`)).json()).doc;
+    expect(pageTitle(doc)).toBe(`${await titleOf(base)} — akapen`);
+  });
+
+  it('reports the heading of the round being shown, not the file on disk', async () => {
+    writeFileSync(work, SOURCE.replace('# Heading', '# Renamed'));
+    // The document on screen has not changed until a round is closed, and the name
+    // should agree with the tab rather than run ahead of it.
+    expect(await titleOf(base)).toBe('Heading');
+    expect((await post('/api/rounds')).ok).toBe(true);
+    expect(await titleOf(base)).toBe('Renamed');
   });
 
   it('lists the other instance, and never itself', async () => {
@@ -1086,6 +1117,7 @@ describe('listing the instances from the terminal', () => {
         // The terminal is on the host and belongs to whoever started them, unlike the
         // switcher, so here the path is the useful part.
         file: work,
+        title: 'Heading',
         round: 1,
         unresolved: 0,
         started_at: expect.any(String),

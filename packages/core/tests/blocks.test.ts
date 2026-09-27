@@ -113,7 +113,7 @@ describe('fence info strings', () => {
 });
 
 /**
- * `plainText` (packages/web/src/inline-text.ts) ends a tag at the first `>` without
+ * `plainText` (packages/shared/src/inline-text.ts) ends a tag at the first `>` without
  * tracking quotes, so a raw one inside an attribute would cut a tab title and an
  * outline row off mid-heading. Nothing on the browser side checks for that. What
  * rules it out is `html: false` here, which nothing else was holding in place.

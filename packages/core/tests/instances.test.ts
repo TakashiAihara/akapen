@@ -228,11 +228,24 @@ describe('proving an instance is alive', () => {
 
     expect(live).toHaveLength(1);
     expect(live[0]!.record.port).toBe(answering.port);
-    expect(live[0]!.status).toEqual({ file: 'note.md', round: 2, unresolved: 3 });
+    // The fake answers the way an instance from before #169 does, with no title. It is
+    // alive all the same, and reads as a document with no heading.
+    expect(live[0]!.status).toEqual({ file: 'note.md', title: '', round: 2, unresolved: 3 });
     // Left alone on purpose: its pid is alive, so it may be an instance that was busy.
     expect(existsSync(join(instancesDir(), `${process.ppid}.json`))).toBe(true);
 
     await answering.stop();
+  });
+
+  it('passes on the title a peer reports', async () => {
+    // The other direction: a test on only the missing case passes on an implementation
+    // that always answers ''.
+    const peer = await listening({ file: 'note.md', title: 'The rail', round: 1, unresolved: 0 });
+    registerInstance(record({ pid: process.pid, port: peer.port }));
+
+    expect((await liveInstances({ timeoutMs: 2_000 }))[0]!.status.title).toBe('The rail');
+
+    await peer.stop();
   });
 
   it('leaves out the caller when asked to', async () => {

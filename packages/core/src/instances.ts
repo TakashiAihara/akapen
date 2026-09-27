@@ -263,7 +263,11 @@ async function askStatus(
     });
     if (!res.ok) return null;
     const parsed: unknown = await res.json();
-    return isStatus(parsed) ? parsed : null;
+    // A peer from before #169 answers without a title. It is still alive, and reads as
+    // a document with no heading rather than as dead.
+    return isStatus(parsed)
+      ? { ...parsed, title: typeof parsed.title === 'string' ? parsed.title : '' }
+      : null;
   } catch {
     return null;
   }

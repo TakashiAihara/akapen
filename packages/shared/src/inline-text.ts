@@ -1,8 +1,9 @@
 /**
  * The reading of rendered inline HTML: what a heading says, with the markup taken off.
  *
- * Two places need exactly this. The tab title is one (title.ts), the outline is the
- * other — and both want `# The **rail**` to read as `The rail`. Deriving it twice would
+ * Two places need exactly this. The title is one (title.ts, which the tab and
+ * `/api/status` share), the outline is the other — and both want `# The **rail**` to
+ * read as `The rail`. Deriving it twice would
  * mean two answers to "what does this heading say", and the one that is not being looked
  * at is the one that drifts.
  *

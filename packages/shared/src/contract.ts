@@ -286,6 +286,12 @@ export type RoundsPayload = v.InferOutput<typeof RoundsPayloadSchema>;
  */
 export const StatusPayloadSchema = v.object({
   file: v.string(),
+  /**
+   * The first top-level heading as plain text, the same string the tab shows (#169).
+   * Empty when the document has none: `file` is already beside it, so the fallback is
+   * the reader's to pick rather than a guess made here.
+   */
+  title: v.string(),
   round: v.pipe(v.number(), v.integer(), v.minValue(1)),
   /** Unresolved comments across every round: the same set `akapen comments` would emit. */
   unresolved: v.pipe(v.number(), v.integer(), v.minValue(0)),

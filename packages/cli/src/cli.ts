@@ -136,6 +136,7 @@ if (positional[0] === 'list') {
           // existed, or by a shell with no session to name.
           origin: record.origin ?? null,
           file: record.file,
+          title: status.title,
           round: status.round,
           unresolved: status.unresolved,
           started_at: record.startedAt,

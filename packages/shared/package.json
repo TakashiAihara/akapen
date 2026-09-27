@@ -4,7 +4,9 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/contract.ts"
+    ".": "./src/contract.ts",
+    "./inline-text": "./src/inline-text.ts",
+    "./title": "./src/title.ts"
   },
   "dependencies": {
     "valibot": "^1.4.2"
