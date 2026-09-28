@@ -112,6 +112,10 @@ describe('documentTitle', () => {
     expect(documentTitle(doc('> # Quoted\n\nA paragraph.\n'))).toBe('');
   });
 
+  it('passes over a heading that follows a nested quote inside the same quote', () => {
+    expect(documentTitle(doc('> > Nested\n>\n> # Quoted\n\n# Real\n'))).toBe('Real');
+  });
+
   it('is empty when the only top-level heading is in a list', () => {
     expect(documentTitle(doc('- # Listed\n\nA paragraph.\n'))).toBe('');
   });
