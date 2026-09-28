@@ -49,7 +49,7 @@ apart. Use the qualified form; the bare word is the one that causes the confusio
 | top bar | the bar across the top of the screen: name, file path, round badge, count, controls | `.topbar` |
 | outline | the document's headings as a tree, from a panel in the header: level, text and the line to jump to | `buildOutline`, `#outline`, `#outlineToggle`, the `outline.toggle` key |
 | current section | the outline row for the heading being read, worked out when the panel opens and not followed while it is shut | `.outline-entry.current`, `markCurrent` |
-| tab title | what the browser tab is called: the document's first top-level heading (`#` or setext), or its file name when it has none | `document.title`, `pageTitle` |
+| tab title | what the browser tab is called: the document's first top-level heading (`#` or setext) outside quotes and list items, or its file name when it has none | `document.title`, `pageTitle` |
 | banner | the line saying the live file has changed since the snapshot | `#banner`, `ChangedState` |
 | history bar | the line saying an earlier round is being viewed. Comments written there are filed on that round | `#historyBar` |
 | round badge / round selector | the round on screen — the current one, or an earlier one while viewing history — and the picker, which tags the current round | `#round`, `#roundPick` |

@@ -13,6 +13,7 @@
  */
 import type { Block, Doc } from '@akapen/shared';
 import { plainText } from '@akapen/shared/inline-text';
+import { standsInDocument } from '@akapen/shared/title';
 
 export type OutlineEntry = {
   /** The heading's first source line. What the jump goes to. */
@@ -75,7 +76,7 @@ function levelOf(block: Block): number | null {
 function outlineHeadings(doc: Doc): { block: Block; level: number }[] {
   const out: { block: Block; level: number }[] = [];
   for (const block of doc.blocks) {
-    if (block.kind !== 'heading' || block.quoted || block.depth > 0) continue;
+    if (block.kind !== 'heading' || !standsInDocument(block)) continue;
     const level = levelOf(block);
     if (level !== null) out.push({ block, level });
   }

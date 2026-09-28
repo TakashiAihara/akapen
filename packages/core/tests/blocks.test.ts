@@ -140,3 +140,12 @@ describe('attribute values', () => {
     }
   });
 });
+
+describe('quoted', () => {
+  it('stays set after a nested quote closes inside the outer one', () => {
+    const d = buildDoc('/x.md', '> > inner\n>\n> # Outer\n\nAfter\n');
+    const text = (s: string) => d.blocks.find((b) => b.text.includes(s))!;
+    expect(text('# Outer').quoted).toBe(true);
+    expect(text('After').quoted).toBe(false);
+  });
+});

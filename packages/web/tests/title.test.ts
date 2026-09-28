@@ -78,6 +78,10 @@ describe('pageTitle', () => {
     expect(pageTitle(doc('A paragraph.\n', '/a/very/long/path/note.md'))).toBe('note.md — akapen');
   });
 
+  it('falls back to the file name when the only heading is quoted', () => {
+    expect(pageTitle(doc('> # Quoted\n'))).toBe('20-auth.md — akapen');
+  });
+
   it('is the brand alone when there is neither a heading nor a name', () => {
     expect(pageTitle(doc('A paragraph.\n', ''))).toBe('akapen');
   });
@@ -94,5 +98,25 @@ describe('documentTitle', () => {
 
   it('is empty rather than the file name when there is no top-level heading', () => {
     expect(documentTitle(doc('## Only a subheading\n'))).toBe('');
+  });
+
+  it('passes over a heading inside a quote to the one the document stands under', () => {
+    expect(documentTitle(doc('> # Quoted\n\n# Real\n'))).toBe('Real');
+  });
+
+  it('passes over a heading inside a list item', () => {
+    expect(documentTitle(doc('- # Listed\n\n# Real\n'))).toBe('Real');
+  });
+
+  it('is empty when the only top-level heading is quoted', () => {
+    expect(documentTitle(doc('> # Quoted\n\nA paragraph.\n'))).toBe('');
+  });
+
+  it('passes over a heading that follows a nested quote inside the same quote', () => {
+    expect(documentTitle(doc('> > Nested\n>\n> # Quoted\n\n# Real\n'))).toBe('Real');
+  });
+
+  it('is empty when the only top-level heading is in a list', () => {
+    expect(documentTitle(doc('- # Listed\n\nA paragraph.\n'))).toBe('');
   });
 });

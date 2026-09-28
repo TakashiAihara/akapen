@@ -369,9 +369,11 @@ function walk(tokens: Token[], ctx: Ctx): void {
         break;
       case 'blockquote_open': {
         const closeIdx = findClose(tokens, i);
+        // Restore rather than clear: leaving `> > inner` is still inside the outer quote (#197).
+        const outer = ctx.quoted;
         ctx.quoted = true;
         walk(tokens.slice(i + 1, closeIdx), ctx);
-        ctx.quoted = false;
+        ctx.quoted = outer;
         i = closeIdx;
         break;
       }
