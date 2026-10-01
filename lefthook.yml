@@ -15,17 +15,28 @@ pre-commit:
       run: bunx oxlint {staged_files}
 
 pre-push:
+  # Piped, so a failed build stops here. Without it the checks ran anyway and the
+  # build error arrived buried under the failures it had just caused.
+  piped: true
   jobs:
     # Before the checks, not as one of them. packages/server/src/assets.ts imports
     # @akapen/web/dist/app.js, so on a tree where nothing has built it yet every
-    # test that starts a server fails to resolve the module — 91 failures that say
-    # nothing about the change being pushed. CI builds first for the same reason;
-    # this is the local half of that.
+    # test that starts a server fails to resolve the module. The failures say nothing
+    # about the change being pushed. CI builds first for the same reason; this is the
+    # local half of that.
     - name: build:web
       run: bun run build:web
 
-    - name: typecheck
-      run: bun run typecheck
+    # The checks are one step of the pipe, so the pipe cannot come between them.
+    # piped is a property of the hook, and applying it to a flat list would have made
+    # a type error hide the test results too — which is not what stopping after a
+    # failed build was for. Nesting buys the one boundary that was wanted and no other.
+    - name: checks
+      group:
+        parallel: true
+        jobs:
+          - name: typecheck
+            run: bun run typecheck
 
-    - name: test
-      run: bun run test
+          - name: test
+            run: bun run test
