@@ -3,16 +3,21 @@
 
 pre-commit:
   parallel: true
+  # Neither job filters by extension. Each tool already knows what it handles — oxfmt from
+  # .oxfmtrc.json, oxlint from .oxlintrc.json — and a glob here would be a second copy of that
+  # list, free to drift from the one it copies. It did: yaml was left out, so a misformatted
+  # ci.yml committed and pushed cleanly and only failed in CI a minute later (#121).
+  # Anything a tool does not handle is passed to it and skipped, so the flag below is what
+  # keeps a commit of nothing but such files — docs, install.sh — from being rejected for
+  # having left that tool no work to do.
   jobs:
     - name: format
       # Fix and re-stage. There is no reason to fail and make a person do it by hand
-      glob: '*.{js,ts,json}'
-      run: bunx oxfmt {staged_files}
+      run: bunx oxfmt --no-error-on-unmatched-pattern {staged_files}
       stage_fixed: true
 
     - name: lint
-      glob: '*.{js,ts}'
-      run: bunx oxlint {staged_files}
+      run: bunx oxlint --no-error-on-unmatched-pattern {staged_files}
 
 pre-push:
   jobs:
