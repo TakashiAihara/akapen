@@ -28,6 +28,8 @@ export const DEFAULT_KEYMAP: Keymap = {
   // t for "table of contents". o and t sit next to each other because both open a panel
   // from the header, and neither is a letter the document itself needs.
   'outline.toggle': ['t'],
+  // z for "zoom": the image or diagram on the focused line, at a readable size
+  'figure.zoom': ['z'],
 };
 
 // Arrow keys are not bound by default. Taking them breaks page scrolling, which

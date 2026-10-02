@@ -48,6 +48,8 @@ apart. Use the qualified form; the bare word is the one that causes the confusio
 | reply | a message under a comment. One level: a reply cannot be replied to | `Reply`, `.reply` |
 | top bar | the bar across the top of the screen: name, file path, round badge, count, controls | `.topbar` |
 | outline | the document's headings as a tree, from a panel in the header: level, text and the line to jump to | `buildOutline`, `#outline`, `#outlineToggle`, the `outline.toggle` key |
+| figure | what can be enlarged: an image not inside a link, or a mermaid diagram's own svg | `FIGURE` |
+| zoom | the overlay that shows one figure: a diagram at its own size (scrolling), an image fitted to the window. Opened by a click or the `figure.zoom` key | `#zoom`, `openZoom` |
 | current section | the outline row for the heading being read, worked out when the panel opens and not followed while it is shut | `.outline-entry.current`, `markCurrent` |
 | tab title | what the browser tab is called: the document's first top-level heading (`#` or setext) outside quotes and list items, or its file name when it has none | `document.title`, `pageTitle` |
 | banner | the line saying the live file has changed since the snapshot | `#banner`, `ChangedState` |

@@ -983,6 +983,64 @@ async function renderMermaid() {
   layoutRail(); // drawing a diagram changes the document height, so always realign
 }
 
+/* ===== Enlarging a figure ===== */
+
+const zoomEl = must<HTMLDialogElement>('zoom');
+
+// A wide diagram is shrunk to the sheet until its labels cannot be read, and fitting it
+// to the window instead is not enough: a 20-node LR chart only grows from 0.2x to 0.3x.
+// So a diagram's copy is shown at its own size and scrolls. An image is fitted to the
+// window instead and never enlarged: at its own size a photo or a retina screenshot opens
+// on its top-left corner.
+
+/** What can be enlarged: an image not inside a link, and a diagram's own svg (not an icon svg some diagram types nest inside it). */
+const FIGURE = '.body img:not(a img), pre.mermaid > svg';
+
+/** The mouse and the `figure.zoom` key both come here, so the two cannot diverge. */
+function openZoom(fig: Element) {
+  // The copy keeps mermaid's ids, so they are duplicated while it is open. Its styles
+  // (#id .node) and arrowheads (url(#id-…)) need them; the dialog sits before #doc, so
+  // they resolve to the copy itself, and both are the same drawing anyway.
+  const copy = fig.cloneNode(true) as Element;
+  const box = copy instanceof SVGSVGElement ? copy.viewBox.baseVal : null;
+  if (box?.width) {
+    copy.setAttribute('width', String(box.width));
+    copy.setAttribute('height', String(box.height));
+  }
+  zoomEl.replaceChildren(copy);
+  zoomEl.showModal();
+  // showModal focuses the first link in a diagram (a mermaid `click` node), which scrolls
+  // the copy over to that node; Chromium ignores autofocus on the dialog itself. Open on
+  // the start of the figure instead.
+  zoomEl.focus();
+  zoomEl.scrollTo(0, 0);
+}
+
+// Capture phase, and the click stops here: the row's own handler would otherwise select
+// the row and jump the rail, which is not what enlarging a figure asks for.
+docEl.addEventListener(
+  'click',
+  (e) => {
+    // Not targetEl: a click on a diagram's shape lands on an SVG <path> or <rect>, which is
+    // not an HTMLElement (its label is an HTML span inside a foreignObject).
+    // A link is left to the link. FIGURE already leaves out an image inside one; this catches
+    // a mermaid node with a `click` href, which sits inside the diagram's svg.
+    const at = e.target instanceof Element ? e.target : null;
+    const fig = at?.closest(FIGURE);
+    if (!fig || at?.closest('a')) return;
+    e.stopPropagation();
+    openZoom(fig);
+  },
+  true,
+);
+// A press on the overlay's scrollbar scrolls without firing click (measured in Chromium and
+// Firefox with classic scrollbars), so any click can mean "close".
+zoomEl.addEventListener('click', () => zoomEl.close());
+// Every key stops here. keys.ts calls preventDefault on Escape (comment.cancel), which
+// would keep the dialog from closing at all, and j/k would move the selection behind it.
+zoomEl.addEventListener('keydown', (e) => e.stopPropagation());
+zoomEl.addEventListener('close', () => zoomEl.replaceChildren());
+
 // Realign whenever the document height changes (images, fonts, wrapping width)
 new ResizeObserver(() => layoutRail()).observe(docEl);
 railOverlayQuery.addEventListener('change', () => {
@@ -1385,6 +1443,14 @@ const ACTIONS: Record<string, () => boolean | void> = {
   },
   'outline.toggle': () => {
     toggleOutline();
+  },
+  // The first figure on the focused line, opened the way a click opens it
+  'figure.zoom': () => {
+    const row = docEl.querySelector<HTMLElement>(`.row[data-start="${focusLine}"]`);
+    const fig = row?.querySelector(FIGURE);
+    if (!fig) return false;
+    openZoom(fig);
+    return undefined;
   },
 };
 
