@@ -41,3 +41,37 @@ test('shows a relative PNG and SVG, and fits a wide one to the sheet', async ({ 
   }));
   expect(fit.img).toBeLessThanOrEqual(fit.body);
 });
+
+test('enlarges an image or a diagram on click, and closes on the next click or Escape', async ({
+  page,
+  akapen,
+  request,
+}) => {
+  writeFileSync(join(dirname(akapen.file), 'dot.png'), PNG);
+  writeFileSync(akapen.file, '# Zoom\n\n![dot](dot.png)\n\n```mermaid\ngraph LR\n  A --> B\n```\n');
+  expect((await request.post(`${akapen.url}/api/rounds`, { headers: AUTH })).ok()).toBe(true);
+
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(akapen.url);
+  const zoom = page.locator('#zoom');
+
+  await page.locator('.body img[alt="dot"]').click();
+  await expect(zoom).toBeVisible();
+  // Filling the window is the point; a copy at its original 1px would pass "visible"
+  expect((await zoom.locator('img').boundingBox())!.width).toBeGreaterThan(1000);
+  await zoom.click();
+  await expect(zoom).toBeHidden();
+
+  const diagram = page.locator('.mermaid-block svg');
+  await expect(diagram).toBeVisible({ timeout: 15_000 });
+  // The label is HTML inside a foreignObject, the likeliest thing a click lands on
+  await diagram.locator('.nodeLabel').first().click();
+  await expect(zoom.locator('svg')).toBeVisible();
+  expect((await zoom.locator('svg').boundingBox())!.width).toBeGreaterThan(
+    (await diagram.boundingBox())!.width,
+  );
+  // Escape closes the overlay and nothing else: no draft opened behind it
+  await page.keyboard.press('Escape');
+  await expect(zoom).toBeHidden();
+  await expect(diagram).toHaveCount(1);
+});

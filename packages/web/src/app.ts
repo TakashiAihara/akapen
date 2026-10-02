@@ -983,6 +983,26 @@ async function renderMermaid() {
   layoutRail(); // drawing a diagram changes the document height, so always realign
 }
 
+/* ===== Enlarging a figure ===== */
+
+const zoomEl = must<HTMLDialogElement>('zoom');
+
+// A wide diagram is shrunk to the sheet until its labels cannot be read. Clicking shows
+// a copy at the size of the window; the original stays where it is so the row and its
+// comments are untouched.
+docEl.addEventListener('click', (e) => {
+  // Not targetEl: a click on a diagram lands on an SVG <text> or <path>, not an HTMLElement
+  const fig = e.target instanceof Element ? e.target.closest('.body img, .mermaid-block svg') : null;
+  if (!fig) return;
+  zoomEl.replaceChildren(fig.cloneNode(true));
+  zoomEl.showModal();
+});
+zoomEl.addEventListener('click', () => zoomEl.close());
+// Keys stop here: j/k would move the selection behind the overlay, and Escape would also
+// cancel a draft. The dialog's own Escape still closes it.
+zoomEl.addEventListener('keydown', (e) => e.stopPropagation());
+zoomEl.addEventListener('close', () => zoomEl.replaceChildren());
+
 // Realign whenever the document height changes (images, fonts, wrapping width)
 new ResizeObserver(() => layoutRail()).observe(docEl);
 railOverlayQuery.addEventListener('change', () => {

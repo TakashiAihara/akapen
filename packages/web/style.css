@@ -652,6 +652,13 @@ body.rail-overlay .marker { display: inline-flex; align-items: center; justify-c
 .row:has(.table-separator) { display: none; }
 
 .mermaid-block { border: 1px solid var(--ak-border); border-radius: 8px; padding: 12px; margin: 6px 0; text-align: center; }
+.body img, .mermaid-block svg { cursor: zoom-in; }
+
+.zoom { width: 96vw; height: 94vh; max-width: none; max-height: none; padding: 16px; border: 1px solid var(--ak-border); border-radius: 8px; background: var(--ak-bg); cursor: zoom-out; }
+.zoom::backdrop { background: rgb(0 0 0 / 0.6); }
+.zoom[open] { display: flex; align-items: center; justify-content: center; }
+/* mermaid writes a max-width onto its svg; the copy has to be free to fill the window */
+.zoom > * { width: 100%; height: 100%; max-width: 100% !important; object-fit: contain; }
 
 .row.quoted .body { border-left: 2px solid var(--ak-border-strong); padding-left: 14px; color: var(--ak-fg-2); }
 
