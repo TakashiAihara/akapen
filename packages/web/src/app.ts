@@ -989,32 +989,45 @@ const zoomEl = must<HTMLDialogElement>('zoom');
 
 // A wide diagram is shrunk to the sheet until its labels cannot be read, and fitting it
 // to the window instead is not enough: a 20-node LR chart only grows from 0.2x to 0.3x.
-// So the copy is shown at its own size and scrolls; a small image stays small.
+// So a diagram's copy is shown at its own size and scrolls. An image is fitted to the
+// window instead and never enlarged: at its own size a photo or a retina screenshot opens
+// on its top-left corner.
 //
 // Capture phase, and the click stops here: the row's own handler would otherwise select
 // the row and jump the rail, which is not what enlarging a figure asks for.
 docEl.addEventListener(
   'click',
   (e) => {
-    // Not targetEl: a click on a diagram lands on an SVG <path> or <rect>, not an HTMLElement.
-    // An image inside a link is left to the link.
-    const fig = e.target instanceof Element ? e.target.closest('.body img, .mermaid-block svg') : null;
-    if (!fig || fig.closest('a')) return;
+    // Not targetEl: a click on a diagram's shape lands on an SVG <path> or <rect>, which is
+    // not an HTMLElement (its label is an HTML span inside a foreignObject).
+    // A link — around an image, or a mermaid node with a `click` href inside the diagram — is
+    // left to the link.
+    const at = e.target instanceof Element ? e.target : null;
+    // The diagram's own svg, not an icon svg some diagram types nest inside it
+    const fig = at?.closest('.body img, pre.mermaid > svg');
+    if (!fig || at?.closest('a')) return;
     e.stopPropagation();
-    // The copy keeps mermaid's ids, so the original and the copy share them while it is
-    // open. Its styles (#id .node) and arrowheads (url(#id-…)) need those ids to resolve.
+    // The copy keeps mermaid's ids, so they are duplicated while it is open. Its styles
+    // (#id .node) and arrowheads (url(#id-…)) need them; the dialog sits before #doc, so
+    // they resolve to the copy itself, and both are the same drawing anyway.
     const copy = fig.cloneNode(true) as Element;
     const box = copy instanceof SVGSVGElement ? copy.viewBox.baseVal : null;
     if (box?.width) {
-      copy.removeAttribute('style');
       copy.setAttribute('width', String(box.width));
       copy.setAttribute('height', String(box.height));
     }
     zoomEl.replaceChildren(copy);
     zoomEl.showModal();
+    // showModal focuses the first link in a diagram (a mermaid `click` node), which scrolls
+    // the copy over to that node; Chromium ignores autofocus on the dialog itself. Open on
+    // the start of the figure instead.
+    zoomEl.focus();
+    zoomEl.scrollTo(0, 0);
   },
   true,
 );
+// A press on the overlay's scrollbar scrolls without firing click (measured in Chromium),
+// so any click can mean "close".
 zoomEl.addEventListener('click', () => zoomEl.close());
 // Every key stops here. keys.ts calls preventDefault on Escape (comment.cancel), which
 // would keep the dialog from closing at all, and j/k would move the selection behind it.
