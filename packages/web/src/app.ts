@@ -987,19 +987,37 @@ async function renderMermaid() {
 
 const zoomEl = must<HTMLDialogElement>('zoom');
 
-// A wide diagram is shrunk to the sheet until its labels cannot be read. Clicking shows
-// a copy at the size of the window; the original stays where it is so the row and its
-// comments are untouched.
-docEl.addEventListener('click', (e) => {
-  // Not targetEl: a click on a diagram lands on an SVG <text> or <path>, not an HTMLElement
-  const fig = e.target instanceof Element ? e.target.closest('.body img, .mermaid-block svg') : null;
-  if (!fig) return;
-  zoomEl.replaceChildren(fig.cloneNode(true));
-  zoomEl.showModal();
-});
+// A wide diagram is shrunk to the sheet until its labels cannot be read, and fitting it
+// to the window instead is not enough: a 20-node LR chart only grows from 0.2x to 0.3x.
+// So the copy is shown at its own size and scrolls; a small image stays small.
+//
+// Capture phase, and the click stops here: the row's own handler would otherwise select
+// the row and jump the rail, which is not what enlarging a figure asks for.
+docEl.addEventListener(
+  'click',
+  (e) => {
+    // Not targetEl: a click on a diagram lands on an SVG <path> or <rect>, not an HTMLElement.
+    // An image inside a link is left to the link.
+    const fig = e.target instanceof Element ? e.target.closest('.body img, .mermaid-block svg') : null;
+    if (!fig || fig.closest('a')) return;
+    e.stopPropagation();
+    // The copy keeps mermaid's ids, so the original and the copy share them while it is
+    // open. Its styles (#id .node) and arrowheads (url(#id-…)) need those ids to resolve.
+    const copy = fig.cloneNode(true) as Element;
+    const box = copy instanceof SVGSVGElement ? copy.viewBox.baseVal : null;
+    if (box?.width) {
+      copy.removeAttribute('style');
+      copy.setAttribute('width', String(box.width));
+      copy.setAttribute('height', String(box.height));
+    }
+    zoomEl.replaceChildren(copy);
+    zoomEl.showModal();
+  },
+  true,
+);
 zoomEl.addEventListener('click', () => zoomEl.close());
-// Keys stop here: j/k would move the selection behind the overlay, and Escape would also
-// cancel a draft. The dialog's own Escape still closes it.
+// Every key stops here. keys.ts calls preventDefault on Escape (comment.cancel), which
+// would keep the dialog from closing at all, and j/k would move the selection behind it.
 zoomEl.addEventListener('keydown', (e) => e.stopPropagation());
 zoomEl.addEventListener('close', () => zoomEl.replaceChildren());
 
