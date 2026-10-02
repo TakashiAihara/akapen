@@ -42,7 +42,7 @@ test('shows a relative PNG and SVG, and fits a wide one to the sheet', async ({ 
   expect(fit.img).toBeLessThanOrEqual(fit.body);
 });
 
-test('shows a clicked image at its own size, and leaves a linked image to its link', async ({
+test('shows a clicked image whole without enlarging it, and leaves a linked image to its link', async ({
   page,
   akapen,
   request,
@@ -57,8 +57,12 @@ test('shows a clicked image at its own size, and leaves a linked image to its li
     '<svg xmlns="http://www.w3.org/2000/svg" width="4000" height="100"><rect width="4000" height="100" fill="#c33"/></svg>',
   );
   writeFileSync(
+    join(dir, 'tall.svg'),
+    '<svg xmlns="http://www.w3.org/2000/svg" width="300" height="4000"><rect width="300" height="4000" fill="#3a3"/></svg>',
+  );
+  writeFileSync(
     akapen.file,
-    '# Zoom\n\n![box](box.svg)\n\n![huge](huge.svg)\n\n[![linked](box.svg)](#elsewhere)\n',
+    '# Zoom\n\n![box](box.svg)\n\n![huge](huge.svg)\n\n![tall](tall.svg)\n\n[![linked](box.svg)](#elsewhere)\n',
   );
   expect((await request.post(`${akapen.url}/api/rounds`, { headers: AUTH })).ok()).toBe(true);
 
@@ -76,16 +80,20 @@ test('shows a clicked image at its own size, and leaves a linked image to its li
   await expect(zoom).toBeHidden();
   await expect(zoom.locator('*')).toHaveCount(0);
 
-  // One wider than the window is fitted to it, whole
-  await page.locator('.body img[alt="huge"]').click();
-  const fitted = await zoom.evaluate((d) => ({
-    img: d.querySelector('img')!.getBoundingClientRect().width,
-    room: d.clientWidth,
-  }));
-  expect(fitted.img).toBeLessThanOrEqual(fitted.room);
-  expect(fitted.img).toBeGreaterThan(1000);
-  await page.keyboard.press('Escape');
-  await expect(zoom).toBeHidden();
+  // One wider, or taller, than the window is fitted inside its content box, whole
+  for (const alt of ['huge', 'tall']) {
+    await page.locator(`.body img[alt="${alt}"]`).click();
+    const fit = await zoom.evaluate((d) => {
+      const pad = parseFloat(getComputedStyle(d).paddingLeft);
+      const img = d.querySelector('img')!.getBoundingClientRect();
+      return { w: img.width, h: img.height, roomW: d.clientWidth - 2 * pad, roomH: d.clientHeight - 2 * pad };
+    });
+    expect(fit.w).toBeLessThanOrEqual(fit.roomW + 0.5);
+    expect(fit.h).toBeLessThanOrEqual(fit.roomH + 0.5);
+    expect(Math.max(fit.w / fit.roomW, fit.h / fit.roomH)).toBeGreaterThan(0.99);
+    await page.keyboard.press('Escape');
+    await expect(zoom).toBeHidden();
+  }
 
   await page.locator('.body img[alt="linked"]').click();
   await expect(page).toHaveURL(/#elsewhere$/);
@@ -130,6 +138,10 @@ test('shows a wide diagram larger than the sheet, without touching the selection
   const own = await copy.evaluate((svg: SVGSVGElement) => svg.viewBox.baseVal.width);
   expect(own).toBeGreaterThan(2 * (await diagram.boundingBox())!.width);
   expect(Math.round((await copy.boundingBox())!.width)).toBe(Math.round(own));
+
+  // It opens on the start of the figure with focus on itself, not on the link at node 20
+  // (showModal would focus that and scroll over to it)
+  expect(await zoom.evaluate((d) => [d.scrollLeft, document.activeElement === d])).toEqual([0, true]);
 
   // It scrolls, and neither end is cut off: the left edge starts inside the overlay and the
   // right edge is reachable by scrolling all the way

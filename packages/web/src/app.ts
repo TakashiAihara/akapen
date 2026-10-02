@@ -1026,7 +1026,8 @@ docEl.addEventListener(
   },
   true,
 );
-// A press on the overlay's scrollbar scrolls without firing click (measured in Chromium),
+// A press on the overlay's scrollbar scrolls without firing click (measured in Chromium and
+// Firefox with classic scrollbars),
 // so any click can mean "close".
 zoomEl.addEventListener('click', () => zoomEl.close());
 // Every key stops here. keys.ts calls preventDefault on Escape (comment.cancel), which
