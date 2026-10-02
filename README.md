@@ -259,11 +259,11 @@ While skimming you are scrolling, so a hover-based path is needed. While writing
 | `shift+j` / `shift+k` | grow the selection (same as a mouse drag) | `row.extendNext` / `row.extendPrev` |
 | `c` | comment on the selection | `comment.start` |
 | `Ctrl+Enter` | send | `comment.submit` |
-| `Esc` | cancel (switcher, then draft, then rail, then selection) | `comment.cancel` |
+| `Esc` | close an enlarged figure; otherwise cancel (switcher, then draft, then rail, then selection) | `comment.cancel` |
 | `l` | toggle line numbers | `lines.toggle` |
 | `o` | the other akapen on this host | `instances.toggle` |
 | `t` | the outline | `outline.toggle` |
-| `z` | enlarge the image or diagram on the focused line | `figure.zoom` |
+| `z` | enlarge the first image or diagram on the focused line | `figure.zoom` |
 
 The assignment is provisional and will be revisited as a whole. It is defined in one place: `packages/web/src/keys.ts`.
 

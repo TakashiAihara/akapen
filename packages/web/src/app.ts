@@ -1023,8 +1023,8 @@ docEl.addEventListener(
   (e) => {
     // Not targetEl: a click on a diagram's shape lands on an SVG <path> or <rect>, which is
     // not an HTMLElement (its label is an HTML span inside a foreignObject).
-    // A link — around an image, or a mermaid node with a `click` href inside the diagram — is
-    // left to the link.
+    // A link is left to the link. FIGURE already leaves out an image inside one; this catches
+    // a mermaid node with a `click` href, which sits inside the diagram's svg.
     const at = e.target instanceof Element ? e.target : null;
     const fig = at?.closest(FIGURE);
     if (!fig || at?.closest('a')) return;
@@ -1446,9 +1446,7 @@ const ACTIONS: Record<string, () => boolean | void> = {
   },
   // The first figure on the focused line, opened the way a click opens it
   'figure.zoom': () => {
-    const row = [...docEl.querySelectorAll<HTMLElement>('.row')].find(
-      (r) => getLine(r, 'start') === focusLine,
-    );
+    const row = docEl.querySelector<HTMLElement>(`.row[data-start="${focusLine}"]`);
     const fig = row?.querySelector(FIGURE);
     if (!fig) return false;
     openZoom(fig);

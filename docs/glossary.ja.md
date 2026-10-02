@@ -48,7 +48,7 @@ akapen が自分の部品を呼ぶときの言葉と、そのうち二つの意�
 | トップバー | 画面上端のバー。名前・ファイルパス・ラウンドバッジ・件数・操作 | `.topbar` |
 | 目次 (outline) | 文書の見出しをツリーにしたもの。トップバーのパネルから開く。レベル・文字列・飛び先の行を持つ | `buildOutline`、`#outline`、`#outlineToggle`、`outline.toggle` キー |
 | 図 (figure) | 拡大できるもの。リンクの中にない画像と、mermaid の図そのものの svg | `FIGURE` |
-| 拡大表示 (zoom) | 図を 1 つ出す重ね表示。図は本来の大きさ (スクロール)、画像はウィンドウに収める。クリックか `figure.zoom` キーで開く | `#zoom`、`openZoom` |
+| 拡大表示 (zoom) | 図 (figure) を 1 つ出す重ね表示。mermaid の図は本来の大きさ (スクロール)、画像はウィンドウに収める。クリックか `figure.zoom` キーで開く | `#zoom`、`openZoom` |
 | 現在の節 (current section) | いま読んでいる見出しに当たる目次の行。パネルを開いた時点で求め、閉じている間は追わない | `.outline-entry.current`、`markCurrent` |
 | タブタイトル | ブラウザのタブに出る名前。文書の最初のトップレベル見出し（`#` または setext）、無ければファイル名 | `document.title`、`pageTitle` |
 | バナー | スナップショット以降に実ファイルが変わったことを告げる行 | `#banner`、`ChangedState` |
