@@ -239,7 +239,7 @@ There is one invariant: every non-blank source line belongs to exactly one block
 
 `![](png/overview.png)` shows the image, resolved relative to the document the way any markdown renderer resolves it. Only images are served (`png` / `jpg` / `jpeg` / `gif` / `webp` / `avif` / `svg`), only from under the file root, and behind the same token as everything else. The file root is the document's directory; `--root` widens it for a vault that writes `../images/foo.png`. A closed round shows an image as it is now: rounds freeze the text, not the files beside it. The decisions are in `docs/design/document-images.md`.
 
-Clicking an image or a mermaid diagram shows it in an overlay: a diagram at its own size, scrolling when it is larger than the window, and an image fitted to the window but never enlarged. A click or Escape closes it. An image inside a link follows the link instead.
+Clicking an image or a mermaid diagram, or pressing `z` on its line, shows it in an overlay: a diagram at its own size, scrolling when it is larger than the window, and an image fitted to the window but never enlarged. A click or Escape closes it. An image inside a link follows the link instead.
 
 ### HTML written directly in the markdown
 
@@ -263,6 +263,7 @@ While skimming you are scrolling, so a hover-based path is needed. While writing
 | `l` | toggle line numbers | `lines.toggle` |
 | `o` | the other akapen on this host | `instances.toggle` |
 | `t` | the outline | `outline.toggle` |
+| `z` | enlarge the image or diagram on the focused line | `figure.zoom` |
 
 The assignment is provisional and will be revisited as a whole. It is defined in one place: `packages/web/src/keys.ts`.
 

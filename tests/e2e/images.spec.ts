@@ -175,3 +175,41 @@ test('shows a wide diagram larger than the sheet, without touching the selection
   await expect(page).toHaveURL(/#node-link$/);
   await expect(zoom).toBeHidden();
 });
+
+test('opens the figure on the focused line with z, the same way a click does', async ({
+  page,
+  akapen,
+  request,
+}) => {
+  const dir = dirname(akapen.file);
+  writeFileSync(
+    join(dir, 'box.svg'),
+    '<svg xmlns="http://www.w3.org/2000/svg" width="300" height="200"><rect width="300" height="200" fill="#36c"/></svg>',
+  );
+  writeFileSync(akapen.file, '# Zoom\n\ntext\n\n![box](box.svg)\n\n[![linked](box.svg)](#elsewhere)\n');
+  expect((await request.post(`${akapen.url}/api/rounds`, { headers: AUTH })).ok()).toBe(true);
+
+  await page.goto(akapen.url);
+  const zoom = page.locator('#zoom');
+  await expect(page.locator('.body img[alt="box"]')).toBeVisible();
+
+  // On a line with no figure the key does nothing
+  await page.keyboard.press('j');
+  await page.keyboard.press('j');
+  await expect(page.locator('.row.focused')).toContainText('text');
+  await page.keyboard.press('z');
+  await expect(zoom).toBeHidden();
+
+  await page.keyboard.press('j');
+  await expect(page.locator('.row.focused img[alt="box"]')).toHaveCount(1);
+  await page.keyboard.press('z');
+  await expect(zoom.locator('img')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(zoom).toBeHidden();
+
+  // A linked image is not a figure: z leaves it alone, as a click leaves it to the link
+  await page.keyboard.press('j');
+  await expect(page.locator('.row.focused img[alt="linked"]')).toHaveCount(1);
+  await page.keyboard.press('z');
+  await expect(zoom).toBeHidden();
+});
