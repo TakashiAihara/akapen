@@ -9,7 +9,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { test as base } from '@playwright/test';
 
 const FIXTURE_MD = join(import.meta.dirname, 'fixture.md');
@@ -56,10 +56,12 @@ async function waitUntilServing(url: string): Promise<void> {
 }
 
 /**
- * A second akapen sharing a registry with the first, for the switcher.
+ * A second akapen sharing a registry with the first, for the switcher and for a port
+ * reused by another document (#177).
  *
- * Not part of the fixture: only the switcher wants one, and every other test would pay
- * for a second process it never looks at.
+ * Not part of the fixture: only those want one, and every other test would pay for a
+ * second process it never looks at. `name` is a file name in a fresh sandbox, or an
+ * absolute path to serve an existing file, so the same document can be started again.
  */
 export async function startPeer(
   home: string,
@@ -70,8 +72,8 @@ export async function startPeer(
 ): Promise<{ port: number; stop: () => Promise<void> }> {
   const port = reuse ?? nextPort++;
   const sandbox = mkdtempSync(join(tmpdir(), 'akapen-e2e-peer-'));
-  const file = join(sandbox, name);
-  writeFileSync(file, readFileSync(FIXTURE_MD, 'utf8'));
+  const file = isAbsolute(name) ? name : join(sandbox, name);
+  if (!isAbsolute(name)) writeFileSync(file, readFileSync(FIXTURE_MD, 'utf8'));
 
   const proc: ChildProcess = spawn(
     'bun',
