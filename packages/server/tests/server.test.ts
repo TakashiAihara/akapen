@@ -1760,7 +1760,8 @@ describe('authentication', () => {
         env: { ...process.env, AKAPEN_HOME: home },
         encoding: 'utf8',
       });
-      // A second for the server to re-read the token, then a heartbeat to carry it out.
+      // Up to a second for the server to re-read the token, then up to a heartbeat (3 s)
+      // to carry it out: 8 s leaves room for a slow runner.
       let timer: ReturnType<typeof setTimeout> | undefined;
       const waited = new Promise<'open'>((r) => {
         timer = setTimeout(() => r('open'), 8_000);
@@ -1779,7 +1780,7 @@ describe('authentication', () => {
       running.stop();
       await running.stopped;
     }
-  });
+  }, 30_000);
 
   it('keeps a token it was handed, whatever the store says afterwards', async () => {
     // The other half of the rule: `--token` and `AKAPEN_TOKEN` belong to whoever passed
