@@ -51,11 +51,14 @@ test('starts the line number and the + level with a heading, not above it (#91, 
   akapen,
   request,
 }) => {
-  writeFileSync(akapen.file, 'Para.\n\n## Section\n\n### Right under\n\nPara.\n\n#### Four\n\nPara.\n');
+  writeFileSync(
+    akapen.file,
+    'Para.\n\n## Section\n\n### Right under\n\nPara.\n\n#### Four\n\nPara.\n\n##### Five\n\nPara.\n',
+  );
   expect((await request.post(`${akapen.url}/api/rounds`, { headers: AUTH })).ok()).toBe(true);
   await page.goto(akapen.url);
   await page.evaluate(() => document.body.classList.add('show-lines'));
-  await expect(page.locator('.row.heading')).toHaveCount(3);
+  await expect(page.locator('.row.heading')).toHaveCount(4);
 
   // The number's top against the top of the heading's first line of text.
   const offsets = await page.evaluate(() =>
@@ -66,14 +69,22 @@ test('starts the line number and the + level with a heading, not above it (#91, 
     }),
   );
   // Above it by the heading's own top margin before (16px for an h2); now within a few px.
-  for (const off of offsets) expect(Math.abs(off)).toBeLessThan(8);
+  // A few px above, from the heading's half-leading: not below, as a centred gutter would be.
+  for (const off of offsets) {
+    expect(off).toBeLessThanOrEqual(0);
+    expect(off).toBeGreaterThan(-8);
+  }
 
   // The space each one opens: a heading right under another opens less, and the first row none.
+  // One number used twice: the heading's top margin, and the gutter's top padding.
   const above = async () =>
     page.evaluate(() =>
-      [...document.querySelectorAll('.row.heading .body > *')].map((h) => getComputedStyle(h).marginTop),
+      [...document.querySelectorAll('.row.heading')].map((row) => {
+        const margin = getComputedStyle(row.querySelector('.body > *')!).marginTop;
+        return margin === getComputedStyle(row.querySelector('.gutter')!).paddingTop ? margin : 'apart';
+      }),
     );
-  expect(await above()).toEqual(['16px', '6px', '10px']);
+  expect(await above()).toEqual(['16px', '6px', '10px', '9px']);
   writeFileSync(akapen.file, '## First\n\nPara.\n');
   expect((await request.post(`${akapen.url}/api/rounds`, { headers: AUTH })).ok()).toBe(true);
   await page.goto(akapen.url);
