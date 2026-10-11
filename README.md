@@ -382,6 +382,8 @@ akapen list --session "$CLAUDE_CODE_SESSION_ID"          # only what this sessio
 akapen list --json --session "$CLAUDE_CODE_SESSION_ID"   # the same, with the whole origin
 ```
 
+`--session` also takes the short id the table prints, as long as only one session starts with it. A value no session matches is refused, so it does not read as a session with nothing running.
+
 `AKAPEN_ORIGIN_LABEL` is carried alongside it and never read: a pane id, a ticket, whatever identifies the instance in a setup akapen knows nothing about.
 
 There is also a reverse index, for a statusline that wants to show the url and cannot afford to fork on every redraw.

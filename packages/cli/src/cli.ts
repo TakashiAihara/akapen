@@ -6,10 +6,10 @@ import { AdvertiseError, localAddresses, resolveAdvertised, urlsFor } from '@aka
 
 import { isInside } from '@akapen/core/files';
 import { loadReview, pendingComments } from '@akapen/core/store';
-import { liveInstances } from '@akapen/core/instances';
+import { detectOrigin, liveInstances } from '@akapen/core/instances';
 import { liveEntries, sweep as sweepSessions } from '@akapen/core/sessions';
 import { currentToken, resolveToken, rotateToken, secureHome, tokenIsPinned } from '@akapen/core/token';
-import { parseArgs, resolvePort, UsageError, type Args } from './args.ts';
+import { parseArgs, resolvePort, resolveSession, UsageError, type Args } from './args.ts';
 
 const USAGE = `akapen — markdown inline review (PoC)
 
@@ -33,7 +33,7 @@ options:
   --no-auth                serve with no token at all (only behind something that authenticates)
   --all                    comments: include resolved ones
   --json                   list: print as JSON (for agents)
-  --session <id>           list: only what that session started
+  --session <id>           list: only what that session started (a unique prefix works)
   --rotate                 token: replace the stored token
 `;
 
@@ -111,7 +111,18 @@ if (positional[0] === 'list') {
    * where liveness is decided and `sessions/` is a reverse index for a reader that
    * cannot afford to ask. Two answers to "is it running" is one too many.
    */
-  const live = args.session === undefined ? all : all.filter((e) => e.record.origin?.id === args.session);
+  let session: string | undefined;
+  try {
+    // The caller's own session is known even with nothing running, so asking about it
+    // answers "none running" rather than being refused as a value nobody recognises.
+    const own = detectOrigin().id;
+    const known = [...liveEntries().map((e) => e.sessionId), ...(own === undefined ? [] : [own])];
+    session = args.session === undefined ? undefined : resolveSession(args.session, known);
+  } catch (err) {
+    if (!(err instanceof UsageError)) throw err;
+    fail(err.message);
+  }
+  const live = session === undefined ? all : all.filter((e) => e.record.origin?.id === session);
   // Reading the registry is the other half of the sweep's rule, and `list` has just
   // done it. Not `all`: an instance that did not answer may simply be busy, and the
   // registry keeps it for that reason — deleting its url here would contradict that.

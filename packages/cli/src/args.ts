@@ -139,6 +139,28 @@ export function parseArgs(argv: string[]): Args {
  * Port 0 is allowed and means "let the OS pick" — the server tests rely on it, and it
  * is the only way to start akapen without guessing at what is already listening.
  */
+/**
+ * The session `--session` names, out of the ids the registry knows (#157).
+ *
+ * `akapen list` prints the first 8 characters, so a prefix has to work or the column
+ * hands out an id the flag refuses. An ambiguous prefix fails with the candidates rather
+ * than picking one, and a value nothing matches fails as such: "that session has none
+ * running" is kept for a session the registry knows whose instances did not answer.
+ */
+export function resolveSession(raw: string, known: Iterable<string>): string {
+  const ids = new Set(known);
+  if (ids.has(raw)) return raw;
+  // Every id starts with '', so an empty value would resolve whenever one session is running.
+  const matches = raw === '' ? [] : [...ids].filter((id) => id.startsWith(raw)).toSorted();
+  if (matches.length === 1) return matches[0]!;
+  if (matches.length > 1) {
+    throw new UsageError(
+      `--session ${JSON.stringify(raw)} matches more than one session: ${matches.join(', ')}`,
+    );
+  }
+  throw new UsageError(`no akapen on this host was started by a session matching ${JSON.stringify(raw)}`);
+}
+
 export function resolvePort(raw: string | undefined, fallback: number): number {
   if (raw === undefined) return fallback;
   // The shape is checked before the conversion. Number('') and Number(' ') are both 0,
