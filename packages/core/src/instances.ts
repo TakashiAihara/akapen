@@ -101,6 +101,11 @@ export function instancesDir(): string {
   return join(akapenHome(), 'instances');
 }
 
+/**
+ * `<pid>.json`, and it has to stay that: the long-lived readers tell a crash's leftover
+ * from a newer binary's entry by the pid in the name alone (#184). A name they cannot
+ * parse is deleted on sight, so renaming this would bring back what #184 fixed.
+ */
 function instanceFile(pid: number): string {
   return join(instancesDir(), `${pid}.json`);
 }
@@ -206,7 +211,7 @@ export function readInstances({ sweep = true }: { sweep?: boolean } = {}): Insta
       const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
       if (isRecord(parsed) && alive(parsed.pid)) record = parsed;
     } catch {
-      /* Unreadable or not JSON. Indistinguishable from gone, and treated the same. */
+      /* Unreadable or not JSON. Left out of the answer; whether it is deleted is below. */
     }
     if (record) out.push(record);
     // Not sweeping still heals a crash: the pid in the name is the one thing every
