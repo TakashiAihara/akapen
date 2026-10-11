@@ -54,8 +54,12 @@ test('keeps line numbers apart at the frontmatter fences (#90)', async ({ page, 
     writeFileSync(akapen.file, source);
     expect((await request.post(`${akapen.url}/api/rounds`, { headers: AUTH })).ok()).toBe(true);
     await page.goto(akapen.url);
-    await page.evaluate(() => document.body.classList.add('show-lines'));
     await expect(page.locator('.row').first()).toBeVisible();
+    // Hidden, the fences keep their thin strip: the room is for the number only.
+    for (const fence of await page.locator('.row.fm-fence').all()) {
+      expect((await fence.boundingBox())!.height).toBeLessThan(8);
+    }
+    await page.locator('#showLines').check();
     const overlaps = await page.evaluate(() => {
       const boxes = [...document.querySelectorAll('.lineno')].map((n) => n.getBoundingClientRect());
       return boxes.slice(1).filter((b, i) => b.top < boxes[i]!.bottom - 0.5).length;
