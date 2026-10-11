@@ -427,6 +427,22 @@ describe('akapen reply and resolve', () => {
     expect(nobody.stderr).toContain('answered');
   }, 60_000);
 
+  it('reaches an akapen started with --token when given the same --token', async () => {
+    const pinned = 'pinned-for-the-reply-test';
+    const { lines, home, file } = await start(['--token', pinned]);
+    const url = new URL(urlsIn(lines)[0]!).origin;
+    const posted = await fetch(`${url}/api/comments`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${pinned}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ startLine: 1, endLine: 1, body: 'x' }),
+    });
+    const { comment } = (await posted.json()) as { comment: { id: string } };
+
+    expect(cli(home, ['reply', file, comment.id, 'without it']).status).toBe(1);
+    const given = cli(home, ['reply', file, comment.id, 'with it', '--token', pinned]);
+    expect(given.status).toBe(0);
+  }, 60_000);
+
   it('replies and resolves in one call with --resolve, with auth on', async () => {
     const { lines, home, file } = await start([]);
     const url = new URL(urlsIn(lines)[0]!).origin;

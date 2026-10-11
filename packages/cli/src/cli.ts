@@ -264,7 +264,8 @@ if (positional[0] === 'reply' || positional[0] === 'resolve') {
   // A reply to a resolved comment still goes; only the resolve is left out.
   const resolving = (verb === 'resolve' || args.resolve) && !alreadyResolved;
 
-  const token = currentToken();
+  // `--token` as the server takes it, so an instance started with one can be reached.
+  const token = args.token !== undefined && args.token !== '' ? args.token : currentToken();
   const target = resolve(file);
   const serving = (await liveInstances({ token })).find((e) => e.record.file === target);
   if (!serving) {
