@@ -28,9 +28,9 @@ export function documentTitle(doc: Doc): string {
  * a quote or a list item is something the document shows, not its structure or its name
  * (#197). Shared with the outline so the two readers of headings cannot drift apart.
  *
- * The kind is checked here rather than left to callers, because `quoted` and `depth`
- * only mean something for blocks the parser walked: gap lines and frontmatter always
- * carry depth 0, so on its own the test answered true for them (#202).
+ * The kind is checked here rather than left to callers, because without it the test
+ * answers true for every block outside a quote or a list — paragraphs, frontmatter, gap
+ * lines — none of which is a heading (#202).
  */
 export function isDocumentHeading(block: Block): boolean {
   return block.kind === 'heading' && !block.quoted && block.depth === 0;
