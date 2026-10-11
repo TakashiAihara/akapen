@@ -207,6 +207,20 @@ describe('reading the registry', () => {
     expect(readInstances().map((r) => r.host)).toEqual(['::1', '[fe80::1]']);
   });
 
+  it('leaves what it cannot use in place when asked not to sweep (#184)', () => {
+    const crashed = deadPid();
+    mkdirSync(instancesDir(), { recursive: true });
+    writeFileSync(join(instancesDir(), '1234.json'), 'not json');
+    registerInstance(record());
+    registerInstance(record({ pid: crashed, port: 4301 }));
+
+    // Skipped from the answer all the same, so a non-sweeping reader is not handed junk.
+    expect(readInstances({ sweep: false }).map((r) => r.pid)).toEqual([process.pid]);
+    expect(readdirSync(instancesDir()).toSorted()).toEqual(
+      ['1234.json', `${crashed}.json`, `${process.pid}.json`].toSorted(),
+    );
+  });
+
   it('is empty, not an error, before anything has registered', () => {
     expect(readInstances()).toEqual([]);
   });

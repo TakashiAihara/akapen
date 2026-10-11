@@ -137,7 +137,7 @@ export type Store = {
   comments: (file: string) => RoundComment[];
 };
 
-const DISK: Store = { instances: readInstances, comments: (f) => pendingComments(f) };
+const DISK: Store = { instances: () => readInstances({ sweep: false }), comments: (f) => pendingComments(f) };
 
 /**
  * One pass over every document this session is reviewing.

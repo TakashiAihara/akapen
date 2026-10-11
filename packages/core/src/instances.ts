@@ -184,8 +184,13 @@ function isRecord(v: unknown): v is InstanceRecord {
  * that is gone are deleted as they are found and the directory heals itself. An entry
  * that survives this is not yet proof of anything: pids are reused, and the process
  * holding one may have nothing to do with akapen. That is what `liveInstances` asks.
+ *
+ * `sweep: false` reads without deleting, for a reader that outlives an upgrade (#184).
+ * `akapen channel` runs for a whole Claude Code session and reads every few seconds; one
+ * started from an older binary would delete every entry a newer one writes in a shape it
+ * does not know. The commands that run and exit (`list`, startup) still sweep.
  */
-export function readInstances(): InstanceRecord[] {
+export function readInstances({ sweep = true }: { sweep?: boolean } = {}): InstanceRecord[] {
   const dir = instancesDir();
   if (!existsSync(dir)) return [];
   const out: InstanceRecord[] = [];
@@ -200,7 +205,7 @@ export function readInstances(): InstanceRecord[] {
       /* Unreadable or not JSON. Indistinguishable from gone, and treated the same. */
     }
     if (record) out.push(record);
-    else removeStale(path);
+    else if (sweep) removeStale(path);
   }
   return out.toSorted((a, b) => a.port - b.port);
 }
