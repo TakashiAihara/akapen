@@ -703,6 +703,11 @@ body.rail-overlay .marker { display: inline-flex; align-items: center; justify-c
 .row.fm-first .body { border-radius: 6px 6px 0 0; padding-top: 6px; }
 .row.fm-last .body { border-radius: 0 0 6px 6px; padding-bottom: 6px; margin-bottom: 14px; }
 .fm-fence { height: 4px; }
+/* While numbers are shown the row takes the height of its number, or the closing fence's
+   number sat on the next line's (#90). Sized by the gutter rather than a copy of its line
+   height, so a --css that changes the line height cannot bring the overlap back. The fence
+   lines are blocks a comment can point at, so the number stays rather than hides. */
+body.show-lines .row.fm-fence { height: auto; }
 .fm-row { display: flex; gap: 8px; padding-left: calc(var(--indent, 0) * 8px); }
 .fm-key { color: var(--ak-fg-muted); }
 .fm-key::after { content: ":"; }
