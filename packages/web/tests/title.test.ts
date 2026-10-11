@@ -127,18 +127,19 @@ describe('isDocumentHeading', () => {
   // predicate as well, which would leave the gap-line half of this checking nothing.
   const blocks = buildDoc(
     '/home/x/n.md',
-    '---\nstatus: draft\n---\n\n[a]: http://x\n\n- # Listed\n\n# Real\n\n> # Quoted\n',
+    '---\nstatus: draft\n---\n\n[a]: http://x\n\nText.\n\n- # Listed\n\n# Real\n\n> # Quoted\n',
   ).blocks;
 
-  it('answers false for frontmatter and gap lines, though they stand outside any quote or list (#202)', () => {
+  it('answers false for paragraphs, frontmatter and gap lines, though they stand outside any quote or list (#202)', () => {
     const others = blocks.filter((b) => b.kind !== 'heading');
-    // Both kinds are there, unquoted and at depth 0, so the answer below is about them.
+    // Each kind is there, unquoted and at depth 0, so the answer below is about them.
     expect(others.some((b) => b.kind === 'frontmatter' && !b.quoted && b.depth === 0)).toBe(true);
     expect(others.some((b) => b.flags.includes('gap') && !b.quoted && b.depth === 0)).toBe(true);
+    expect(others.some((b) => b.kind === 'paragraph' && b.flags.length === 0 && b.depth === 0)).toBe(true);
     expect(others.filter(isDocumentHeading)).toEqual([]);
   });
 
   it('answers true for a top-level heading, and false for a quoted or a listed one', () => {
-    expect(blocks.filter(isDocumentHeading).map((b) => b.startLine)).toEqual([9]);
+    expect(blocks.filter(isDocumentHeading).map((b) => b.startLine)).toEqual([11]);
   });
 });
