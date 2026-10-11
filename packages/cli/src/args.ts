@@ -29,7 +29,7 @@ const VALUE_FLAGS = [
 ] as const;
 
 /** Flags that are on or off. Given a value, they fail — `--all=false` reads as "off". */
-const BOOLEAN_FLAGS = ['help', 'all', 'json', 'no-auth', 'rotate'] as const;
+const BOOLEAN_FLAGS = ['help', 'all', 'json', 'no-auth', 'rotate', 'resolve'] as const;
 
 type ValueFlag = (typeof VALUE_FLAGS)[number];
 type BooleanFlag = (typeof BOOLEAN_FLAGS)[number];
@@ -67,6 +67,7 @@ export function parseArgs(argv: string[]): Args {
     json: false,
     'no-auth': false,
     rotate: false,
+    resolve: false,
   };
 
   for (let i = 0; i < argv.length; i++) {

@@ -17,7 +17,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 const CLI = join(import.meta.dirname, '..', 'src', 'cli.ts');
 const SOURCE = ['# Heading', '', 'A paragraph.', ''].join('\n');
 
-type Started = { lines: string[]; stop: () => void; home: string };
+type Started = { lines: string[]; stop: () => void; home: string; file: string };
 
 let running: (() => void)[] = [];
 let sandboxes: string[] = [];
@@ -66,7 +66,7 @@ async function start(extra: string[] = [], env: NodeJS.ProcessEnv = {}): Promise
       reject(new Error(`akapen exited with ${code}\n${out}`));
     });
   });
-  return { lines: out.split('\n'), stop, home };
+  return { lines: out.split('\n'), stop, home, file };
 }
 
 const urlsIn = (lines: string[]): string[] =>
@@ -294,4 +294,77 @@ describe('akapen list --session', () => {
     expect(result.status).toBe(0);
     expect(result.stdout.trim()).toBe("that session's akapen did not answer");
   }, 30_000);
+});
+
+// #130: the other half of `akapen comments`, through the akapen serving the file.
+describe('akapen reply and resolve', () => {
+  const SESSION = 'fc40ec79-b629-4c08-9be7-721bb0d306a6';
+  const cli = (home: string, extra: string[]) =>
+    spawnSync('bun', ['run', CLI, ...extra], {
+      env: { ...process.env, AKAPEN_HOME: home, CLAUDE_CODE_SESSION_ID: SESSION },
+      encoding: 'utf8',
+      timeout: 20_000,
+    });
+  type Thread = {
+    id: string;
+    resolved: boolean;
+    replies: { body: string; authorKind: string; sessionId?: string }[];
+  };
+
+  it('replies as the session, resolves, and refuses to resolve twice', async () => {
+    const { lines, home, file, stop } = await start(['--no-auth']);
+    const [url] = urlsIn(lines);
+    const posted = await fetch(`${url}/api/comments`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ startLine: 1, endLine: 1, body: 'about the heading' }),
+    });
+    const { comment } = (await posted.json()) as { comment: { id: string } };
+    const read = async () =>
+      ((await (await fetch(`${url}/api/comments`)).json()) as Thread[]).find((c) => c.id === comment.id)!;
+
+    const replied = cli(home, ['reply', file, comment.id, 'reworded']);
+    expect(replied.status).toBe(0);
+    expect((await read()).replies).toMatchObject([
+      { body: 'reworded', authorKind: 'agent', sessionId: SESSION },
+    ]);
+    expect((await read()).resolved).toBe(false);
+
+    expect(cli(home, ['resolve', file, comment.id]).status).toBe(0);
+    expect((await read()).resolved).toBe(true);
+
+    // The server toggles, so a second resolve would reopen it. Refused instead.
+    const again = cli(home, ['resolve', file, comment.id]);
+    expect(again.status).toBe(1);
+    expect(again.stderr).toContain('already resolved');
+    expect((await read()).resolved).toBe(true);
+
+    const unknown = cli(home, ['reply', file, 'no-such-id', 'x']);
+    expect(unknown.status).toBe(1);
+    expect(unknown.stderr).toContain('no comment no-such-id');
+
+    stop();
+    await new Promise((r) => setTimeout(r, 500));
+    const nobody = cli(home, ['reply', file, comment.id, 'into the void']);
+    expect(nobody.status).toBe(1);
+    expect(nobody.stderr).toContain('no akapen is serving');
+  }, 60_000);
+
+  it('replies and resolves in one call with --resolve', async () => {
+    const { lines, home, file } = await start(['--no-auth']);
+    const [url] = urlsIn(lines);
+    const posted = await fetch(`${url}/api/comments`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ startLine: 1, endLine: 1, body: 'x' }),
+    });
+    const { comment } = (await posted.json()) as { comment: { id: string } };
+    const done = cli(home, ['reply', file, comment.id, 'fixed', '--resolve']);
+    expect(done.status).toBe(0);
+    const thread = ((await (await fetch(`${url}/api/comments`)).json()) as Thread[]).find(
+      (c) => c.id === comment.id,
+    )!;
+    expect(thread.resolved).toBe(true);
+    expect(thread.replies.map((r) => r.body)).toEqual(['fixed']);
+  }, 60_000);
 });
