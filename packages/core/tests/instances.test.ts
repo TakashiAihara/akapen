@@ -207,18 +207,23 @@ describe('reading the registry', () => {
     expect(readInstances().map((r) => r.host)).toEqual(['::1', '[fe80::1]']);
   });
 
-  it('leaves what it cannot use in place when asked not to sweep (#184)', () => {
+  it('keeps a live process entry it cannot read when asked not to sweep (#184)', () => {
     const crashed = deadPid();
     mkdirSync(instancesDir(), { recursive: true });
-    writeFileSync(join(instancesDir(), '1234.json'), 'not json');
+    // A live process's entry in a shape from a later version: the parent of this test is alive.
+    const foreign = `${process.ppid}.json`;
+    writeFileSync(join(instancesDir(), foreign), '{"shape":"from a later version"}');
     registerInstance(record());
     registerInstance(record({ pid: crashed, port: 4301 }));
 
     // Skipped from the answer all the same, so a non-sweeping reader is not handed junk.
     expect(readInstances({ sweep: false }).map((r) => r.pid)).toEqual([process.pid]);
-    expect(readdirSync(instancesDir()).toSorted()).toEqual(
-      ['1234.json', `${crashed}.json`, `${process.pid}.json`].toSorted(),
-    );
+    // A crash still heals: the dead pid's entry goes whoever wrote it.
+    expect(readdirSync(instancesDir()).toSorted()).toEqual([foreign, `${process.pid}.json`].toSorted());
+
+    // The sweeping reader, for contrast, takes the foreign entry too.
+    readInstances();
+    expect(readdirSync(instancesDir())).toEqual([`${process.pid}.json`]);
   });
 
   it('is empty, not an error, before anything has registered', () => {
