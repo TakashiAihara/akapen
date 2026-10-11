@@ -135,10 +135,10 @@ function highlight(code: string, lang: string): string {
 
 /**
  * The lines inside a quote or a list item (1-based, inclusive), with the depth and quoted
- * state of what is there. For a quote that is every line it spans; for a list item, the
- * lines after its marker line, which sits at the item's own depth. Kept so a line no
- * token covers can take its state from the container it sits in, as every other line
- * there does (#203).
+ * state of what is there. For a quote that is every line it spans; a list item records
+ * two, its marker line at its own depth and the lines after it one deeper. Kept so a
+ * line no token covers can take its state from the container it sits in, as every
+ * other line there does (#203).
  */
 type Container = { start: number; end: number; depth: number; quoted: boolean };
 
@@ -320,9 +320,15 @@ function walkList(tokens: Token[], openIdx: number, ctx: Ctx): number {
     // Send the remaining children (nested lists, tables, fences, quotes, continuation
     // paragraphs) through the same walk. Enumerating kinds always misses something —
     // it broke on a real note that had a table inside a list.
+    // Two containers: the marker line at the item's own depth, the lines after it one
+    // deeper. Anything opened on the marker line (a nested item, a quote) is recorded
+    // after these, so it wins on that line.
+    if (t.map) {
+      const line = t.map[0] + 1;
+      ctx.containers.push({ start: line, end: line, depth: ctx.depth, quoted: ctx.quoted });
+      ctx.containers.push({ start: line + 1, end: t.map[1], depth: ctx.depth + 1, quoted: ctx.quoted });
+    }
     ctx.depth++;
-    if (t.map)
-      ctx.containers.push({ start: t.map[0] + 2, end: t.map[1], depth: ctx.depth, quoted: ctx.quoted });
     walk(tokens.slice(restStart, itemClose), ctx);
     ctx.depth--;
 

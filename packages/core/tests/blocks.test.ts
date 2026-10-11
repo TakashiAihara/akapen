@@ -169,6 +169,12 @@ describe('gap lines', () => {
     expect(gaps('- >\n')).toEqual([[1, 1, true]]);
   });
 
+  it('take the innermost of items opened on the same line', () => {
+    // `- -` opens two items; the line and what follows belong to the inner one.
+    expect(gaps('- - a\n\n    [x]: http://y\n')).toEqual([[3, 2, false]]);
+    expect(gaps('- - a\n- -\n')).toEqual([[2, 1, false]]);
+  });
+
   it('are quoted inside a quote opened on the list marker line', () => {
     // The quote starts before the item's own container does, and is still inside it.
     expect(gaps('- > a\n  >\n  > b\n')).toEqual([[2, 1, true]]);
