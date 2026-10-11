@@ -134,9 +134,11 @@ function highlight(code: string, lang: string): string {
 }
 
 /**
- * The lines a quote or a list item spans (1-based, inclusive), with the depth and quoted
- * state of what is inside it. Kept so a line no token covers can take its state from the
- * container it sits in, as every other line there does (#203).
+ * The lines inside a quote or a list item (1-based, inclusive), with the depth and quoted
+ * state of what is there. For a quote that is every line it spans; for a list item, the
+ * lines after its marker line, which sits at the item's own depth. Kept so a line no
+ * token covers can take its state from the container it sits in, as every other line
+ * there does (#203).
  */
 type Container = { start: number; end: number; depth: number; quoted: boolean };
 
@@ -441,14 +443,11 @@ export function buildDoc(path: string, source: string): Doc {
   for (let ln = 1; ln <= lines.length; ln++) {
     const raw = lines[ln - 1]!;
     if (!raw.trim() || covered.has(ln)) continue;
-    // The innermost container holding the line: containers nest, so it is the one that
-    // starts last. Outside every container the line is at the top level, unquoted.
-    const inside = ctx.containers
-      .filter((c) => c.start <= ln && ln <= c.end)
-      .reduce<Container | undefined>(
-        (best, c) => (best === undefined || c.start >= best.start ? c : best),
-        undefined,
-      );
+    // The innermost container holding the line is the last one recorded that holds it:
+    // the walk records a container before what is inside it. Not the one that starts
+    // last — a list item's starts after its marker line, so a quote opened on that line
+    // starts first and is still inside it. Outside every container: top level, unquoted.
+    const inside = ctx.containers.findLast((c) => c.start <= ln && ln <= c.end);
     const stripped = raw.replace(/^\s*>+\s?/, '');
     out.push({
       startLine: ln,

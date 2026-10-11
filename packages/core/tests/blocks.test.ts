@@ -169,6 +169,11 @@ describe('gap lines', () => {
     expect(gaps('- >\n')).toEqual([[1, 1, true]]);
   });
 
+  it('are quoted inside a quote opened on the list marker line', () => {
+    // The quote starts before the item's own container does, and is still inside it.
+    expect(gaps('- > a\n  >\n  > b\n')).toEqual([[2, 1, true]]);
+  });
+
   it('are quoted inside a quote in a list, at the depth of the quote', () => {
     expect(gaps('- a\n\n  > q\n  >\n  > r\n')).toEqual([[4, 1, true]]);
   });
