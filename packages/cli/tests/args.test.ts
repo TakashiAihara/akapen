@@ -11,7 +11,37 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { parseArgs, resolvePort, UsageError } from '../src/args.ts';
+import { parseArgs, resolvePort, resolveSession, UsageError } from '../src/args.ts';
+
+describe('resolveSession', () => {
+  const A = 'fc40ec79-b629-4c08-9be7-721bb0d306a6';
+  const B = 'fc40ec7a-0000-4000-8000-000000000000';
+  const C = '0a1b2c3d-1111-4111-8111-111111111111';
+
+  it('takes a full id as it is, even when it is a prefix of another', () => {
+    expect(resolveSession(A, [A, C])).toBe(A);
+    expect(resolveSession('fc40', ['fc40', 'fc40ec79'])).toBe('fc40');
+  });
+
+  it('resolves a unique prefix to that session and no other', () => {
+    expect(resolveSession('fc40ec79', [A, B, C])).toBe(A);
+    expect(resolveSession('0a', [A, B, C])).toBe(C);
+  });
+
+  it('refuses an ambiguous prefix and names every candidate, in order', () => {
+    expect(() => resolveSession('fc40ec7', [B, A, C])).toThrow(UsageError);
+    expect(() => resolveSession('fc40ec7', [B, A, C])).toThrow(`more than one session: ${A}, ${B}`);
+  });
+
+  it('answers null for a value no session matches, rather than picking one', () => {
+    expect(resolveSession('dead', [A, C])).toBeNull();
+    expect(resolveSession('dead', [])).toBeNull();
+  });
+
+  it('does not let an empty value stand for the only session running', () => {
+    expect(resolveSession('', [A])).toBeNull();
+  });
+});
 
 describe('positional arguments', () => {
   it('collects the subcommand and the file', () => {
