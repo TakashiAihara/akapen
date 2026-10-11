@@ -171,12 +171,14 @@ if (positional[0] === 'list') {
     // typo or a session that has closed everything, so it is not called a session. A
     // match with nothing live is a registered instance that did not answer — busy, or on
     // another token — so it is not called "none running" either.
+    // An entry whose process is alive but did not answer is not "nothing running" (#221).
+    // Why it did not answer is not known here, so no cause is named.
+    const registered = args.session === undefined ? readInstances().length : 0;
     console.log(
       args.session === undefined
-        ? // An entry whose process is alive but did not answer is not "nothing running" (#221).
-          readInstances().length === 0
+        ? registered === 0
           ? 'no akapen is running'
-          : 'no akapen answered: those registered are busy or started with another token'
+          : `no akapen answered (${registered} registered)`
         : session === null
           ? `no akapen running here was started by a session matching ${JSON.stringify(args.session)}`
           : "that session's akapen did not answer",
