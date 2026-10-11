@@ -213,6 +213,30 @@ describe('quoted', () => {
   });
 });
 
+/** `list-last` belongs to the list a table may sit in, not to the table. */
+const tableFlags = (b: { flags: string[] }) => b.flags.filter((f) => f !== 'list-last');
+
+describe('a table inside a quote', () => {
+  // Every way the delimiter row can be prefixed: one quote, nested quotes with and without
+  // spaces between the markers, and a list inside a quote.
+  it.each([
+    ['> | a | b |\n> |---|---|\n> | 1 | 2 |\n', 1],
+    ['> > | a | b |\n> > |---|---|\n> > | 1 | 2 |\n', 1],
+    ['>>| a | b |\n>>|---|---|\n>>| 1 | 2 |\n', 1],
+    ['> > | a | b |\n>  > |---|---|\n> > | 1 | 2 |\n', 1],
+    ['> - x\n>\n>   | a | b |\n>   |---|---|\n>   | 1 | 2 |\n', 3],
+  ])('keeps its delimiter row as a table separator, not a gap line (#222): %j', (md, header) => {
+    const rows = buildDoc('/x.md', md).blocks.filter((b) => b.startLine >= header);
+
+    expect(rows.map((b) => [b.startLine, b.kind, tableFlags(b)])).toEqual([
+      [header, 'table-row', ['table-header']],
+      [header + 1, 'table-row', ['table-separator']],
+      [header + 2, 'table-row', []],
+    ]);
+    expect(rows.every((b) => b.quoted)).toBe(true);
+  });
+});
+
 function lastOf(text: string): number[] {
   return buildDoc('/x.md', text)
     .blocks.filter((b) => b.flags.includes('list-last'))
