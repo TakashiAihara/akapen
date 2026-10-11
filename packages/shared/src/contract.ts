@@ -314,10 +314,10 @@ export const InstancePeerSchema = v.object({
   /**
    * Whether a link to it can work at all.
    *
-   * The reader's browser is usually not on this host — akapen is started with
-   * `--host 0.0.0.0` and read over the LAN — so a peer that took the default
-   * `127.0.0.1` bind is unreachable from there however the link is built. Such a row
-   * is still worth showing: it is how you find out where the review you cannot reach
+   * Decided by both ends (#131): a peer that took the default `127.0.0.1` bind can be
+   * opened by a reader on this host, and by nobody on the LAN however the link is built.
+   * Where the reader is comes from the Host their browser sent. An unreachable row is
+   * still worth showing: it is how you find out where the review you cannot reach
    * actually is. It is shown without a link rather than with one that will time out.
    */
   reachable: v.boolean(),

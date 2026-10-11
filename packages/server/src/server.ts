@@ -677,6 +677,10 @@ export function startServer(opts: ServeOptions) {
    * from the reader's machine at all while being perfectly reachable from here.
    */
   app.get('/api/instances', async (c) => {
+    // Where the reader is, from the Host its browser sent: a page opened on this host's
+    // loopback can open a peer bound there too (#131). The request's own Host, not a
+    // guess, for the reason the cookie uses it (#99).
+    const readerHere = isLoopback(hostnameOf(c.req.header('host') ?? ''));
     const live = await liveInstances({ excludePid: process.pid, token: currentSecret() });
     const payload: InstancesPayload = {
       instances: live.map(({ record, status }) => ({
@@ -686,9 +690,9 @@ export function startServer(opts: ServeOptions) {
         file: status.file,
         round: status.round,
         unresolved: status.unresolved,
-        // A loopback bind answers here, next to it, and nowhere the reader's browser
-        // can reach. Saying so beats a link that times out.
-        reachable: !isLoopback(record.host),
+        // A loopback bind answers on this host and nowhere else, so it can be opened only
+        // by a reader who is here too. Saying so beats a link that times out.
+        reachable: readerHere || !isLoopback(record.host),
       })),
     };
     return c.json(payload);

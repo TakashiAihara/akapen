@@ -24,7 +24,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { connect } from 'node:net';
-import { tmpdir } from 'node:os';
+import { networkInterfaces, tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -1053,21 +1053,38 @@ describe('the other instances on this host', () => {
     }
   });
 
-  it('marks a loopback bind as unreachable instead of linking to it', async () => {
-    const loopback = await startPeer('design.md');
-    const lan = await startPeer('plan.md', ['--host', '0.0.0.0']);
-    try {
-      const rows = await peers(base);
-      const byFile = Object.fromEntries(rows.map((p) => [p.file, p]));
-      // The reader's browser is usually not on this host, so a peer that took the
-      // default bind cannot be opened from there however the link is built.
-      expect(byFile['design.md']).toMatchObject({ host: '127.0.0.1', reachable: false });
-      expect(byFile['plan.md']).toMatchObject({ host: '0.0.0.0', reachable: true });
-    } finally {
-      loopback.stop();
-      lan.stop();
-    }
-  });
+  /** A LAN address of this machine, for a request that comes from elsewhere. */
+  const lanAddress = Object.values(networkInterfaces())
+    .flatMap((infos) => infos ?? [])
+    .find((info) => !info.internal && info.family === 'IPv4')?.address;
+
+  // #131: decided by where the reader is, which the Host its browser sent says. Both
+  // directions, since "always reachable" would pass the first half alone.
+  it.runIf(lanAddress !== undefined)(
+    'links to a loopback bind for a reader on this host, and not for one on the LAN',
+    async () => {
+      const loopback = await startPeer('design.md');
+      const lan = await startPeer('plan.md', ['--host', '0.0.0.0']);
+      try {
+        const port = Number(lan.port);
+        const rows = async (host: string) => {
+          const response = await rawExchange(port, '/api/instances', `${host}:${port}`, [
+            `Authorization: Bearer ${TOKEN}`,
+          ]);
+          const body = response.slice(response.indexOf('\r\n\r\n') + 4);
+          const { instances } = v.parse(InstancesPayloadSchema, JSON.parse(body));
+          return Object.fromEntries(instances.map((p) => [p.file, p.reachable]));
+        };
+        expect(await rows('127.0.0.1')).toMatchObject({ 'design.md': true, 'note.md': true });
+        expect(await rows('localhost')).toMatchObject({ 'design.md': true });
+        // The default bind cannot be opened from another machine however the link is built.
+        expect(await rows(lanAddress!)).toMatchObject({ 'design.md': false, 'note.md': false });
+      } finally {
+        loopback.stop();
+        lan.stop();
+      }
+    },
+  );
 
   it('drops an entry left behind by a crash, and deletes it', async () => {
     // A crashed instance leaves its entry: no stop() ran, so nothing removed it. The pid
@@ -1368,6 +1385,15 @@ describe('the session that started an instance', () => {
  * exists for requests that lie about the header, so the request is spelled out here.
  */
 function rawGet(port: number, path: string, host: string, extra: string[] = []): Promise<number> {
+  return rawExchange(port, path, host, extra).then((response) => {
+    const status = /^HTTP\/1\.[01] (\d{3})/.exec(response);
+    if (!status) throw new Error(`no status line in: ${response.slice(0, 120)}`);
+    return Number(status[1]);
+  });
+}
+
+/** The same request, answered with the whole response as text, for reading the body. */
+function rawExchange(port: number, path: string, host: string, extra: string[] = []): Promise<string> {
   return new Promise((done, fail) => {
     const socket = connect(port, '127.0.0.1', () => {
       socket.write(
@@ -1385,11 +1411,7 @@ function rawGet(port: number, path: string, host: string, extra: string[] = []):
     socket.on('data', (chunk: Buffer) => {
       buf += chunk.toString();
     });
-    socket.on('end', () => {
-      const status = /^HTTP\/1\.[01] (\d{3})/.exec(buf);
-      if (status) done(Number(status[1]));
-      else fail(new Error(`no status line in: ${buf.slice(0, 120)}`));
-    });
+    socket.on('end', () => done(buf));
     socket.on('error', (err) => {
       socket.destroy();
       fail(err);
