@@ -385,6 +385,14 @@ test('folds a long reply until its bubble is being read, the way a long comment 
   await page.locator('.bubble').first().click();
   const open = await reply.evaluate((el) => ({ shown: el.clientHeight, full: el.scrollHeight }));
   expect(open.shown).toBe(open.full);
+
+  // Answering it rebuilds the rail; the bubble being read stays open.
+  const bubble = page.locator('.bubble').first();
+  await bubble.locator('.reply-input').fill('a second reply');
+  await bubble.locator('.reply-send').click();
+  await expect(bubble.locator('.reply-body')).toHaveCount(2);
+  const after = await reply.first().evaluate((el) => ({ shown: el.clientHeight, full: el.scrollHeight }));
+  expect(after.shown).toBe(after.full);
 });
 
 test('replies from the history view without swapping the round on screen', async ({ page, akapen }) => {

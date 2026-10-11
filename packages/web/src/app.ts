@@ -583,6 +583,8 @@ function bubbleFor(c: RoundComment, opts: { past: true }): HTMLElement;
 function bubbleFor(c: Comment | RoundComment, opts: { past?: boolean } = {}): HTMLElement {
   const box = el('div', `bubble${c.resolved ? ' resolved' : ''}${opts.past ? ' past' : ''}`);
   box.dataset['id'] = c.id;
+  // Rebuilt after every answer; without this a reply just sent folded the bubble being read.
+  if (c.id === active) box.classList.add('active');
   setLine(box, 'line', c.startLine);
 
   const head = el('div', 'bubble-head');
