@@ -136,7 +136,7 @@ function highlight(code: string, lang: string): string {
 /**
  * The lines a quote or a list item spans (1-based, inclusive), with the depth and quoted
  * state of what is inside it. Kept so a line no token covers can take its state from the
- * container it sits in, rather than guessing it from the text (#203).
+ * container it sits in, as every other line there does (#203).
  */
 type Container = { start: number; end: number; depth: number; quoted: boolean };
 
@@ -320,7 +320,7 @@ function walkList(tokens: Token[], openIdx: number, ctx: Ctx): number {
     // it broke on a real note that had a table inside a list.
     ctx.depth++;
     if (t.map)
-      ctx.containers.push({ start: t.map[0] + 1, end: t.map[1], depth: ctx.depth, quoted: ctx.quoted });
+      ctx.containers.push({ start: t.map[0] + 2, end: t.map[1], depth: ctx.depth, quoted: ctx.quoted });
     walk(tokens.slice(restStart, itemClose), ctx);
     ctx.depth--;
 

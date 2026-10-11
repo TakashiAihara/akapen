@@ -143,8 +143,7 @@ describe('attribute values', () => {
 
 /**
  * Lines no token covers take depth and quoted from the quote or list item they sit in
- * (#203), the way every other line there does. They used to guess quoted from a leading
- * `>` and always get depth 0.
+ * (#203), the way every other line there does.
  */
 function gaps(text: string): [number, number, boolean][] {
   return buildDoc('/x.md', text)
@@ -158,8 +157,18 @@ describe('gap lines', () => {
     expect(gaps('- a\n  - b\n\n    [x]: http://y\n')).toEqual([[4, 2, false]]);
   });
 
-  it('are quoted inside a quote, and at its depth when the quote is in a list', () => {
+  it('sit at the depth of their siblings when the line is a list marker with nothing after it', () => {
+    // The marker line is the item's own line, so it is at the item's depth, not inside it.
+    expect(gaps('- a\n-\n- c\n')).toEqual([[2, 0, false]]);
+    expect(gaps('- [x]: http://y\n- b\n')).toEqual([[1, 0, false]]);
+    expect(gaps('- a\n  - b\n  -\n')).toEqual([[3, 1, false]]);
+  });
+
+  it('are quoted inside a quote in a list, at the depth of the quote', () => {
     expect(gaps('- a\n\n  > q\n  >\n  > r\n')).toEqual([[4, 1, true]]);
+  });
+
+  it('are quoted inside a list inside a quote, at the depth of the list item', () => {
     expect(gaps('> - a\n>\n>   [x]: http://y\n')).toEqual([
       [2, 1, true],
       [3, 1, true],
@@ -171,11 +180,11 @@ describe('gap lines', () => {
     expect(gaps('> a\n>\n> b\n')).toEqual([[2, 0, true]]);
   });
 
-  it('agree with the line beside them in the same container', () => {
-    const d = buildDoc('/x.md', '- a\n\n  > q\n  >\n  > r\n');
-    const gap = d.blocks.find((b) => b.flags.includes('gap'));
-    const r = d.blocks.find((b) => b.text.includes('> r'))!;
-    expect([gap!.depth, gap!.quoted]).toEqual([r.depth, r.quoted]);
+  it('agree with the sibling items beside an empty marker', () => {
+    const d = buildDoc('/x.md', '> - a\n> -\n> - c\n');
+    const gap = d.blocks.find((b) => b.flags.includes('gap'))!;
+    const c = d.blocks.find((b) => b.text.includes('- c'))!;
+    expect([gap.depth, gap.quoted]).toEqual([c.depth, c.quoted]);
   });
 });
 
