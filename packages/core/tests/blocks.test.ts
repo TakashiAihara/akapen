@@ -164,6 +164,11 @@ describe('gap lines', () => {
     expect(gaps('- a\n  - b\n  -\n')).toEqual([[3, 1, false]]);
   });
 
+  it('are quoted when the quote opens after a list marker, which a leading > does not show', () => {
+    // The one change the page draws: the line gains the quote bar.
+    expect(gaps('- >\n')).toEqual([[1, 1, true]]);
+  });
+
   it('are quoted inside a quote in a list, at the depth of the quote', () => {
     expect(gaps('- a\n\n  > q\n  >\n  > r\n')).toEqual([[4, 1, true]]);
   });
