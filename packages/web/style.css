@@ -573,15 +573,15 @@ body.rail-overlay .marker { display: inline-flex; align-items: center; justify-c
  * the heading's text instead of above it (#91, #28). A --css that changes the space above
  * headings sets this variable, not their margin, or the gutter is left where it was.
  */
-.row.h2 { --heading-above: 16px; }
-.row.h3 { --heading-above: 12px; }
-.row.h4 { --heading-above: 10px; }
-.row.h5, .row.h6 { --heading-above: 9px; }
+.row.h2 { --ak-heading-above: 16px; }
+.row.h3 { --ak-heading-above: 12px; }
+.row.h4 { --ak-heading-above: 10px; }
+.row.h5, .row.h6 { --ak-heading-above: 9px; }
 /* A heading directly under another opens no space of its own: the one above already did */
-.row.heading + .row.heading:not(.h1) { --heading-above: 6px; }
-.row:is(.h1, .h2):first-child { --heading-above: 0px; }
-.body :is(h1, h2, h3, h4, h5, h6) { margin-top: var(--heading-above, 0px); }
-.row.heading .gutter { padding-top: var(--heading-above, 0px); }
+.row.heading + .row.heading:not(.h1) { --ak-heading-above: 6px; }
+.row:is(.h1, .h2):first-child { --ak-heading-above: 0px; }
+.body :is(h1, h2, h3, h4, h5, h6) { margin-top: var(--ak-heading-above, 0px); }
+.row.heading .gutter { padding-top: var(--ak-heading-above, 0px); }
 .body h2 { font-size: 1.5rem; margin-bottom: 8px; }
 .body h3 { font-size: 1.25rem; margin-bottom: 6px; }
 /*

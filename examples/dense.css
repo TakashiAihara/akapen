@@ -6,9 +6,8 @@
   --ak-block-gap: 1px;
   --ak-para-gap: 3px;
 }
-/* Space above a heading goes through --heading-above, so the gutter keeps level with it */
-.row.heading { --heading-above: 12px; }
-.row.heading + .row.heading:not(.h1) { --heading-above: 6px; }
-.row:is(.h1, .h2):first-child { --heading-above: 0px; }
+/* Space above a heading goes through --ak-heading-above, so the gutter keeps level with it.
+   The default sheet's 6px under another heading and 0 on the first row still win over this. */
+.row.heading { --ak-heading-above: 12px; }
 .body h1, .body h2, .body h3, .body h4, .body h5, .body h6 { margin-bottom: 3px; }
 .split-table td, .split-table th { padding: 3px 8px; font-size: 0.88rem; }

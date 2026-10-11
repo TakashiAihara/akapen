@@ -217,7 +217,7 @@ Current-round comments come first, ordered by line. Entries with `current_round:
 
 An agent resolves with `POST /api/comments/<id>/resolve` and the `Authorization` header. The call flips the state, so a second one reopens the comment; check `resolved` in the response. Which comments an agent should resolve is the caller's policy; the channel's instructions say: ones it changed the document for or did what they asked, or when the person says so, and not a reply that only answers a question.
 
-There is an example stylesheet in `examples/dense.css`.
+There is an example stylesheet in `examples/dense.css`. The space above a heading is the variable `--ak-heading-above`, set per heading row (`.row.heading { --ak-heading-above: 12px; }`), not the heading's `margin-top`: the line number and the + are placed with it, so a sheet that sets the margin leaves them behind.
 
 ```bash
 bun run packages/cli/src/cli.ts note.md --css examples/dense.css
