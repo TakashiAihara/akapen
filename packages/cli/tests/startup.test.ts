@@ -143,6 +143,8 @@ describe('--advertise', () => {
     return spawnSync('bun', ['run', CLI, file, '-p', '0', ...extra], {
       env: { ...process.env, AKAPEN_HOME: join(sandbox, 'home'), ...env },
       encoding: 'utf8',
+      // A check that fails to refuse starts a server that never exits; fail rather than hang.
+      timeout: 15_000,
     });
   };
 

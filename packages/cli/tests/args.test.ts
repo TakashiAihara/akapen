@@ -164,6 +164,12 @@ describe('resolveHost', () => {
       expect(resolveHost(host)).toBe(host);
   });
 
+  it('gives the rebinding reason for a name, and not for a malformed address', () => {
+    expect(() => resolveHost('d1')).toThrow(/rebind/);
+    for (const host of ['[::1', '127.0.0.1:4300', 'not a host'])
+      expect(() => resolveHost(host)).toThrow(/^--host must be an IP address or localhost, got "[^"]*"$/);
+  });
+
   it('refuses a name, a half-bracketed address, and an address with a port or a zone', () => {
     for (const host of [
       'd1',
