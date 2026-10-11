@@ -423,9 +423,64 @@ test('replies to a comment, and keeps the thread on a comment carried past a rou
   // click: clicking a carried bubble opens that round's history, so a form that needed a
   // click to appear could never be reached with a mouse.
   await carried.hover();
+  // Opened in place on hover, since it never becomes active.
+  expect(await carried.locator('.bubble-body').evaluate((b) => getComputedStyle(b).maxHeight)).toBe('none');
   await carried.locator('.reply-input').fill('still open because X');
   await carried.locator('.reply-send').click();
   await expect(page.locator('#railCarried .bubble').first().locator('.reply-body')).toHaveCount(2);
+});
+
+test('opens a long comment only when its bubble is active, not on focus (#219)', async ({
+  page,
+  akapen,
+  request,
+}) => {
+  const long = Array.from({ length: 40 }, (_, i) => `line ${i + 1} of a long comment`).join('\n');
+  const posted = await request.post(`${akapen.url}/api/comments`, {
+    headers: AUTH,
+    data: { startLine: 10, endLine: 10, body: long },
+  });
+  expect(posted.ok()).toBe(true);
+  await page.goto(akapen.url);
+  const body = page.locator('.bubble').first().locator('.bubble-body');
+  await expect(body).toHaveCount(1);
+
+  // The body itself, which a keyboard reaches as a scroll box. Opened from there, nothing
+  // lays the rail out again and the bubble grows under the next one.
+  await body.focus();
+  expect(await body.evaluate((el) => document.activeElement === el)).toBe(true);
+  const focused = await body.evaluate((el) => ({ shown: el.clientHeight, full: el.scrollHeight }));
+  expect(focused.shown).toBeLessThan(focused.full);
+
+  await page.locator('.bubble').first().click();
+  const open = await body.evaluate((el) => ({ shown: el.clientHeight, full: el.scrollHeight }));
+  expect(open.shown).toBe(open.full);
+});
+
+test('opens a long comment for a keyboard reader who tabs onto its bubble', async ({
+  page,
+  akapen,
+  request,
+}) => {
+  // The keyboard's way in, now that focus inside the bubble no longer opens it: focus on
+  // the bubble itself makes it active, which lays the rail out.
+  const long = Array.from({ length: 40 }, (_, i) => `line ${i + 1} of a long comment`).join('\n');
+  expect(
+    (
+      await request.post(`${akapen.url}/api/comments`, {
+        headers: AUTH,
+        data: { startLine: 10, endLine: 10, body: long },
+      })
+    ).ok(),
+  ).toBe(true);
+  await page.goto(akapen.url);
+  const bubble = page.locator('.bubble').first();
+  await bubble.focus();
+  await expect(bubble).toHaveClass(/\bactive\b/);
+  const open = await bubble
+    .locator('.bubble-body')
+    .evaluate((el) => ({ shown: el.clientHeight, full: el.scrollHeight }));
+  expect(open.shown).toBe(open.full);
 });
 
 test('folds a long reply until its bubble is being read, the way a long comment is folded', async ({

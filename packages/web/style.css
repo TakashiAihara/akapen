@@ -766,10 +766,14 @@ body.show-lines .row.fm-fence { height: auto; }
   overflow-wrap: anywhere;
 }
 .bubble-body, .reply-body { max-height: 12em; overflow-y: auto; }
-.bubble.active .bubble-body, .bubble:focus-within .bubble-body { max-height: none; }
-/* Only on `active`, which re-runs the rail's layout. Focus does not: a reply opened by
-   focus alone grew under the next bubble, and focusing the reply box opened the thread. */
-.bubble.active .reply-body { max-height: none; }
+/* Only on `active`, which re-runs the rail's layout. Focus inside a bubble does not open
+   a body: one opened that way grew under the next bubble (#219). Focus on the bubble
+   itself makes it active, which is the keyboard's way in. */
+.bubble.active :is(.bubble-body, .reply-body) { max-height: none; }
+/* A carried bubble never becomes active (a click opens its round's history), and sits in
+   the flow rather than at a measured offset, so opening it on hover or focus pushes the
+   next one down instead of growing under it. */
+#railCarried .bubble:is(:hover, :focus-within) :is(.bubble-body, .reply-body) { max-height: none; }
 .bubble:focus-visible, .row:focus-visible { outline: 2px solid var(--ak-focus); outline-offset: 1px; }
 .bubble-error { padding: 0 10px 8px; color: var(--ak-warn); font-size: 0.8rem; }
 
