@@ -207,6 +207,48 @@ test('takes a comment on a screen another one moved past, and files it on that r
   await expect(page.locator('#railCarried .bubble')).toContainText('written against the old round');
 });
 
+test('keeps its own rail when resolving or replying on a screen another one moved past', async ({
+  page,
+  akapen,
+}) => {
+  // #175: the answer to a resolve or a reply carries the current round's comments.
+  await openDraft(page);
+  await post(page, 'on the old round');
+  await openDraft(page, 2);
+  await post(page, 'also on the old round');
+  await expect(page.locator(A.rail)).toHaveCount(2);
+
+  const other = await page.context().newPage();
+  await other.goto(akapen.url);
+  await expect(other.locator('.row').first()).toBeVisible();
+  akapen.append('\n## added while both screens were open\n');
+  await other.locator('#nextRound').click();
+  await expect(other.locator('#round')).toHaveText('R002');
+  await expect(page.locator('#movedBar')).toBeVisible();
+
+  // A reply: the thread grows, and the rail is still this round's two comments, not R002's.
+  const first = page.locator(A.rail).filter({ hasText: 'on the old round' }).first();
+  await first.hover();
+  await first.locator('.reply-input').fill('answered on the old screen');
+  await first.locator('.reply-send').click();
+  await expect(first.locator('.reply-body')).toHaveText('answered on the old screen');
+  await expect(page.locator(A.rail)).toHaveCount(2);
+  await expect(page.locator('#railCarried .bubble')).toHaveCount(0);
+
+  // A resolve: the one comment is marked, and the other is still there beside it.
+  await page
+    .locator(A.rail)
+    .filter({ hasText: 'also on the old round' })
+    .getByRole('button', { name: 'Resolve' })
+    .click();
+  await expect(
+    page.locator(A.rail).filter({ hasText: 'also on the old round' }).getByRole('button', { name: 'Reopen' }),
+  ).toBeVisible();
+  await expect(page.locator(A.rail)).toHaveCount(2);
+  await expect(page.locator('#railCarried .bubble')).toHaveCount(0);
+  await expect(page.locator('#round')).toHaveText('R001');
+});
+
 test('keeps a draft when the screen moves to another round, and asks for the lines again', async ({
   page,
   akapen,
