@@ -232,6 +232,34 @@ function renderMoved() {
   movedBarEl.hidden = false;
 }
 
+/** True when another screen cut a round past the one this screen still shows. */
+function isBehind(): boolean {
+  return !state.history && serverRound !== null && state.round != null && serverRound !== state.round.n;
+}
+
+/**
+ * Take the answer to a resolve or a reply.
+ *
+ * The answer always carries the current round's comments. On a screen that is on the
+ * current round they replace the rail. On a screen another one moved past, they are not
+ * this screen's comments, and applying them put the newer round's rail beside the older
+ * document (#175). There only the one comment that changed is taken over, from the
+ * answer's `comment`, which is that comment as it now is. A carried one that is now
+ * resolved leaves the carried rail, as it does on a screen that is current.
+ */
+function takeAnswer(answer: CommentsPayload) {
+  if (!isBehind()) {
+    applyComments(answer);
+    return;
+  }
+  const fresh = answer.comment;
+  const comments = state.comments.map((x) => (x.id === fresh.id ? { ...x, ...fresh } : x));
+  const carried = state.carried.flatMap((x) =>
+    x.id !== fresh.id ? [x] : fresh.resolved ? [] : [{ ...x, ...fresh }],
+  );
+  applyComments({ ...answer, comments, carried });
+}
+
 /** The round the document on screen was read from, which is where a comment written on it goes. */
 function screenRound(): number | null {
   return state.round?.viewing ?? state.round?.n ?? null;
@@ -395,6 +423,7 @@ function renderDoc() {
     });
     gutter.append(add);
     row.append(gutter, el('div', 'body', block.html));
+    if (block.flags.includes('code-first')) row.append(copyButton(row));
 
     gutter.addEventListener('mousedown', (e) => {
       if (targetEl(e)?.classList.contains('marker')) return;
@@ -424,6 +453,71 @@ function renderDoc() {
     if (mine.length) row.tabIndex = 0;
 
     docEl.append(row);
+  }
+}
+
+/**
+ * Copy a fenced block without its fences (#168).
+ *
+ * A block is one row per source line, with nothing wrapping it, so a drag picks up the
+ * fence lines too. The text comes from the rendered code lines rather than the source,
+ * which inside a list or a quote carries the indent and the `>`.
+ */
+function copyButton(first: HTMLElement): HTMLElement {
+  const btn = el('button', 'copy-code', 'copy');
+  btn.title = 'copy the code without its fences';
+  btn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const lines: string[] = [];
+    let previous = getLine(first, 'end');
+    for (let row = first.nextElementSibling; row?.classList.contains('code'); row = row.nextElementSibling) {
+      if (row.classList.contains('code-last') || row.classList.contains('code-first')) break;
+      // A fence left open ends at the last line of its content; a code row after a gap in
+      // the line numbers belongs to another block (an indented one).
+      if (getLine(row, 'start') !== previous + 1) break;
+      previous = getLine(row, 'end');
+      // An empty line is drawn as a non-breaking space so the row keeps its height.
+      lines.push((row.querySelector('.code-line')?.textContent ?? '').replace(/^\xa0$/, ''));
+    }
+    const ok = await copyText(lines.join('\n'));
+    btn.textContent = ok ? 'copied' : 'copy failed';
+    clearTimeout(reset);
+    reset = setTimeout(() => (btn.textContent = 'copy'), 1500);
+  });
+  let reset: ReturnType<typeof setTimeout> | undefined;
+  return btn;
+}
+
+/**
+ * The clipboard API exists only in a secure context, and akapen is usually read over
+ * plain http from another machine, so the old command is the path that normally runs.
+ */
+async function copyText(text: string): Promise<boolean> {
+  if (window.isSecureContext && navigator.clipboard) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      /* Denied; the command below may still be allowed. */
+    }
+  }
+  // Selecting the textarea takes focus; give it back, or the keyboard loses its place.
+  const focused = document.activeElement as HTMLElement | null;
+  const area = document.createElement('textarea');
+  area.value = text;
+  area.setAttribute('readonly', '');
+  area.style.position = 'fixed';
+  area.style.opacity = '0';
+  document.body.append(area);
+  area.select();
+  // A browser that refuses can also throw; either way the textarea goes and focus returns.
+  try {
+    return document.execCommand('copy');
+  } catch {
+    return false;
+  } finally {
+    area.remove();
+    focused?.focus();
   }
 }
 
@@ -552,12 +646,11 @@ function repliesFor(c: Comment | RoundComment, past: boolean): HTMLElement {
       const payload = await decode(res, CommentsPayloadSchema);
       ta.value = '';
       // The response always carries the *current* round's comments, whichever round the
-      // parent was in. Two cases cannot use them: a carried bubble, whose parent is in
-      // an earlier round, and the history view, whose bubbles are that round's own. In
-      // the second, applying them would not merely fail to show the reply — it would
-      // swap the round on screen for the current one. Re-open the round instead.
+      // parent was in. The history view cannot use them, since its bubbles are that
+      // round's own: applying them would swap the round on screen for the current one, so
+      // the round is opened again instead. Everywhere else `takeAnswer` decides.
       if ((past || state.history) && state.round?.viewing) void showRound(state.round.viewing, c.id);
-      else applyComments(payload);
+      else takeAnswer(payload);
     } catch (err) {
       // Keep what was typed. Losing it leaves no way to get the words back.
       send.disabled = false;
@@ -586,6 +679,9 @@ function bubbleFor(c: RoundComment, opts: { past: true }): HTMLElement;
 function bubbleFor(c: Comment | RoundComment, opts: { past?: boolean } = {}): HTMLElement {
   const box = el('div', `bubble${c.resolved ? ' resolved' : ''}${opts.past ? ' past' : ''}`);
   box.dataset['id'] = c.id;
+  // The rail is rebuilt on every comments update; without this a reply just sent folded
+  // the bubble being read.
+  if (c.id === active) box.classList.add('active');
   setLine(box, 'line', c.startLine);
 
   const head = el('div', 'bubble-head');
@@ -612,7 +708,7 @@ function bubbleFor(c: Comment | RoundComment, opts: { past?: boolean } = {}): HT
     try {
       const res = await fetch(`/api/comments/${c.id}/resolve`, { method: 'POST' });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      if (!state.history) applyComments(await decode(res, CommentsPayloadSchema));
+      if (!state.history) takeAnswer(await decode(res, CommentsPayloadSchema));
       else if (state.round?.viewing) void showRound(state.round.viewing);
     } catch (err) {
       btn.disabled = false;
@@ -823,7 +919,7 @@ function setActive(id: string, scroll?: 'doc' | 'rail') {
     const e = getLine(row, 'end');
     row.classList.toggle('linked', !!target && s <= target.endLine && e >= target.startLine);
   }
-  // `active` un-collapses .bubble-body, so the height changes. Re-run the alignment
+  // `active` un-collapses .bubble-body and .reply-body, so the height changes. Re-run the alignment
   layoutRail();
   if (!target) return;
   if (scroll === 'doc') rowFor(target.startLine)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
