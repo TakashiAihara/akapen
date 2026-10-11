@@ -352,6 +352,32 @@ test('replies to a comment, and keeps the thread on a comment carried past a rou
   await expect(page.locator('#railCarried .bubble').first().locator('.reply-body')).toHaveCount(2);
 });
 
+test('folds a long reply until its bubble is being read, the way a long comment is folded', async ({
+  page,
+  akapen,
+  request,
+}) => {
+  const posted = await request.post(`${akapen.url}/api/comments`, {
+    headers: AUTH,
+    data: { startLine: 10, endLine: 10, body: 'short remark' },
+  });
+  expect(posted.ok()).toBe(true);
+  const { id } = ((await posted.json()) as { comment: { id: string } }).comment;
+  // Replies run about ten times longer than comments (#160); forty lines is well past 12em.
+  const long = Array.from({ length: 40 }, (_, i) => `line ${i + 1} of a long answer`).join('\n');
+  await request.post(`${akapen.url}/api/comments/${id}/replies`, { headers: AUTH, data: { body: long } });
+
+  await page.goto(akapen.url);
+  const reply = page.locator('.bubble').first().locator('.reply-body');
+  await expect(reply).toHaveCount(1);
+  const folded = await reply.evaluate((el) => ({ shown: el.clientHeight, full: el.scrollHeight }));
+  expect(folded.shown).toBeLessThan(folded.full);
+
+  await page.locator('.bubble').first().click();
+  const open = await reply.evaluate((el) => ({ shown: el.clientHeight, full: el.scrollHeight }));
+  expect(open.shown).toBe(open.full);
+});
+
 test('replies from the history view without swapping the round on screen', async ({ page, akapen }) => {
   await page.goto(akapen.url);
   await page.locator('.row').nth(2).hover();
