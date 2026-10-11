@@ -479,10 +479,15 @@ async function copyText(text: string): Promise<boolean> {
   area.style.opacity = '0';
   document.body.append(area);
   area.select();
-  const ok = document.execCommand('copy');
-  area.remove();
-  focused?.focus();
-  return ok;
+  // A browser that refuses can also throw; either way the textarea goes and focus returns.
+  try {
+    return document.execCommand('copy');
+  } catch {
+    return false;
+  } finally {
+    area.remove();
+    focused?.focus();
+  }
 }
 
 /** Repaint only the per-row marks for comments. The document DOM is not rebuilt. */
