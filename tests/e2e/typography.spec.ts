@@ -99,6 +99,14 @@ test('leaves a paragraph after a code block or a table the space it leaves after
   expect(table).toHaveLength(3);
   expect(table[2]).toBeCloseTo(paraToPara, 0);
   expect(table[0]! + table[1]!).toBeCloseTo(code[0]!, 0);
+  // A table with no body rows, two tables in a row, and a code block then a table: each
+  // gap out of a block is a paragraph's, the separator's zero box adding nothing.
+  const headerOnly = await gapsOf(page, '| a | b |\n|---|---|\n\nAfter.\n', akapen, request);
+  expect(headerOnly[0]! + headerOnly[1]!).toBeCloseTo(paraToPara, 0);
+  const twoTables = await gapsOf(page, '| a |\n|---|\n| 1 |\n\n| b |\n|---|\n| 2 |\n', akapen, request);
+  expect(twoTables[2]).toBeCloseTo(paraToPara, 0);
+  const codeThenTable = await gapsOf(page, '```sh\nmake\n```\n\n| a |\n|---|\n| 1 |\n', akapen, request);
+  expect(codeThenTable[2]).toBeCloseTo(paraToPara, 0);
   // Nor before the next item of a list the block sits in: items stay tight.
   const inList = await gapsOf(page, '- item\n\n  ```sh\n  make\n  ```\n- next\n', akapen, request);
   expect(inList.at(-1)).toBeLessThan(paraToPara - 3);
