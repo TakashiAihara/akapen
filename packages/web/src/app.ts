@@ -420,6 +420,7 @@ function renderDoc() {
     });
     gutter.append(add);
     row.append(gutter, el('div', 'body', block.html));
+    if (block.flags.includes('code-first')) row.append(copyButton(row));
 
     gutter.addEventListener('mousedown', (e) => {
       if (targetEl(e)?.classList.contains('marker')) return;
@@ -449,6 +450,71 @@ function renderDoc() {
     if (mine.length) row.tabIndex = 0;
 
     docEl.append(row);
+  }
+}
+
+/**
+ * Copy a fenced block without its fences (#168).
+ *
+ * A block is one row per source line, with nothing wrapping it, so a drag picks up the
+ * fence lines too. The text comes from the rendered code lines rather than the source,
+ * which inside a list or a quote carries the indent and the `>`.
+ */
+function copyButton(first: HTMLElement): HTMLElement {
+  const btn = el('button', 'copy-code', 'copy');
+  btn.title = 'copy the code without its fences';
+  btn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const lines: string[] = [];
+    let previous = getLine(first, 'end');
+    for (let row = first.nextElementSibling; row?.classList.contains('code'); row = row.nextElementSibling) {
+      if (row.classList.contains('code-last') || row.classList.contains('code-first')) break;
+      // A fence left open ends at the last line of its content; a code row after a gap in
+      // the line numbers belongs to another block (an indented one).
+      if (getLine(row, 'start') !== previous + 1) break;
+      previous = getLine(row, 'end');
+      // An empty line is drawn as a non-breaking space so the row keeps its height.
+      lines.push((row.querySelector('.code-line')?.textContent ?? '').replace(/^\xa0$/, ''));
+    }
+    const ok = await copyText(lines.join('\n'));
+    btn.textContent = ok ? 'copied' : 'copy failed';
+    clearTimeout(reset);
+    reset = setTimeout(() => (btn.textContent = 'copy'), 1500);
+  });
+  let reset: ReturnType<typeof setTimeout> | undefined;
+  return btn;
+}
+
+/**
+ * The clipboard API exists only in a secure context, and akapen is usually read over
+ * plain http from another machine, so the old command is the path that normally runs.
+ */
+async function copyText(text: string): Promise<boolean> {
+  if (window.isSecureContext && navigator.clipboard) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      /* Denied; the command below may still be allowed. */
+    }
+  }
+  // Selecting the textarea takes focus; give it back, or the keyboard loses its place.
+  const focused = document.activeElement as HTMLElement | null;
+  const area = document.createElement('textarea');
+  area.value = text;
+  area.setAttribute('readonly', '');
+  area.style.position = 'fixed';
+  area.style.opacity = '0';
+  document.body.append(area);
+  area.select();
+  // A browser that refuses can also throw; either way the textarea goes and focus returns.
+  try {
+    return document.execCommand('copy');
+  } catch {
+    return false;
+  } finally {
+    area.remove();
+    focused?.focus();
   }
 }
 
