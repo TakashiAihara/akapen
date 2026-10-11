@@ -438,15 +438,22 @@ function copyButton(first: HTMLElement): HTMLElement {
   btn.addEventListener('click', async (e) => {
     e.stopPropagation();
     const lines: string[] = [];
+    let previous = getLine(first, 'end');
     for (let row = first.nextElementSibling; row?.classList.contains('code'); row = row.nextElementSibling) {
       if (row.classList.contains('code-last') || row.classList.contains('code-first')) break;
+      // A fence left open ends at the last line of its content; a code row after a gap in
+      // the line numbers belongs to another block (an indented one).
+      if (getLine(row, 'start') !== previous + 1) break;
+      previous = getLine(row, 'end');
       // An empty line is drawn as a non-breaking space so the row keeps its height.
       lines.push((row.querySelector('.code-line')?.textContent ?? '').replace(/^\xa0$/, ''));
     }
     const ok = await copyText(lines.join('\n'));
     btn.textContent = ok ? 'copied' : 'copy failed';
-    setTimeout(() => (btn.textContent = 'copy'), 1500);
+    clearTimeout(reset);
+    reset = setTimeout(() => (btn.textContent = 'copy'), 1500);
   });
+  let reset: ReturnType<typeof setTimeout> | undefined;
   return btn;
 }
 
@@ -463,6 +470,8 @@ async function copyText(text: string): Promise<boolean> {
       /* Denied; the command below may still be allowed. */
     }
   }
+  // Selecting the textarea takes focus; give it back, or the keyboard loses its place.
+  const focused = document.activeElement as HTMLElement | null;
   const area = document.createElement('textarea');
   area.value = text;
   area.setAttribute('readonly', '');
@@ -472,6 +481,7 @@ async function copyText(text: string): Promise<boolean> {
   area.select();
   const ok = document.execCommand('copy');
   area.remove();
+  focused?.focus();
   return ok;
 }
 

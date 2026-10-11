@@ -642,9 +642,10 @@ body.rail-overlay .marker { display: inline-flex; align-items: center; justify-c
 .hljs-emphasis { font-style: italic; }
 .hljs-strong { font-weight: 700; }
 .row.code-first .code-line { border-top: 1px solid var(--ak-border); border-radius: 6px 6px 0 0; padding-top: 6px; }
-/* Over the fence line, so it takes no height and the rail's alignment is untouched (#168) */
-.row.code-first { position: relative; }
+/* Over the fence line, so it takes no height and the rail's alignment is untouched (#168).
+   Not selectable: a drag across the block would otherwise pick up its label. */
 .copy-code {
+  user-select: none;
   position: absolute;
   top: 6px;
   right: 8px;

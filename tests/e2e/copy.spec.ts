@@ -60,3 +60,42 @@ test('copies a block inside a list without the list indent', async ({ page }) =>
   await second.locator('.copy-code').click();
   expect(await copied(page)).toBe('make test');
 });
+
+test('leaves the button out of a selection dragged across the block', async ({ page }) => {
+  const text = await page.evaluate(() => {
+    const first = document.querySelector('.row.code-first')!;
+    const last = document.querySelector('.row.code-last')!;
+    const range = document.createRange();
+    range.setStartBefore(first);
+    range.setEndAfter(last);
+    getSelection()!.removeAllRanges();
+    getSelection()!.addRange(range);
+    return getSelection()!.toString();
+  });
+  expect(text).toContain('set -euo pipefail');
+  expect(text).not.toContain('copy');
+});
+
+test('stops a fence left open at the end of its content, not at the next code block', async ({
+  page,
+  akapen,
+  request,
+}) => {
+  // The quote ends the fence without a closing line; the indented block after it is another one.
+  writeFileSync(akapen.file, '> ```sh\n> echo q\n\n    indented\n');
+  expect((await request.post(`${akapen.url}/api/rounds`, { headers: AUTH })).ok()).toBe(true);
+  await page.goto(akapen.url);
+  const first = page.locator('.row.code-first');
+  await expect(first).toHaveCount(1);
+  await first.hover();
+  await first.locator('.copy-code').click();
+  expect(await copied(page)).toBe('echo q');
+});
+
+test('gives focus back to the button after copying', async ({ page }) => {
+  const button = page.locator('.row.code-first').first().locator('.copy-code');
+  await button.focus();
+  await page.keyboard.press('Enter');
+  await expect(button).toHaveText('copied');
+  await expect(button).toBeFocused();
+});
