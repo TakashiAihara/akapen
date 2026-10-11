@@ -83,6 +83,39 @@ test('leaves the same space on the way out of a list as on the way in (#92)', as
   expect(between).toBeLessThan(into - 3);
 });
 
+test('leaves a paragraph after a code block or a table the space it leaves after a paragraph (#227)', async ({
+  page,
+  akapen,
+  request,
+}) => {
+  const [paraToPara] = (await gapsOf(page, 'One.\n\nTwo.\n', akapen, request)) as [number];
+  const code = await gapsOf(page, '```sh\nmake\n```\n\nAfter.\n', akapen, request);
+  // fence → code, code → fence, fence → After
+  expect(code).toHaveLength(3);
+  expect(code[2]).toBeCloseTo(paraToPara, 0);
+  const table = await gapsOf(page, '| a | b |\n|---|---|\n| 1 | 2 |\n\nAfter.\n', akapen, request);
+  // Header → hidden separator → body row → After. Through the separator the two first
+  // gaps add up to the header-to-body gap, which stays as tight as a code block's lines.
+  expect(table).toHaveLength(3);
+  expect(table[2]).toBeCloseTo(paraToPara, 0);
+  expect(table[0]! + table[1]!).toBeCloseTo(code[0]!, 0);
+  // A table with no body rows, two tables in a row, and a code block then a table: each
+  // gap out of a block is a paragraph's, the separator's zero box adding nothing.
+  const headerOnly = await gapsOf(page, '| a | b |\n|---|---|\n\nAfter.\n', akapen, request);
+  expect(headerOnly[0]! + headerOnly[1]!).toBeCloseTo(paraToPara, 0);
+  const twoTables = await gapsOf(page, '| a |\n|---|\n| 1 |\n\n| b |\n|---|\n| 2 |\n', akapen, request);
+  expect(twoTables[2]).toBeCloseTo(paraToPara, 0);
+  const codeThenTable = await gapsOf(page, '```sh\nmake\n```\n\n| a |\n|---|\n| 1 |\n', akapen, request);
+  expect(codeThenTable[2]).toBeCloseTo(paraToPara, 0);
+  // Nor before the next item of a list the block sits in: items stay tight.
+  const inList = await gapsOf(page, '- item\n\n  ```sh\n  make\n  ```\n- next\n', akapen, request);
+  expect(inList.at(-1)).toBeLessThan(paraToPara - 3);
+  const tableInList = await gapsOf(page, '- item\n\n  | a |\n  |---|\n  | 1 |\n- next\n', akapen, request);
+  expect(tableInList.at(-1)).toBeLessThan(paraToPara - 3);
+  const headerOnlyInList = await gapsOf(page, '- item\n\n  | a |\n  |---|\n- next\n', akapen, request);
+  expect(headerOnlyInList.at(-2)! + headerOnlyInList.at(-1)!).toBeLessThan(paraToPara - 3);
+});
+
 test('spaces the way out of a list that ends in a code block, and not the way into it', async ({
   page,
   akapen,

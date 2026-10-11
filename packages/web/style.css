@@ -622,6 +622,17 @@ body.rail-overlay .marker { display: inline-flex; align-items: center; justify-c
    parser marks that row, whatever it is; a nested list followed by its outer item is not
    a way out. On the block inside the row, as a paragraph's own margin is. */
 .row.list-last:has(+ .row:not(.list-item)) .body > :first-child { margin-bottom: var(--ak-para-gap); }
+/* The same on the way out of a code block or a table, which keep no margin of their own
+   and left the next block closer than a paragraph does (#227). Rows of one table stay
+   tight; a table with only its header takes the space on the header, its separator being
+   hidden. Not before a list item: a block inside a list ends its item, not the list. The
+   classes cannot tell that from a block before a new list, which stays tight too (#242). */
+.row.code-last:has(+ .row:not(.list-item)) .body > :first-child,
+.row.table-row:has(+ .row:not(.table-row:not(.table-header), .list-item)) .body > :first-child,
+.row.table-header:has(+ .row.table-separator + .row:not(.table-row:not(.table-header), .list-item))
+  .body > :first-child {
+  margin-bottom: var(--ak-para-gap);
+}
 .li-marker { flex: 0 0 auto; color: var(--ak-fg-muted); }
 .li-body { min-width: 0; }
 
