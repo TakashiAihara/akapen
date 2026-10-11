@@ -1646,27 +1646,49 @@ window.fetch = ((input: RequestInfo | URL, init?: RequestInit) =>
   foreign
     ? Promise.reject(new Error('not sent: this port may now serve another document; reload to check'))
     : realFetch(input, init)) as typeof fetch;
+const say = (text: string | null) => {
+  otherDocTextEl.textContent = text ?? '';
+  otherDocBarEl.hidden = text === null;
+};
+/** Bumped by each drop, so a check that answers after a newer one began is not used. */
+let checks = 0;
+let retry: ReturnType<typeof setTimeout> | undefined;
 const checkPath = async (): Promise<void> => {
+  clearTimeout(retry);
+  const mine = ++checks;
   try {
     const res = await realFetch('/api/doc');
     if (!res.ok || !state.doc) throw new Error(`answered ${res.status}`);
-    const now = (await decode(res, DocPayloadSchema)).doc.path;
+    const payload = await decode(res, DocPayloadSchema);
+    if (mine !== checks) return;
     // Decided afresh each time, so the bar goes when the document comes back to the port.
-    foreign = now !== state.doc.path;
-    otherDocTextEl.textContent = `⟳ this port now serves ${now} — reload to switch to it`;
-    otherDocBarEl.hidden = !foreign;
+    foreign = payload.doc.path !== state.doc.path;
+    if (foreign) {
+      say(`⟳ this port now serves ${payload.doc.path} — reload to switch to it`);
+      return;
+    }
+    say(null);
+    // Events while it was unchecked were dropped, so take their news from the answer.
+    noteServerRound(payload.round.n);
+    renderMoved();
+    if (!state.history) renderBanner(payload.changed);
   } catch {
+    if (mine !== checks) return;
     // The stream may stay up with no reconnect to ask again, so ask again here.
-    setTimeout(() => void checkPath(), 2_000);
+    say('⟳ this port does not answer as this akapen — reload to try again');
+    retry = setTimeout(() => void checkPath(), 2_000);
   }
 };
 sse.addEventListener('error', () => {
   reconnecting = true;
   foreign = true;
-  if (sse.readyState === EventSource.CLOSED) {
-    otherDocTextEl.textContent = '⟳ lost the connection to this akapen — reload to try again';
-    otherDocBarEl.hidden = false;
-  }
+  checks++;
+  clearTimeout(retry);
+  say(
+    sse.readyState === EventSource.CLOSED
+      ? '⟳ lost the connection to this akapen — reload to try again'
+      : '⟳ reconnecting to this akapen…',
+  );
 });
 sse.addEventListener('open', () => {
   if (!reconnecting) return;

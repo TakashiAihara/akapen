@@ -28,6 +28,8 @@ test('says when the port serves another document, stops writing to it, and stops
     await expect(page.locator('#otherDocBar')).toBeHidden();
 
     await first.stop();
+    // While nothing answers, writes are held back, so the screen says why.
+    await expect(page.locator('#otherDocText')).toContainText('reconnecting', { timeout: 15_000 });
     const other = join(dir, 'second.md');
     writeFileSync(other, '# Second\n\nAnother document.\n');
     const second = await startPeer(akapen.home, other, [], first.port);
