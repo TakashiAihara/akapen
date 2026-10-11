@@ -133,7 +133,16 @@ function highlight(code: string, lang: string): string {
   return esc(code);
 }
 
-type Ctx = { lines: string[]; out: Block[]; depth: number; quoted: boolean };
+/**
+ * The lines inside a quote or a list item (1-based, inclusive), with the depth and quoted
+ * state of what is there. For a quote that is every line it spans; a list item records
+ * two, its marker line at its own depth and the lines after it one deeper. Kept so a
+ * line no token covers can take its state from the container it sits in, as every
+ * other line there does (#203).
+ */
+type Container = { start: number; end: number; depth: number; quoted: boolean };
+
+type Ctx = { lines: string[]; out: Block[]; depth: number; quoted: boolean; containers: Container[] };
 
 function rawRange(lines: string[], startLine: number, endLine: number): string {
   return lines.slice(startLine - 1, endLine).join('\n');
@@ -311,6 +320,14 @@ function walkList(tokens: Token[], openIdx: number, ctx: Ctx): number {
     // Send the remaining children (nested lists, tables, fences, quotes, continuation
     // paragraphs) through the same walk. Enumerating kinds always misses something —
     // it broke on a real note that had a table inside a list.
+    // Two containers: the marker line at the item's own depth, the lines after it one
+    // deeper. Anything opened on the marker line (a nested item, a quote) is recorded
+    // after these, so it wins on that line.
+    if (t.map) {
+      const line = t.map[0] + 1;
+      ctx.containers.push({ start: line, end: line, depth: ctx.depth, quoted: ctx.quoted });
+      ctx.containers.push({ start: line + 1, end: t.map[1], depth: ctx.depth + 1, quoted: ctx.quoted });
+    }
     ctx.depth++;
     walk(tokens.slice(restStart, itemClose), ctx);
     ctx.depth--;
@@ -372,6 +389,8 @@ function walk(tokens: Token[], ctx: Ctx): void {
         // Restore rather than clear: leaving `> > inner` is still inside the outer quote (#197).
         const outer = ctx.quoted;
         ctx.quoted = true;
+        if (t.map)
+          ctx.containers.push({ start: t.map[0] + 1, end: t.map[1], depth: ctx.depth, quoted: true });
         walk(tokens.slice(i + 1, closeIdx), ctx);
         ctx.quoted = outer;
         i = closeIdx;
@@ -418,7 +437,7 @@ export function buildDoc(path: string, source: string): Doc {
     body = blanked.join('\n');
   }
 
-  const ctx: Ctx = { lines, out, depth: 0, quoted: false };
+  const ctx: Ctx = { lines, out, depth: 0, quoted: false, containers: [] };
   walk(md.parse(body, {}), ctx);
 
   // Pick up lines that produce no token (a bare "> " inside a quote, for example).
@@ -427,10 +446,18 @@ export function buildDoc(path: string, source: string): Doc {
   // is not on the screen.
   const covered = new Set<number>();
   for (const b of out) for (let ln = b.startLine; ln <= b.endLine; ln++) covered.add(ln);
+  // The innermost container holding a line is the last one recorded that holds it: the
+  // walk records a container before what is inside it. Not the one that starts last — a
+  // list item's starts after its marker line, so a quote opened on that line starts
+  // first and is still inside it. Filled once in recorded order rather than searched per
+  // line, which on a note of many empty items was quadratic. Outside every container:
+  // top level, unquoted.
+  const innermost: (Container | undefined)[] = [];
+  for (const c of ctx.containers) for (let ln = c.start; ln <= c.end; ln++) innermost[ln] = c;
   for (let ln = 1; ln <= lines.length; ln++) {
     const raw = lines[ln - 1]!;
     if (!raw.trim() || covered.has(ln)) continue;
-    const quoted = /^\s*>/.test(raw);
+    const inside = innermost[ln];
     const stripped = raw.replace(/^\s*>+\s?/, '');
     out.push({
       startLine: ln,
@@ -438,8 +465,8 @@ export function buildDoc(path: string, source: string): Doc {
       kind: 'paragraph',
       html: stripped.trim() ? `<p>${md.renderInline(stripped)}</p>` : '<p class="gap-line"></p>',
       text: raw,
-      depth: 0,
-      quoted,
+      depth: inside?.depth ?? 0,
+      quoted: inside?.quoted ?? false,
       flags: ['gap'],
     });
   }

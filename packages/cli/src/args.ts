@@ -10,6 +10,8 @@
  * a TypeError somewhere else or a server listening on `true`.
  */
 
+import { isIP } from 'node:net';
+
 /** Thrown for anything the caller typed wrong. cli.ts prints it with the usage text. */
 export class UsageError extends Error {}
 
@@ -133,6 +135,39 @@ export function parseArgs(argv: string[]): Args {
   }
 
   return args;
+}
+
+/**
+ * `--host`, checked before the socket is opened (#132).
+ *
+ * An IP address in either IPv6 spelling, or `localhost`. Without this, a value Bun
+ * cannot bind surfaced as a stack trace, or as "Is port 0 in use?", which sends the
+ * reader after a port that cannot be the problem.
+ *
+ * Any other name is refused for the reason packages/core/src/hosts.ts leaves the
+ * machine's own name out of what the server answers to: a name can be claimed by another
+ * machine on the network and rebound to this one. `allowedHostnames` serves the bind
+ * value itself, so binding to a name would put it back in that set. A zone id
+ * (`fe80::1%eth0`) is refused for the reason `--advertise` refuses link-local addresses:
+ * a URL cannot carry it.
+ *
+ * Only the shape is checked. An address this machine does not have still fails inside
+ * Bun.serve with EADDRNOTAVAIL, as a stack trace that at least names the problem.
+ */
+export function resolveHost(raw: string | undefined): string {
+  if (raw === undefined) return '127.0.0.1';
+  if (raw.includes('%')) {
+    throw new UsageError(`--host ${JSON.stringify(raw)} carries a zone id, which a URL cannot`);
+  }
+  const bracketed = /^\[(.*)\]$/.exec(raw)?.[1];
+  const address = bracketed === undefined ? isIP(raw) !== 0 : isIP(bracketed) === 6;
+  if (address) return raw;
+  // Names are case-insensitive. Handed on lowercased, because that is the spelling the
+  // Host check compares against.
+  if (raw.toLowerCase() === 'localhost') return 'localhost';
+  // The rebinding reason only for what is a name; a mistyped address is just malformed.
+  const reason = /^[a-z0-9.-]+$/i.test(raw) ? ': another machine can claim a name and rebind it here' : '';
+  throw new UsageError(`--host must be an IP address or localhost, got ${JSON.stringify(raw)}${reason}`);
 }
 
 /**
