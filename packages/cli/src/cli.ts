@@ -21,7 +21,8 @@ const USAGE = `akapen — markdown inline review (PoC)
 
 options:
   --host <addr>            listen address (default 127.0.0.1)
-  -p, --port <n>           port (default 4300)
+  -p, --port <n>           port (default 4300, or one the OS picks when that is taken;
+                           a port given here is never moved off. 0: let the OS pick)
   -A, --advertise <addr>   address to print in the URL, or an interface to take one
                            from ($AKAPEN_ADVERTISE sets it once per host)
   --css <file>             extra stylesheet to load
