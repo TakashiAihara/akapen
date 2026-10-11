@@ -31,8 +31,9 @@ afterEach(() => {
 });
 
 /**
- * Start akapen and collect the startup block. `-p 0` so a port someone left listening
- * on cannot fail this, which is also the case the printed port has to survive.
+ * Start akapen and collect the startup block. `-p 0` by default, so a port someone left
+ * listening on cannot fail this, which is also the case the printed port has to survive;
+ * `null` passes no `-p`, for the tests of the default port.
  */
 async function start(
   extra: string[] = [],

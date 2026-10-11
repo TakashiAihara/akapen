@@ -376,7 +376,7 @@ for (const [signal, code] of [
  * does not serve, printing one back yields a 403 rather than merely an odd-looking URL.
  *
  * `server.port` is what the OS chose for `-p 0`; Bun only leaves it unset when serving
- * on a unix socket, which nothing here does, so the requested port is the fallback.
+ * on a unix socket, which nothing here does, so the requested port stands in for it.
  */
 // A pinned address stands in for the bind, rather than being offered alongside it.
 // Passing it as the list instead would have been dropped for a concrete bind, where
