@@ -609,8 +609,10 @@ body.rail-overlay .marker { display: inline-flex; align-items: center; justify-c
 
 .li { display: flex; gap: 6px; padding-left: calc(var(--depth, 0) * 22px); }
 /* Leaving a list gets the space a paragraph leaves before one. Without it the next
-   paragraph sat flush against the last item and read as part of the list (#92). */
-.row.list-item:has(+ .row:not(.list-item)) .li { margin-bottom: var(--ak-para-gap); }
+   block sat flush against the list's last row and read as part of the list (#92). The
+   parser marks that row, whatever it is; a nested list followed by its outer item is not
+   a way out. On the block inside the row, as a paragraph's own margin is. */
+.row.list-last:has(+ .row:not(.list-item)) .body > :first-child { margin-bottom: var(--ak-para-gap); }
 .li-marker { flex: 0 0 auto; color: var(--ak-fg-muted); }
 .li-body { min-width: 0; }
 

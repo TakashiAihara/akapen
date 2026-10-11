@@ -279,6 +279,7 @@ function walkList(tokens: Token[], openIdx: number, ctx: Ctx): number {
   const closeIdx = findClose(tokens, openIdx);
   const ordered = open.type === 'ordered_list_open';
   let index = Number(open.attrGet('start') ?? 1);
+  const first = ctx.out.length;
 
   for (let i = openIdx + 1; i < closeIdx; i++) {
     const t = tokens[i]!;
@@ -318,6 +319,16 @@ function walkList(tokens: Token[], openIdx: number, ctx: Ctx): number {
     index++;
     i = itemClose;
   }
+
+  // The list's last row, whatever kind it is (an item, or code or a table inside one), so
+  // the page can space the way out of the list as it spaces the way in (#92).
+  const last = ctx.out
+    .slice(first)
+    .reduce<Block | undefined>(
+      (end, b) => (end === undefined || b.endLine > end.endLine ? b : end),
+      undefined,
+    );
+  last?.flags.push('list-last');
   return closeIdx;
 }
 

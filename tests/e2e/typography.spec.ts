@@ -6,6 +6,7 @@
  * sheet; an h4 was the size of a paragraph and, in a serif, lighter than one. Nothing
  * errors either way, so only the computed styles can say.
  */
+import type { APIRequestContext, Page } from '@playwright/test';
 import { writeFileSync } from 'node:fs';
 import { AUTH, expect, test } from './fixtures.ts';
 
@@ -46,25 +47,52 @@ test('keeps every heading level above body text', async ({ page }) => {
   expect(seen.h4Weight).toBeGreaterThanOrEqual(700);
 });
 
+/**
+ * Ink-to-ink gaps between consecutive rows: each row's rendered block, not the row, since
+ * the space is what is measured. One fewer than the rows.
+ */
+async function gapsOf(
+  page: Page,
+  source: string,
+  akapen: { url: string; file: string },
+  request: APIRequestContext,
+) {
+  writeFileSync(akapen.file, source);
+  expect((await request.post(`${akapen.url}/api/rounds`, { headers: AUTH })).ok()).toBe(true);
+  await page.goto(akapen.url);
+  await expect(page.locator('.row').last()).toBeVisible();
+  const boxes = await page.evaluate(() =>
+    [...document.querySelectorAll('.row > .body > :first-child')].map((el) => {
+      const r = el.getBoundingClientRect();
+      return { top: r.top, bottom: r.bottom };
+    }),
+  );
+  return boxes.slice(1).map((b, i) => b.top - boxes[i]!.bottom);
+}
+
 test('leaves the same space on the way out of a list as on the way in (#92)', async ({
   page,
   akapen,
   request,
 }) => {
-  writeFileSync(akapen.file, 'Before the list.\n\n- first item\n- last item\n\nAfter the list.\n');
-  expect((await request.post(`${akapen.url}/api/rounds`, { headers: AUTH })).ok()).toBe(true);
-  await page.goto(akapen.url);
-  await expect(page.locator('.row.list-item')).toHaveCount(2);
-
-  // Ink to ink: the text boxes, not the rows, since margins are what is measured.
-  const [before, first, last, after] = await page.evaluate(() =>
-    [...document.querySelectorAll('.body p, .body .li')].map((el) => {
-      const r = el.getBoundingClientRect();
-      return { top: r.top, bottom: r.bottom };
-    }),
-  );
-  const into = first!.top - before!.bottom;
-  const out = after!.top - last!.bottom;
-  expect(out).toBeGreaterThan(0);
+  const gaps = await gapsOf(page, 'Before.\n\n- one\n- two\n- three\n\nAfter.\n', akapen, request);
+  expect(gaps).toHaveLength(4);
+  const [into, between, , out] = gaps as [number, number, number, number];
   expect(out).toBeCloseTo(into, 0);
+  // And not by spacing every item: inside the list the rows stay tight.
+  expect(between).toBeLessThan(into - 3);
+});
+
+test('spaces the way out of a list that ends in a code block, and not the way into it', async ({
+  page,
+  akapen,
+  request,
+}) => {
+  const source = 'Before.\n\n- item\n\n  ```sh\n  make\n  ```\n\nAfter.\n';
+  const gaps = await gapsOf(page, source, akapen, request);
+  // Before → item, item → fence, fence → code, code → fence, fence → After
+  expect(gaps).toHaveLength(5);
+  const [into, intoCode, , , out] = gaps as [number, number, number, number, number];
+  expect(out).toBeCloseTo(into, 0);
+  expect(intoCode).toBeLessThan(into - 3);
 });
