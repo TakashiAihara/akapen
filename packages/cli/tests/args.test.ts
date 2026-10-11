@@ -11,7 +11,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { isHostName, parseArgs, resolveHost, resolvePort, UsageError } from '../src/args.ts';
+import { parseArgs, resolveHost, resolvePort, UsageError } from '../src/args.ts';
 
 describe('positional arguments', () => {
   it('collects the subcommand and the file', () => {
@@ -159,23 +159,15 @@ describe('resolveHost', () => {
     expect(resolveHost(undefined)).toBe('127.0.0.1');
   });
 
-  it('passes an address or a host name through as typed', () => {
-    for (const host of [
-      '0.0.0.0',
-      '::',
-      '[::]',
-      '127.0.0.1',
-      '::1',
-      '[::1]',
-      'localhost',
-      'd1',
-      'akapen.example.local',
-    ])
+  it('passes an address or localhost through as typed', () => {
+    for (const host of ['0.0.0.0', '::', '[::]', '127.0.0.1', '::1', '[::1]', 'localhost'])
       expect(resolveHost(host)).toBe(host);
   });
 
-  it('refuses a half-bracketed address, an address with a port or a zone, and what is no name', () => {
+  it('refuses a name, a half-bracketed address, and an address with a port or a zone', () => {
     for (const host of [
+      'd1',
+      'akapen.example.local',
       '[::1',
       '::1]',
       'not a host',
@@ -187,10 +179,5 @@ describe('resolveHost', () => {
       '',
     ])
       expect(() => resolveHost(host)).toThrow(UsageError);
-  });
-
-  it('tells a name, which has to be looked up, from an address, which does not', () => {
-    expect(['d1', 'localhost'].map(isHostName)).toEqual([true, true]);
-    expect(['127.0.0.1', '::1', '[::1]'].map(isHostName)).toEqual([false, false, false]);
   });
 });

@@ -216,8 +216,7 @@ describe('--advertise', () => {
   }, 30_000);
 
   // #132: these reached Bun.serve, and came back as a stack trace or as "Is port 0 in use?"
-  // `.invalid` is reserved never to resolve (RFC 6761), so it stands for a mistyped name.
-  it.each(['[::1', 'not a host', '127.0.0.1:4300', '::1]', 'fe80::1%lo', 'nonexistent.invalid'])(
+  it.each(['[::1', 'not a host', '127.0.0.1:4300', '::1]', 'fe80::1%lo', 'example.com'])(
     'refuses --host %j by name, with the usage, and says nothing about a port',
     (value) => {
       const result = failing(['--host', value]);

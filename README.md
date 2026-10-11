@@ -62,7 +62,7 @@ The examples below use `bun run packages/cli/src/cli.ts`; read that as `akapen` 
 
 | Option | Meaning |
 |---|---|
-| `--host <addr>` | listen address: an IP address or a host name that resolves (default `127.0.0.1`) |
+| `--host <addr>` | listen address: an IP address or `localhost`; any other name is refused (default `127.0.0.1`) |
 | `-p, --port <n>` | port (default `4300`) |
 | `-A, --advertise <addr\|iface>` | address to print in the URL, or an interface to take one from (`AKAPEN_ADVERTISE` sets it once per host) |
 | `--css <file>` | extra stylesheet, loaded after the defaults so it can override everything |
