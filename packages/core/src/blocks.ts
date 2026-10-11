@@ -328,7 +328,8 @@ function walkList(tokens: Token[], openIdx: number, ctx: Ctx): number {
       (end, b) => (end === undefined || b.endLine > end.endLine ? b : end),
       undefined,
     );
-  last?.flags.push('list-last');
+  // A nested list that ends the outer one has marked this row already.
+  if (last && !last.flags.includes('list-last')) last.flags.push('list-last');
   return closeIdx;
 }
 
