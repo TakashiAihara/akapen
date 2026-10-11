@@ -642,6 +642,23 @@ body.rail-overlay .marker { display: inline-flex; align-items: center; justify-c
 .hljs-emphasis { font-style: italic; }
 .hljs-strong { font-weight: 700; }
 .row.code-first .code-line { border-top: 1px solid var(--ak-border); border-radius: 6px 6px 0 0; padding-top: 6px; }
+/* Over the fence line, so it takes no height and the rail's alignment is untouched (#168) */
+.row.code-first { position: relative; }
+.copy-code {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  padding: 0 6px;
+  font: inherit;
+  font-size: 0.75rem;
+  color: var(--ak-fg-muted);
+  background: var(--ak-bg);
+  border: 1px solid var(--ak-border);
+  border-radius: 4px;
+  cursor: pointer;
+  opacity: 0;
+}
+.row.code-first:hover .copy-code, .copy-code:focus-visible { opacity: 1; }
 .row.code-last .code-line { border-bottom: 1px solid var(--ak-border); border-radius: 0 0 6px 6px; padding-bottom: 6px; }
 
 .split-table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 0.93rem; }

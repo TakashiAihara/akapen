@@ -392,6 +392,7 @@ function renderDoc() {
     });
     gutter.append(add);
     row.append(gutter, el('div', 'body', block.html));
+    if (block.flags.includes('code-first')) row.append(copyButton(row));
 
     gutter.addEventListener('mousedown', (e) => {
       if (targetEl(e)?.classList.contains('marker')) return;
@@ -422,6 +423,56 @@ function renderDoc() {
 
     docEl.append(row);
   }
+}
+
+/**
+ * Copy a fenced block without its fences (#168).
+ *
+ * A block is one row per source line, with nothing wrapping it, so a drag picks up the
+ * fence lines too. The text comes from the rendered code lines rather than the source,
+ * which inside a list or a quote carries the indent and the `>`.
+ */
+function copyButton(first: HTMLElement): HTMLElement {
+  const btn = el('button', 'copy-code', 'copy');
+  btn.title = 'copy the code without its fences';
+  btn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const lines: string[] = [];
+    for (let row = first.nextElementSibling; row?.classList.contains('code'); row = row.nextElementSibling) {
+      if (row.classList.contains('code-last') || row.classList.contains('code-first')) break;
+      // An empty line is drawn as a non-breaking space so the row keeps its height.
+      lines.push((row.querySelector('.code-line')?.textContent ?? '').replace(/^\xa0$/, ''));
+    }
+    const ok = await copyText(lines.join('\n'));
+    btn.textContent = ok ? 'copied' : 'copy failed';
+    setTimeout(() => (btn.textContent = 'copy'), 1500);
+  });
+  return btn;
+}
+
+/**
+ * The clipboard API exists only in a secure context, and akapen is usually read over
+ * plain http from another machine, so the old command is the path that normally runs.
+ */
+async function copyText(text: string): Promise<boolean> {
+  if (window.isSecureContext && navigator.clipboard) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      /* Denied; the command below may still be allowed. */
+    }
+  }
+  const area = document.createElement('textarea');
+  area.value = text;
+  area.setAttribute('readonly', '');
+  area.style.position = 'fixed';
+  area.style.opacity = '0';
+  document.body.append(area);
+  area.select();
+  const ok = document.execCommand('copy');
+  area.remove();
+  return ok;
 }
 
 /** Repaint only the per-row marks for comments. The document DOM is not rebuilt. */
