@@ -235,17 +235,17 @@ describe('akapen list --session', () => {
     const filtered = list(home, ['--session', short ?? '']);
     expect(filtered.status).toBe(0);
     expect(filtered.stdout).toContain(short);
-    expect(filtered.stdout).not.toContain('none running');
+    expect(filtered.stdout).not.toContain('did not answer');
   }, 30_000);
 
-  it('says nothing was started by a value no session matches, not that it has none running', async () => {
+  it('says nothing running was started by a value no session matches, not that a session has none', async () => {
     const { home } = await start([], { CLAUDE_CODE_SESSION_ID: SESSION });
     const result = list(home, ['--session', '0a1b2c3d']);
     expect(result.status).toBe(0);
-    expect(result.stdout.trim()).toBe('no akapen here was started by a session matching "0a1b2c3d"');
+    expect(result.stdout.trim()).toBe('no akapen running here was started by a session matching "0a1b2c3d"');
   }, 30_000);
 
-  it('says "none running" for a session the registry knows whose instance does not answer', () => {
+  it('says the akapen did not answer, for a session the registry knows whose instance is silent', () => {
     const home = mkdtempSync(join(tmpdir(), 'akapen-list-'));
     sandboxes.push(home);
     mkdirSync(join(home, 'instances'), { recursive: true });
@@ -262,6 +262,6 @@ describe('akapen list --session', () => {
 
     const result = list(home, ['--session', SESSION.slice(0, 8)]);
     expect(result.status).toBe(0);
-    expect(result.stdout.trim()).toBe('that session has none running');
+    expect(result.stdout.trim()).toBe("that session's akapen did not answer");
   }, 30_000);
 });

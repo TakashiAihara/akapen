@@ -1339,8 +1339,10 @@ describe('the session that started an instance', () => {
 
       // A value no session matches is not answered as a session with nothing open
       // (#157). That message is for a session the registry knows.
-      expect(run(['--session', 'nobody-started-this']).stdout.trim()).toBe(
-        'no akapen here was started by a session matching "nobody-started-this"',
+      const unknown = run(['--session', 'nobody-started-this']);
+      expect(unknown.status).toBe(0);
+      expect(unknown.stdout.trim()).toBe(
+        'no akapen running here was started by a session matching "nobody-started-this"',
       );
     } finally {
       mine.stop();

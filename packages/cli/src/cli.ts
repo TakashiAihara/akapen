@@ -100,6 +100,8 @@ if (positional[0] === 'token') {
 }
 
 if (positional[0] === 'list') {
+  // Before the probes, so the ids resolved against are the ones that were probed.
+  const entries = liveEntries();
   // `currentToken`, not `resolveToken`: listing is a read, and a read that generates and
   // stores a secret as a side effect is a surprise. An instance running on a token this
   // caller does not have simply does not answer, and reads as not running.
@@ -111,7 +113,6 @@ if (positional[0] === 'list') {
    * where liveness is decided and `sessions/` is a reverse index for a reader that
    * cannot afford to ask. Two answers to "is it running" is one too many.
    */
-  const entries = liveEntries();
   // Undefined: no filter. Null: a value no session in the registry matches.
   let session: string | null | undefined;
   try {
@@ -163,15 +164,16 @@ if (positional[0] === 'list') {
     process.exit(0);
   }
   if (live.length === 0) {
-    // "None running" only for a session the registry knows, whose instances did not
-    // answer. Said of a value nothing matches, it is a claim about a session that may
-    // not exist (#157).
+    // Each sentence says only what was observed (#157). A value nothing matches may be a
+    // typo or a session that has closed everything, so it is not called a session. A
+    // match with nothing live is a registered instance that did not answer — busy, or on
+    // another token — so it is not called "none running" either.
     console.log(
       args.session === undefined
         ? 'no akapen is running'
         : session === null
-          ? `no akapen here was started by a session matching ${JSON.stringify(args.session)}`
-          : 'that session has none running',
+          ? `no akapen running here was started by a session matching ${JSON.stringify(args.session)}`
+          : "that session's akapen did not answer",
     );
     process.exit(0);
   }
