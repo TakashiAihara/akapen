@@ -141,6 +141,69 @@ describe('attribute values', () => {
   });
 });
 
+/**
+ * Lines no token covers take depth and quoted from the quote or list item they sit in
+ * (#203), the way every other line there does.
+ */
+function gaps(text: string): [number, number, boolean][] {
+  return buildDoc('/x.md', text)
+    .blocks.filter((b) => b.flags.includes('gap'))
+    .map((b) => [b.startLine, b.depth, b.quoted]);
+}
+
+describe('gap lines', () => {
+  it('sit at the depth of the list item they are in', () => {
+    expect(gaps('- a\n\n  [x]: http://y\n')).toEqual([[3, 1, false]]);
+    expect(gaps('- a\n  - b\n\n    [x]: http://y\n')).toEqual([[4, 2, false]]);
+  });
+
+  it('sit at the depth of their siblings when the line is a list marker with nothing after it', () => {
+    // The marker line is the item's own line, so it is at the item's depth, not inside it.
+    expect(gaps('- a\n-\n- c\n')).toEqual([[2, 0, false]]);
+    expect(gaps('- [x]: http://y\n- b\n')).toEqual([[1, 0, false]]);
+    expect(gaps('- a\n  - b\n  -\n')).toEqual([[3, 1, false]]);
+  });
+
+  it('are quoted when the quote opens after a list marker, which a leading > does not show', () => {
+    // The one change the page draws: the line gains the quote bar.
+    expect(gaps('- >\n')).toEqual([[1, 1, true]]);
+  });
+
+  it('take the innermost of items opened on the same line', () => {
+    // `- -` opens two items; the line and what follows belong to the inner one.
+    expect(gaps('- - a\n\n    [x]: http://y\n')).toEqual([[3, 2, false]]);
+    expect(gaps('- - a\n- -\n')).toEqual([[2, 1, false]]);
+  });
+
+  it('are quoted inside a quote opened on the list marker line', () => {
+    // The quote starts before the item's own container does, and is still inside it.
+    expect(gaps('- > a\n  >\n  > b\n')).toEqual([[2, 1, true]]);
+  });
+
+  it('are quoted inside a quote in a list, at the depth of the quote', () => {
+    expect(gaps('- a\n\n  > q\n  >\n  > r\n')).toEqual([[4, 1, true]]);
+  });
+
+  it('are quoted inside a list inside a quote, at the depth of the list item', () => {
+    expect(gaps('> - a\n>\n>   [x]: http://y\n')).toEqual([
+      [2, 1, true],
+      [3, 1, true],
+    ]);
+  });
+
+  it('stay at the top level, unquoted, outside every container', () => {
+    expect(gaps('[x]: http://y\n')).toEqual([[1, 0, false]]);
+    expect(gaps('> a\n>\n> b\n')).toEqual([[2, 0, true]]);
+  });
+
+  it('agree with the sibling items beside an empty marker', () => {
+    const d = buildDoc('/x.md', '> - a\n> -\n> - c\n');
+    const gap = d.blocks.find((b) => b.flags.includes('gap'))!;
+    const c = d.blocks.find((b) => b.text.includes('- c'))!;
+    expect([gap.depth, gap.quoted]).toEqual([c.depth, c.quoted]);
+  });
+});
+
 describe('quoted', () => {
   it('stays set after a nested quote closes inside the outer one', () => {
     const d = buildDoc('/x.md', '> > inner\n>\n> # Outer\n\nAfter\n');
