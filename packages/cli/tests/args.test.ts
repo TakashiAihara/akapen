@@ -11,7 +11,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { parseArgs, resolvePort, UsageError } from '../src/args.ts';
+import { parseArgs, resolveHost, resolvePort, UsageError } from '../src/args.ts';
 
 describe('positional arguments', () => {
   it('collects the subcommand and the file', () => {
@@ -152,4 +152,20 @@ describe('the binary', () => {
       rmSync(sandbox, { recursive: true, force: true });
     }
   }, 30_000);
+});
+
+describe('resolveHost', () => {
+  it('defaults to loopback', () => {
+    expect(resolveHost(undefined)).toBe('127.0.0.1');
+  });
+
+  it('passes an address or localhost through as typed', () => {
+    for (const host of ['0.0.0.0', '::', '[::]', '127.0.0.1', '::1', '[::1]', 'localhost', '192.168.0.10'])
+      expect(resolveHost(host)).toBe(host);
+  });
+
+  it('refuses a name, a half-bracketed address, and an address with a port', () => {
+    for (const host of ['[::1', '::1]', 'not a host', 'example.com', '127.0.0.1:4300', '[127.0.0.1]', ''])
+      expect(() => resolveHost(host)).toThrow(UsageError);
+  });
 });

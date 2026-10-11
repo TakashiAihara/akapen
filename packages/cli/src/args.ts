@@ -10,6 +10,8 @@
  * a TypeError somewhere else or a server listening on `true`.
  */
 
+import { isIP } from 'node:net';
+
 /** Thrown for anything the caller typed wrong. cli.ts prints it with the usage text. */
 export class UsageError extends Error {}
 
@@ -133,6 +135,25 @@ export function parseArgs(argv: string[]): Args {
   }
 
   return args;
+}
+
+/**
+ * `--host`, checked before the socket is opened (#132).
+ *
+ * An IP address in either IPv6 spelling, or `localhost`. Any other name is refused: the
+ * server answers no `Host` but its addresses and `localhost` (`allowedHostnames`), so
+ * binding to a name would start a server that refuses every request it was started for.
+ * Without this, a value Bun cannot bind surfaced as a stack trace, or as "Is port 0 in
+ * use?", which sends the reader after a port that cannot be the problem.
+ *
+ * Only the shape is checked. An address this machine does not have still fails inside
+ * Bun.serve, with EADDRNOTAVAIL, which at least names the right problem.
+ */
+export function resolveHost(raw: string | undefined): string {
+  if (raw === undefined) return '127.0.0.1';
+  const bare = /^\[(.*)\]$/.exec(raw)?.[1] ?? raw;
+  if (raw === 'localhost' || isIP(raw) !== 0 || (bare !== raw && isIP(bare) === 6)) return raw;
+  throw new UsageError(`--host must be an IP address or localhost, got ${JSON.stringify(raw)}`);
 }
 
 /**

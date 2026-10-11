@@ -214,4 +214,29 @@ describe('--advertise', () => {
     const { lines } = await start([], { AKAPEN_ADVERTISE: '' });
     expect(urlsIn(lines)[0]).toContain('//127.0.0.1:');
   }, 30_000);
+
+  // #132: these reached Bun.serve, and came back as a stack trace or as "Is port 0 in use?"
+  it.each(['[::1', 'not a host', 'example.com', '127.0.0.1:4300', '::1]'])(
+    'refuses --host %j by name, with the usage, and says nothing about a port',
+    (value) => {
+      const result = failing(['--host', value]);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain(
+        `--host must be an IP address or localhost, got ${JSON.stringify(value)}`,
+      );
+      expect(result.stderr).toContain('akapen <file.md> [options]');
+      expect(result.stderr).not.toMatch(/Is port|EADDRINUSE|at startServer/);
+    },
+    30_000,
+  );
+
+  // The other direction: a check that refused everything would pass the one above.
+  it.each(['0.0.0.0', '::', '[::]', '127.0.0.1', '::1', '[::1]', 'localhost'])(
+    'still starts on --host %s',
+    async (value) => {
+      const { lines } = await start(['--host', value, '--no-auth']);
+      expect(urlsIn(lines).length).toBeGreaterThan(0);
+    },
+    30_000,
+  );
 });
