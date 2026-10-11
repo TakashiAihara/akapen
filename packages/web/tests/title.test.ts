@@ -8,7 +8,7 @@
  */
 import { buildDoc } from '@akapen/core/blocks';
 import { describe, expect, it } from 'vitest';
-import { documentTitle } from '@akapen/shared/title';
+import { documentTitle, isDocumentHeading } from '@akapen/shared/title';
 import { pageTitle } from '../src/title.ts';
 
 const doc = (source: string, path = '/home/x/notes/20-auth.md') => buildDoc(path, source);
@@ -118,5 +118,22 @@ describe('documentTitle', () => {
 
   it('is empty when the only top-level heading is in a list', () => {
     expect(documentTitle(doc('- # Listed\n\nA paragraph.\n'))).toBe('');
+  });
+});
+
+describe('isDocumentHeading', () => {
+  // A bare `>` is a line no token covers, so it is filled in as a gap line.
+  const blocks = buildDoc('/home/x/n.md', '---\nstatus: draft\n---\n\n>\n\n# Real\n\n> # Quoted\n').blocks;
+
+  it('answers false for frontmatter and gap lines, which always carry depth 0 (#202)', () => {
+    const others = blocks.filter((b) => b.kind !== 'heading');
+    // Both kinds of block are there, so the answer below is about them and not an empty list.
+    expect(others.some((b) => b.kind === 'frontmatter')).toBe(true);
+    expect(others.some((b) => b.flags.includes('gap'))).toBe(true);
+    expect(others.filter(isDocumentHeading)).toEqual([]);
+  });
+
+  it('answers true for a top-level heading and false for a quoted one', () => {
+    expect(blocks.filter(isDocumentHeading).map((b) => b.startLine)).toEqual([7]);
   });
 });
