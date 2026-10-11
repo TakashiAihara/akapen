@@ -976,6 +976,18 @@ describe('the other instances on this host', () => {
     expect(JSON.stringify(after)).not.toContain(sandbox);
   });
 
+  it('lists the others without deleting entries it cannot read (#184)', async () => {
+    // A server outlives an upgrade, and the page asks this on every focus. What a newer
+    // binary registers in a shape this one does not know has to survive the asking.
+    mkdirSync(instancesDir(), { recursive: true });
+    // Named after a live process (this test's parent), so it is not a crash's leftover.
+    const foreign = join(instancesDir(), `${process.ppid}.json`);
+    writeFileSync(foreign, '{"shape":"from a later version"}');
+
+    expect((await fetch(`${base}/api/instances`)).ok).toBe(true);
+    expect(existsSync(foreign)).toBe(true);
+  });
+
   /** What a document is called, where `akapen list` can reach it (#169). */
   const titleOf = async (url: string) =>
     v.parse(StatusPayloadSchema, await (await fetch(`${url}/api/status`)).json()).title;
@@ -1337,7 +1349,13 @@ describe('the session that started an instance', () => {
       const all = JSON.parse(run(['--json']).stdout) as { pid: number }[];
       expect(all.map((e) => e.pid)).toEqual(expect.arrayContaining([mine.pid, theirs.pid]));
 
-      expect(run(['--session', 'nobody-started-this']).stdout.trim()).toBe('that session has none running');
+      // A value no session matches is not answered as a session with nothing open
+      // (#157). That message is for a session the registry knows.
+      const unknown = run(['--session', 'nobody-started-this']);
+      expect(unknown.status).toBe(0);
+      expect(unknown.stdout.trim()).toBe(
+        'no akapen running here was started by a session matching "nobody-started-this"',
+      );
     } finally {
       mine.stop();
       theirs.stop();
