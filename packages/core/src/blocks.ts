@@ -446,14 +446,18 @@ export function buildDoc(path: string, source: string): Doc {
   // is not on the screen.
   const covered = new Set<number>();
   for (const b of out) for (let ln = b.startLine; ln <= b.endLine; ln++) covered.add(ln);
+  // The innermost container holding a line is the last one recorded that holds it: the
+  // walk records a container before what is inside it. Not the one that starts last — a
+  // list item's starts after its marker line, so a quote opened on that line starts
+  // first and is still inside it. Filled once in recorded order rather than searched per
+  // line, which on a note of many empty items was quadratic. Outside every container:
+  // top level, unquoted.
+  const innermost: (Container | undefined)[] = [];
+  for (const c of ctx.containers) for (let ln = c.start; ln <= c.end; ln++) innermost[ln] = c;
   for (let ln = 1; ln <= lines.length; ln++) {
     const raw = lines[ln - 1]!;
     if (!raw.trim() || covered.has(ln)) continue;
-    // The innermost container holding the line is the last one recorded that holds it:
-    // the walk records a container before what is inside it. Not the one that starts
-    // last — a list item's starts after its marker line, so a quote opened on that line
-    // starts first and is still inside it. Outside every container: top level, unquoted.
-    const inside = ctx.containers.findLast((c) => c.start <= ln && ln <= c.end);
+    const inside = innermost[ln];
     const stripped = raw.replace(/^\s*>+\s?/, '');
     out.push({
       startLine: ln,
