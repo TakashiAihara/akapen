@@ -242,6 +242,38 @@ function listen(url: string) {
   return { seen, stop: async () => (ctrl.abort(), done) };
 }
 
+// #71: Bun drops a connection idle for 10 seconds. Without a heartbeat a quiet stream was
+// closed after about 12, and a screen saw it reopen over and over.
+describe('the event stream', () => {
+  it('stays open past the idle timeout, kept warm by comment frames', async () => {
+    const res = await fetch(`${base}/events`);
+    const reader = res.body!.getReader();
+    const dec = new TextDecoder();
+    let text = '';
+    let closed = false;
+    const deadline = Date.now() + 14_000;
+    try {
+      while (Date.now() < deadline) {
+        const chunk = await Promise.race([
+          reader.read(),
+          new Promise<null>((r) => setTimeout(() => r(null), deadline - Date.now())),
+        ]);
+        if (chunk === null) break;
+        if (chunk.done) {
+          closed = true;
+          break;
+        }
+        text += dec.decode(chunk.value, { stream: true });
+      }
+    } finally {
+      await reader.cancel();
+    }
+    expect(closed).toBe(false);
+    // Two at least in 14 seconds, and as comments, which EventSource does not deliver as messages.
+    expect(text.split(': ping\n\n').length - 1).toBeGreaterThanOrEqual(2);
+  }, 30_000);
+});
+
 describe('the document', () => {
   it('answers with a payload that satisfies the contract', async () => {
     const res = await fetch(`${base}/api/doc`);

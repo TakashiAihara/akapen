@@ -88,6 +88,9 @@ function isLoopback(host: string): boolean {
 /** The cookie the browser is handed once, so nothing after the first visit carries a token. */
 const COOKIE = 'akapen_token';
 
+/** Under Bun's 10-second idle timeout, with room for a slow tick. */
+const HEARTBEAT_MS = 5_000;
+
 /** Methods that only read. A cross-origin one of these cannot be read back without CORS. */
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
@@ -181,7 +184,8 @@ export function startServer(opts: ServeOptions) {
   let comments: Comment[] = loadComments(file, review.currentRound);
   let changes = 0;
 
-  const clients = new Set<(data: string) => void>();
+  /** Each open stream, written to with a whole SSE frame. */
+  const clients = new Set<(frame: string) => void>();
   /**
    * SSE is a notification channel, not a rendering channel. All it carries is
    * "the document changed". Pushing a doc payload makes the receiver rebuild the
@@ -193,9 +197,19 @@ export function startServer(opts: ServeOptions) {
   const notifyChanged = () => notify(changedEvent());
 
   const notify = (payload: unknown) => {
-    const data = JSON.stringify(payload);
-    for (const send of clients) send(data);
+    const frame = `data: ${JSON.stringify(payload)}\n\n`;
+    for (const send of clients) send(frame);
   };
+
+  /**
+   * A comment frame on every stream, every few seconds (#71). Bun closes a connection
+   * idle for 10 seconds, so without it a quiet stream was dropped and reopened about
+   * every 12 seconds; and a client that went away without a clean close stayed in
+   * `clients` until a write failed, which with nothing to write could be never.
+   */
+  const heartbeat = setInterval(() => {
+    for (const send of clients) send(': ping\n\n');
+  }, HEARTBEAT_MS);
 
   const readLive = (): string | null => {
     try {
@@ -702,9 +716,9 @@ export function startServer(opts: ServeOptions) {
     const stream = new ReadableStream({
       start(controller) {
         const enc = new TextEncoder();
-        send = (data: string) => {
+        send = (frame: string) => {
           try {
-            controller.enqueue(enc.encode(`data: ${data}\n\n`));
+            controller.enqueue(enc.encode(frame));
           } catch {
             clients.delete(send);
           }
@@ -712,7 +726,7 @@ export function startServer(opts: ServeOptions) {
         clients.add(send);
         // The first render comes from /api/doc on load. Sending a doc here would
         // rebuild the screen on every reconnect.
-        send(JSON.stringify(changedEvent()));
+        send(`data: ${JSON.stringify(changedEvent())}\n\n`);
       },
       cancel() {
         clients.delete(send);
@@ -835,6 +849,8 @@ export function startServer(opts: ServeOptions) {
   const stop = async () => {
     if (timer) clearTimeout(timer);
     timer = null;
+    // Held open otherwise, as the watcher would be.
+    clearInterval(heartbeat);
     watcher.close();
     // Before the socket closes: an entry left pointing at a port nobody is listening on
     // is what every reader then has to spend a timeout discovering.
