@@ -94,6 +94,12 @@ function isLoopback(host: string): boolean {
 /** The cookie the browser is handed once, so nothing after the first visit carries a token. */
 const COOKIE = 'akapen_token';
 
+/** Under the 10-second idle timeout set on the server, so even a tick late by one interval lands in time. */
+const HEARTBEAT_MS = 3_000;
+
+/** Bun's default, said here because the heartbeat is sized against it. */
+const IDLE_TIMEOUT_S = 10;
+
 /** Methods that only read. A cross-origin one of these cannot be read back without CORS. */
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
@@ -187,7 +193,8 @@ export function startServer(opts: ServeOptions) {
   let comments: Comment[] = loadComments(file, review.currentRound);
   let changes = 0;
 
-  const clients = new Set<(data: string) => void>();
+  /** Each open stream, written to with a whole SSE frame. */
+  const clients = new Set<(frame: string) => void>();
   /**
    * SSE is a notification channel, not a rendering channel. All it carries is
    * "the document changed". Pushing a doc payload makes the receiver rebuild the
@@ -199,9 +206,20 @@ export function startServer(opts: ServeOptions) {
   const notifyChanged = () => notify(changedEvent());
 
   const notify = (payload: unknown) => {
-    const data = JSON.stringify(payload);
-    for (const send of clients) send(data);
+    const frame = `data: ${JSON.stringify(payload)}\n\n`;
+    for (const send of clients) send(frame);
   };
+
+  /**
+   * A comment frame on every stream, every few seconds (#71). The server closes a
+   * connection idle for IDLE_TIMEOUT_S, so without it a quiet stream was dropped and
+   * reopened about every 12 seconds. A client that went away is still dropped: on a clean
+   * close through `cancel`, otherwise when a write fails, which for a peer gone without a
+   * word waits on TCP giving up rather than on the idle timeout.
+   */
+  const heartbeat = setInterval(() => {
+    for (const send of clients) send(': ping\n\n');
+  }, HEARTBEAT_MS);
 
   const readLive = (): string | null => {
     try {
@@ -704,13 +722,21 @@ export function startServer(opts: ServeOptions) {
   });
 
   app.get('/events', () => {
-    let send!: (data: string) => void;
+    let send!: (frame: string) => void;
     const stream = new ReadableStream({
       start(controller) {
         const enc = new TextEncoder();
-        send = (data: string) => {
+        // Let in under this token. A rotation revokes it, and with the heartbeat keeping
+        // the stream open nothing else would, so the next frame closes the stream instead.
+        const openedUnder = currentSecret();
+        send = (frame: string) => {
           try {
-            controller.enqueue(enc.encode(`data: ${data}\n\n`));
+            if (currentSecret() !== openedUnder) {
+              clients.delete(send);
+              controller.close();
+              return;
+            }
+            controller.enqueue(enc.encode(frame));
           } catch {
             clients.delete(send);
           }
@@ -718,7 +744,7 @@ export function startServer(opts: ServeOptions) {
         clients.add(send);
         // The first render comes from /api/doc on load. Sending a doc here would
         // rebuild the screen on every reconnect.
-        send(JSON.stringify(changedEvent()));
+        send(`data: ${JSON.stringify(changedEvent())}\n\n`);
       },
       cancel() {
         clients.delete(send);
@@ -802,7 +828,8 @@ export function startServer(opts: ServeOptions) {
 
   // One process, as before. Hono only replaces the routing inside the same fetch
   // handler; there is no second server and nothing to proxy.
-  const serve = (port: number) => Bun.serve({ hostname: opts.host, port, fetch: app.fetch });
+  const serve = (port: number) =>
+    Bun.serve({ hostname: opts.host, port, idleTimeout: IDLE_TIMEOUT_S, fetch: app.fetch });
   let server: ReturnType<typeof serve>;
   let movedFrom: number | null = null;
   try {
@@ -846,6 +873,8 @@ export function startServer(opts: ServeOptions) {
   const stop = async () => {
     if (timer) clearTimeout(timer);
     timer = null;
+    // Held open otherwise, as the watcher would be.
+    clearInterval(heartbeat);
     watcher.close();
     // Before the socket closes: an entry left pointing at a port nobody is listening on
     // is what every reader then has to spend a timeout discovering.
