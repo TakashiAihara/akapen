@@ -106,6 +106,10 @@ describe('buildOutline', () => {
       'h5 5(9)',
       'h6 6(11)',
     ]);
+    // And nested all the way down, which the rows above cannot show.
+    expect(tree('# 1\n\n## 2\n\n### 3\n\n#### 4\n\n##### 5\n\n###### 6\n', 6)).toBe(
+      ['1', '  2', '    3', '      4', '        5', '          6'].join('\n'),
+    );
   });
 
   it('keeps two headings that read the same apart, because a row points at a line', () => {
