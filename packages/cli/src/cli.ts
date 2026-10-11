@@ -7,7 +7,7 @@ import { AdvertiseError, localAddresses, resolveAdvertised, urlsFor } from '@aka
 
 import { isInside } from '@akapen/core/files';
 import { loadReview, pendingComments } from '@akapen/core/store';
-import { liveInstances } from '@akapen/core/instances';
+import { liveInstances, readInstances } from '@akapen/core/instances';
 import { liveEntries, sweep as sweepSessions } from '@akapen/core/sessions';
 import { currentToken, resolveToken, rotateToken, secureHome, tokenIsPinned } from '@akapen/core/token';
 import { parseArgs, resolveHost, resolvePort, resolveSession, UsageError, type Args } from './args.ts';
@@ -105,7 +105,7 @@ if (positional[0] === 'list') {
   const entries = liveEntries();
   // `currentToken`, not `resolveToken`: listing is a read, and a read that generates and
   // stores a secret as a side effect is a surprise. An instance running on a token this
-  // caller does not have simply does not answer, and reads as not running.
+  // caller does not have simply does not answer, and is reported as not answering.
   const all = await liveInstances({ token: currentToken() });
   /**
    * Only what one session started.
@@ -173,7 +173,10 @@ if (positional[0] === 'list') {
     // another token — so it is not called "none running" either.
     console.log(
       args.session === undefined
-        ? 'no akapen is running'
+        ? // An entry whose process is alive but did not answer is not "nothing running" (#221).
+          readInstances().length === 0
+          ? 'no akapen is running'
+          : 'no akapen answered: those registered are busy or started with another token'
         : session === null
           ? `no akapen running here was started by a session matching ${JSON.stringify(args.session)}`
           : "that session's akapen did not answer",

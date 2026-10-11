@@ -293,5 +293,12 @@ describe('akapen list --session', () => {
     const result = list(home, ['--session', SESSION.slice(0, 8)]);
     expect(result.status).toBe(0);
     expect(result.stdout.trim()).toBe("that session's akapen did not answer");
+
+    // Unfiltered, the same registry is not "nothing running" either (#221).
+    const all = list(home, []);
+    expect(all.status).toBe(0);
+    expect(all.stdout.trim()).toBe(
+      'no akapen answered: those registered are busy or started with another token',
+    );
   }, 30_000);
 });
