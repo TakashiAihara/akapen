@@ -229,5 +229,6 @@ describe('a table inside a quote', () => {
       [header + 1, 'table-row', ['table-separator']],
       [header + 2, 'table-row', []],
     ]);
+    expect(rows.every((b) => b.quoted)).toBe(true);
   });
 });

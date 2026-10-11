@@ -267,8 +267,8 @@ function walkTable(tokens: Token[], openIdx: number, ctx: Ctx): number {
       // The separator row (|---|---|) produces no token, so add it explicitly after the header
       if (isHeader) {
         // markdown-it makes a table only when the delimiter row follows the header, so the
-        // next line is it. Not read back from the source: its quote markers and list indent
-        // made a pattern miss it, and it was filled in as a gap line (#222).
+        // next line is it. Not read back from the source: its quote markers (`>`, and nested
+        // ones spaced apart) made a pattern miss it, and it was filled in as a gap line (#222).
         push(ctx, {
           startLine: e + 1,
           endLine: e + 1,
