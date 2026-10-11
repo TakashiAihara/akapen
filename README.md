@@ -215,6 +215,8 @@ Current-round comments come first, ordered by line. Entries with `current_round:
 
 `replies` is the thread on that comment, oldest first, one level deep — a reply cannot be replied to. An agent's own replies are noise to it, but a person's answer to one is not: "could not fix, because X" met with "then do Y instead" makes Y new feedback, and it only arrives if the thread comes with the comment. `author_kind` says which side wrote it, and `session_id` which Claude Code session. An agent replies with `POST /api/comments/<id>/replies`, the body `{"body": "..."}`, and the headers `Authorization: Bearer $(akapen token)` and `X-Akapen-Session: ${CLAUDE_CODE_SESSION_ID:?}`. The server files a reply carrying the second header as `agent` and keeps the id; one without it is `human`, printed here with `session_id: null`. Write `:?` rather than a bare `$`: curl leaves out a header whose value is empty, so an unset variable would file the reply as a person's without a word. Replies written before this existed are all `human`, whoever wrote them. The header is a claim made by whoever holds the token, not an identity.
 
+An agent resolves with `POST /api/comments/<id>/resolve` and the `Authorization` header. The call flips the state, so a second one reopens the comment; check `resolved` in the response. Which comments an agent should resolve is the caller's policy; the channel's instructions say: ones it changed the document for or did what they asked, or when the person says so, and not a reply that only answers a question.
+
 There is an example stylesheet in `examples/dense.css`.
 
 ```bash
