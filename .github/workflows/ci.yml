@@ -64,6 +64,7 @@ jobs:
         with:
           bun-version-file: .tool-versions
       - run: bun install --frozen-lockfile
+      # No build:web here either: Playwright's global setup builds it (tests/build-web.ts).
 
       # The browsers live outside node_modules, under ~/.cache/ms-playwright, and which
       # build they are is decided by the playwright version alone. Keying on that version
