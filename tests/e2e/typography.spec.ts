@@ -83,6 +83,27 @@ test('leaves the same space on the way out of a list as on the way in (#92)', as
   expect(between).toBeLessThan(into - 3);
 });
 
+test('leaves a paragraph after a code block or a table the space it leaves after a paragraph (#227)', async ({
+  page,
+  akapen,
+  request,
+}) => {
+  const [paraToPara] = (await gapsOf(page, 'One.\n\nTwo.\n', akapen, request)) as [number];
+  const code = await gapsOf(page, '```sh\nmake\n```\n\nAfter.\n', akapen, request);
+  // fence → code, code → fence, fence → After
+  expect(code).toHaveLength(3);
+  expect(code[2]).toBeCloseTo(paraToPara, 0);
+  const table = await gapsOf(page, '| a | b |\n|---|---|\n| 1 | 2 |\n\nAfter.\n', akapen, request);
+  // Header → hidden separator → body row → After. Through the separator the two first
+  // gaps add up to the header-to-body gap, which stays as tight as a code block's lines.
+  expect(table).toHaveLength(3);
+  expect(table[2]).toBeCloseTo(paraToPara, 0);
+  expect(table[0]! + table[1]!).toBeCloseTo(code[0]!, 0);
+  // Nor before the next item of a list the block sits in: items stay tight.
+  const inList = await gapsOf(page, '- item\n\n  ```sh\n  make\n  ```\n- next\n', akapen, request);
+  expect(inList.at(-1)).toBeLessThan(paraToPara - 3);
+});
+
 test('spaces the way out of a list that ends in a code block, and not the way into it', async ({
   page,
   akapen,
