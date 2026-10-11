@@ -65,8 +65,10 @@ export async function startPeer(
   home: string,
   name: string,
   extra: string[] = [],
+  /** A port to take again, for a test of what happens when one is reused. */
+  reuse?: number,
 ): Promise<{ port: number; stop: () => Promise<void> }> {
-  const port = nextPort++;
+  const port = reuse ?? nextPort++;
   const sandbox = mkdtempSync(join(tmpdir(), 'akapen-e2e-peer-'));
   const file = join(sandbox, name);
   writeFileSync(file, readFileSync(FIXTURE_MD, 'utf8'));

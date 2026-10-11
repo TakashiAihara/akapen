@@ -51,6 +51,9 @@ const nextRoundBtn = must<HTMLButtonElement>('nextRound');
 const movedBarEl = must('movedBar');
 const movedTextEl = must('movedText');
 const loadCurrentBtn = must<HTMLButtonElement>('loadCurrent');
+const otherDocBarEl = must('otherDocBar');
+const otherDocTextEl = must('otherDocText');
+must<HTMLButtonElement>('reloadPage').addEventListener('click', () => location.reload());
 const showLines = must<HTMLInputElement>('showLines');
 const topbarEl = must('topbar');
 const themeToggleEl = must<HTMLButtonElement>('themeToggle');
@@ -1520,6 +1523,35 @@ sse.addEventListener('message', (e) => {
     return;
   }
   if (!state.history) renderBanner(parsed.output);
+});
+
+/**
+ * Notice when the server behind this tab is now another akapen (#177).
+ *
+ * Ports are handed out lowest-free first, so when an instance stops, the next one to
+ * start often takes its port. The stream reconnects to it without complaint and the tab
+ * keeps drawing the old document, with nothing saying it is not what that port serves.
+ * So after a reconnect the document's path is asked again, and a different one is said.
+ * Not swapped in: the old document may still be under review in this tab.
+ */
+let reconnecting = false;
+sse.addEventListener('error', () => {
+  reconnecting = true;
+});
+sse.addEventListener('open', async () => {
+  if (!reconnecting) return;
+  reconnecting = false;
+  try {
+    const res = await fetch('/api/doc');
+    if (!res.ok) return;
+    const now = (await decode(res, DocPayloadSchema)).doc.path;
+    if (state.doc && now !== state.doc.path) {
+      otherDocTextEl.textContent = `⟳ this port now serves ${now} — reload to switch to it`;
+      otherDocBarEl.hidden = false;
+    }
+  } catch {
+    /* The next reconnect asks again. */
+  }
 });
 
 boot();
