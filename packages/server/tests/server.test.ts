@@ -251,13 +251,14 @@ describe('the event stream', () => {
     const dec = new TextDecoder();
     let text = '';
     let closed = false;
-    const deadline = Date.now() + 14_000;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const elapsed = new Promise<null>((r) => {
+      timer = setTimeout(() => r(null), 14_000);
+    });
     try {
-      while (Date.now() < deadline) {
-        const chunk = await Promise.race([
-          reader.read(),
-          new Promise<null>((r) => setTimeout(() => r(null), deadline - Date.now())),
-        ]);
+      for (;;) {
+        // An idle close arrives as a rejected read (`terminated`), not as `done`; both count.
+        const chunk = await Promise.race([reader.read().catch(() => ({ done: true as const })), elapsed]);
         if (chunk === null) break;
         if (chunk.done) {
           closed = true;
@@ -266,11 +267,12 @@ describe('the event stream', () => {
         text += dec.decode(chunk.value, { stream: true });
       }
     } finally {
-      await reader.cancel();
+      clearTimeout(timer);
+      await reader.cancel().catch(() => {});
     }
     expect(closed).toBe(false);
-    // Two at least in 14 seconds, and as comments, which EventSource does not deliver as messages.
-    expect(text.split(': ping\n\n').length - 1).toBeGreaterThanOrEqual(2);
+    // Several in 14 seconds, and as comments, which EventSource does not deliver as messages.
+    expect(text.split(': ping\n\n').length - 1).toBeGreaterThanOrEqual(3);
   }, 30_000);
 });
 

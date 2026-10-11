@@ -88,8 +88,11 @@ function isLoopback(host: string): boolean {
 /** The cookie the browser is handed once, so nothing after the first visit carries a token. */
 const COOKIE = 'akapen_token';
 
-/** Under Bun's 10-second idle timeout, with room for a slow tick. */
-const HEARTBEAT_MS = 5_000;
+/** Under the 10-second idle timeout set on the server, so even a tick late by one interval lands in time. */
+const HEARTBEAT_MS = 3_000;
+
+/** Bun's default, said here because the heartbeat is sized against it. */
+const IDLE_TIMEOUT_S = 10;
 
 /** Methods that only read. A cross-origin one of these cannot be read back without CORS. */
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
@@ -202,10 +205,11 @@ export function startServer(opts: ServeOptions) {
   };
 
   /**
-   * A comment frame on every stream, every few seconds (#71). Bun closes a connection
-   * idle for 10 seconds, so without it a quiet stream was dropped and reopened about
-   * every 12 seconds; and a client that went away without a clean close stayed in
-   * `clients` until a write failed, which with nothing to write could be never.
+   * A comment frame on every stream, every few seconds (#71). The server closes a
+   * connection idle for IDLE_TIMEOUT_S, so without it a quiet stream was dropped and
+   * reopened about every 12 seconds. A client that went away is still dropped: on a clean
+   * close through `cancel`, otherwise when a write fails, which for a peer gone without a
+   * word waits on TCP giving up rather than on the idle timeout.
    */
   const heartbeat = setInterval(() => {
     for (const send of clients) send(': ping\n\n');
@@ -712,7 +716,7 @@ export function startServer(opts: ServeOptions) {
   });
 
   app.get('/events', () => {
-    let send!: (data: string) => void;
+    let send!: (frame: string) => void;
     const stream = new ReadableStream({
       start(controller) {
         const enc = new TextEncoder();
@@ -813,6 +817,7 @@ export function startServer(opts: ServeOptions) {
   const server = Bun.serve({
     hostname: opts.host,
     port: opts.port,
+    idleTimeout: IDLE_TIMEOUT_S,
     fetch: app.fetch,
   });
 
