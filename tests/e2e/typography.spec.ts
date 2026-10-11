@@ -67,4 +67,16 @@ test('starts the line number and the + level with a heading, not above it (#91, 
   );
   // Above it by the heading's own top margin before (16px for an h2); now within a few px.
   for (const off of offsets) expect(Math.abs(off)).toBeLessThan(8);
+
+  // The space each one opens: a heading right under another opens less, and the first row none.
+  const above = async () =>
+    page.evaluate(() =>
+      [...document.querySelectorAll('.row.heading .body > *')].map((h) => getComputedStyle(h).marginTop),
+    );
+  expect(await above()).toEqual(['16px', '6px', '10px']);
+  writeFileSync(akapen.file, '## First\n\nPara.\n');
+  expect((await request.post(`${akapen.url}/api/rounds`, { headers: AUTH })).ok()).toBe(true);
+  await page.goto(akapen.url);
+  await expect(page.locator('.row.heading')).toHaveCount(1);
+  expect(await above()).toEqual(['0px']);
 });
