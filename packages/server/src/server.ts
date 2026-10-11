@@ -44,6 +44,12 @@ export type ServeOptions = {
   file: string;
   host: string;
   port: number;
+  /**
+   * Listen on a port the OS picks when `port` is taken, instead of failing (#107). For
+   * the default port only: a port asked for by name that is moved off silently is worse
+   * than one that fails. The result's `movedFrom` says it happened.
+   */
+  fallBackIfTaken?: boolean;
   author: string;
   /**
    * The address `--advertise` pinned, when one was pinned.
@@ -814,12 +820,17 @@ export function startServer(opts: ServeOptions) {
 
   // One process, as before. Hono only replaces the routing inside the same fetch
   // handler; there is no second server and nothing to proxy.
-  const server = Bun.serve({
-    hostname: opts.host,
-    port: opts.port,
-    idleTimeout: IDLE_TIMEOUT_S,
-    fetch: app.fetch,
-  });
+  const serve = (port: number) =>
+    Bun.serve({ hostname: opts.host, port, idleTimeout: IDLE_TIMEOUT_S, fetch: app.fetch });
+  let server: ReturnType<typeof serve>;
+  let movedFrom: number | null = null;
+  try {
+    server = serve(opts.port);
+  } catch (err) {
+    if (!opts.fallBackIfTaken || (err as { code?: unknown }).code !== 'EADDRINUSE') throw err;
+    server = serve(0);
+    movedFrom = opts.port;
+  }
 
   // Announced only once it is listening, and with the port the socket actually got —
   // `-p 0` means the number in opts is 0, which nothing can be reached on.
@@ -864,5 +875,5 @@ export function startServer(opts: ServeOptions) {
     await server.stop(true);
   };
 
-  return { server, stop, storeDir: storeDir(file), round: review.currentRound };
+  return { server, stop, storeDir: storeDir(file), round: review.currentRound, movedFrom };
 }
