@@ -212,3 +212,25 @@ describe('quoted', () => {
     expect(text('After').quoted).toBe(false);
   });
 });
+
+function lastOf(text: string): number[] {
+  return buildDoc('/x.md', text)
+    .blocks.filter((b) => b.flags.includes('list-last'))
+    .map((b) => b.startLine);
+}
+
+describe('list-last', () => {
+  it('marks the last row of a list, whatever kind of block it is', () => {
+    expect(lastOf('- a\n- b\n\nAfter.\n')).toEqual([2]);
+    expect(lastOf('- a\n\n  ```\n  x\n  ```\n\nAfter.\n')).toEqual([5]);
+  });
+
+  it('marks each list, a nested one included, and nothing outside a list', () => {
+    expect(lastOf('- a\n  - b\n- c\n')).toEqual([2, 3]);
+    // The last row of both a nested list and its outer one is marked once.
+    expect(buildDoc('/x.md', '- a\n  - b\n').blocks[1]!.flags.filter((f) => f === 'list-last')).toHaveLength(
+      1,
+    );
+    expect(lastOf('Para.\n\n| a |\n| - |\n| 1 |\n')).toEqual([]);
+  });
+});
