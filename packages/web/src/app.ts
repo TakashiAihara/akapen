@@ -1642,8 +1642,12 @@ let reconnecting = false;
 let foreign = false;
 const realFetch = window.fetch.bind(window);
 // Cast: the declared type also carries Bun's `preconnect`, which a page never calls.
+// The instance list is let through: it neither writes nor swaps the document in, and it
+// is how the reader finds where their own document went.
+const isInstanceList = (input: RequestInfo | URL) =>
+  new URL(input instanceof Request ? input.url : String(input), location.href).pathname === '/api/instances';
 window.fetch = ((input: RequestInfo | URL, init?: RequestInit) =>
-  foreign
+  foreign && !isInstanceList(input)
     ? Promise.reject(new Error('not sent: this port may now serve another document; reload to check'))
     : realFetch(input, init)) as typeof fetch;
 const say = (text: string | null) => {
@@ -1657,6 +1661,7 @@ const checkPath = async (): Promise<void> => {
   clearTimeout(retry);
   const mine = ++checks;
   try {
+    if (!state.doc) return;
     const res = await realFetch('/api/doc');
     if (!res.ok || !state.doc) throw new Error(`answered ${res.status}`);
     const payload = await decode(res, DocPayloadSchema);
@@ -1681,6 +1686,9 @@ const checkPath = async (): Promise<void> => {
 };
 sse.addEventListener('error', () => {
   reconnecting = true;
+  // Nothing on screen yet to keep apart from another document, and the first load must
+  // not be refused by its own guard.
+  if (!state.doc) return;
   foreign = true;
   checks++;
   clearTimeout(retry);
