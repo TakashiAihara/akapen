@@ -144,6 +144,8 @@ describe('--advertise', () => {
     return spawnSync('bun', ['run', CLI, file, '-p', '0', ...extra], {
       env: { ...process.env, AKAPEN_HOME: join(sandbox, 'home'), ...env },
       encoding: 'utf8',
+      // A check that fails to refuse starts a server that never exits; fail rather than hang.
+      timeout: 15_000,
     });
   };
 
@@ -201,13 +203,15 @@ describe('--advertise', () => {
 
   it('refuses to start on an address this host does not answer to', () => {
     const result = failing(['--host', '127.0.0.1', '--advertise', '203.0.113.9']);
-    expect(result.status).not.toBe(0);
+    // 1, not merely non-zero: a run cut off by the timeout has no status and would pass.
+    expect(result.status).toBe(1);
     expect(result.stderr).toContain('203.0.113.9');
   }, 30_000);
 
   it('refuses a hostname, rather than starting and being refused by its own Host check', () => {
     const result = failing(['--host', '0.0.0.0', '--advertise', 'akapen.example.local']);
-    expect(result.status).not.toBe(0);
+    // 1, not merely non-zero: a run cut off by the timeout has no status and would pass.
+    expect(result.status).toBe(1);
     expect(result.stderr).toMatch(/hostname/i);
   }, 30_000);
 
@@ -215,6 +219,32 @@ describe('--advertise', () => {
     const { lines } = await start([], { AKAPEN_ADVERTISE: '' });
     expect(urlsIn(lines)[0]).toContain('//127.0.0.1:');
   }, 30_000);
+
+  // #132: these reached Bun.serve, and came back as a stack trace or as "Is port 0 in use?"
+  it.each(['[::1', 'not a host', '127.0.0.1:4300', '::1]', 'fe80::1%lo', 'example.com'])(
+    'refuses --host %j by name, with the usage, and says nothing about a port',
+    (value) => {
+      const result = failing(['--host', value]);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain(`akapen: --host`);
+      expect(result.stderr).toContain(JSON.stringify(value));
+      expect(result.stderr).toContain('akapen <file.md> [options]');
+      expect(result.stderr).not.toMatch(/Is port|EADDRINUSE|at startServer/);
+    },
+    30_000,
+  );
+
+  // The other direction: a check that refused everything would pass the one above.
+  it.each(['0.0.0.0', '::', '[::]', '127.0.0.1', '::1', '[::1]', 'localhost'])(
+    'still starts on --host %s',
+    async (value) => {
+      const { lines } = await start(['--host', value, '--no-auth']);
+      // Answering, not only printing: a bind the Host check then refuses would print fine.
+      const [url] = urlsIn(lines);
+      expect((await fetch(`${url}/api/doc`)).ok).toBe(true);
+    },
+    30_000,
+  );
 });
 
 describe('akapen list --session', () => {

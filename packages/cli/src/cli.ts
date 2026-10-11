@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+
 import { existsSync, realpathSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 
@@ -9,7 +10,7 @@ import { loadReview, pendingComments } from '@akapen/core/store';
 import { liveInstances } from '@akapen/core/instances';
 import { liveEntries, sweep as sweepSessions } from '@akapen/core/sessions';
 import { currentToken, resolveToken, rotateToken, secureHome, tokenIsPinned } from '@akapen/core/token';
-import { parseArgs, resolvePort, resolveSession, UsageError, type Args } from './args.ts';
+import { parseArgs, resolveHost, resolvePort, resolveSession, UsageError, type Args } from './args.ts';
 
 const USAGE = `akapen — markdown inline review (PoC)
 
@@ -20,7 +21,7 @@ const USAGE = `akapen — markdown inline review (PoC)
   akapen token                   print this host's token (--rotate to replace it)
 
 options:
-  --host <addr>            listen address (default 127.0.0.1)
+  --host <addr>            listen address: an IP address or localhost (default 127.0.0.1)
   -p, --port <n>           port (default 4300)
   -A, --advertise <addr>   address to print in the URL, or an interface to take one
                            from ($AKAPEN_ADVERTISE sets it once per host)
@@ -271,9 +272,10 @@ if (args.root !== undefined) {
 
 // Every value below is a string or absent — parseArgs rejects the boolean case — so
 // there is nothing left here to cast.
-const host = args.host ?? '127.0.0.1';
+let host: string;
 let port: number;
 try {
+  host = resolveHost(args.host);
   port = resolvePort(args.port, 4300);
 } catch (err) {
   if (!(err instanceof UsageError)) throw err;

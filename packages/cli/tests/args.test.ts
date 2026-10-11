@@ -11,7 +11,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { parseArgs, resolvePort, resolveSession, UsageError } from '../src/args.ts';
+import { parseArgs, resolveHost, resolvePort, resolveSession, UsageError } from '../src/args.ts';
 
 describe('resolveSession', () => {
   const A = 'fc40ec79-b629-4c08-9be7-721bb0d306a6';
@@ -182,4 +182,42 @@ describe('the binary', () => {
       rmSync(sandbox, { recursive: true, force: true });
     }
   }, 30_000);
+});
+
+describe('resolveHost', () => {
+  it('defaults to loopback', () => {
+    expect(resolveHost(undefined)).toBe('127.0.0.1');
+  });
+
+  it('passes an address or localhost through as typed', () => {
+    for (const host of ['0.0.0.0', '::', '[::]', '127.0.0.1', '::1', '[::1]', 'localhost'])
+      expect(resolveHost(host)).toBe(host);
+  });
+
+  it('takes localhost in any case, and hands it on lowercased', () => {
+    expect(resolveHost('LOCALHOST')).toBe('localhost');
+  });
+
+  it('gives the rebinding reason for a name, and not for a malformed address', () => {
+    expect(() => resolveHost('d1')).toThrow(/rebind/);
+    for (const host of ['[::1', '127.0.0.1:4300', 'not a host'])
+      expect(() => resolveHost(host)).toThrow(/^--host must be an IP address or localhost, got "[^"]*"$/);
+  });
+
+  it('refuses a name, a half-bracketed address, and an address with a port or a zone', () => {
+    for (const host of [
+      'd1',
+      'akapen.example.local',
+      '[::1',
+      '::1]',
+      'not a host',
+      '127.0.0.1:4300',
+      '[127.0.0.1]',
+      'fe80::1%lo',
+      '-a',
+      'a..b',
+      '',
+    ])
+      expect(() => resolveHost(host)).toThrow(UsageError);
+  });
 });
