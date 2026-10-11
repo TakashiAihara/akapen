@@ -240,24 +240,21 @@ function isBehind(): boolean {
  * The answer always carries the current round's comments. On a screen that is on the
  * current round they replace the rail. On a screen another one moved past, they are not
  * this screen's comments, and applying them put the newer round's rail beside the older
- * document (#175). There only the one comment that changed is taken over: from the
- * answer when it is there (an unresolved one is carried into the current round), else
- * from the round on screen, read again.
+ * document (#175). There only the one comment that changed is taken over, from the
+ * answer's `comment`, which is that comment as it now is. A carried one that is now
+ * resolved leaves the carried rail, as it does on a screen that is current.
  */
-async function takeAnswer(answer: CommentsPayload, id: string) {
+function takeAnswer(answer: CommentsPayload) {
   if (!isBehind()) {
     applyComments(answer);
     return;
   }
-  let fresh: Comment | undefined = [...answer.comments, ...answer.carried].find((x) => x.id === id);
-  if (!fresh && state.round) {
-    const res = await fetch(`/api/doc?round=${state.round.n}`);
-    if (res.ok) fresh = (await decode(res, DocPayloadSchema)).comments.find((x) => x.id === id);
-  }
-  if (!fresh) return;
-  const found = fresh;
-  const swap = <T extends Comment>(list: T[]): T[] => list.map((x) => (x.id === id ? { ...x, ...found } : x));
-  applyComments({ ...answer, comments: swap(state.comments), carried: swap(state.carried) });
+  const fresh = answer.comment;
+  const comments = state.comments.map((x) => (x.id === fresh.id ? { ...x, ...fresh } : x));
+  const carried = state.carried.flatMap((x) =>
+    x.id !== fresh.id ? [x] : fresh.resolved ? [] : [{ ...x, ...fresh }],
+  );
+  applyComments({ ...answer, comments, carried });
 }
 
 /** The round the document on screen was read from, which is where a comment written on it goes. */
@@ -585,7 +582,7 @@ function repliesFor(c: Comment | RoundComment, past: boolean): HTMLElement {
       // the second, applying them would not merely fail to show the reply — it would
       // swap the round on screen for the current one. Re-open the round instead.
       if ((past || state.history) && state.round?.viewing) void showRound(state.round.viewing, c.id);
-      else await takeAnswer(payload, c.id);
+      else takeAnswer(payload);
     } catch (err) {
       // Keep what was typed. Losing it leaves no way to get the words back.
       send.disabled = false;
@@ -640,7 +637,7 @@ function bubbleFor(c: Comment | RoundComment, opts: { past?: boolean } = {}): HT
     try {
       const res = await fetch(`/api/comments/${c.id}/resolve`, { method: 'POST' });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      if (!state.history) await takeAnswer(await decode(res, CommentsPayloadSchema), c.id);
+      if (!state.history) takeAnswer(await decode(res, CommentsPayloadSchema));
       else if (state.round?.viewing) void showRound(state.round.viewing);
     } catch (err) {
       btn.disabled = false;

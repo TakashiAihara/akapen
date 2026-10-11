@@ -249,6 +249,29 @@ test('keeps its own rail when resolving or replying on a screen another one move
   await expect(page.locator('#round')).toHaveText('R001');
 });
 
+test('takes a resolve on a carried comment on a screen another one moved past', async ({ page, akapen }) => {
+  // The resolved comment is in neither of the answer's lists, so it has to come from the
+  // answer's own `comment`. It leaves the carried rail, as on a screen that is current.
+  await openDraft(page);
+  await post(page, 'carried from R001');
+  akapen.append('\n## second round\n');
+  await page.locator('#nextRound').click();
+  await expect(page.locator('#round')).toHaveText('R002');
+  await expect(page.locator('#railCarried .bubble')).toHaveCount(1);
+
+  const other = await page.context().newPage();
+  await other.goto(akapen.url);
+  await expect(other.locator('.row').first()).toBeVisible();
+  akapen.append('\n## third round\n');
+  await other.locator('#nextRound').click();
+  await expect(other.locator('#round')).toHaveText('R003');
+  await expect(page.locator('#movedBar')).toBeVisible();
+
+  await page.locator('#railCarried .bubble').getByRole('button', { name: 'Resolve' }).click();
+  await expect(page.locator('#railCarried .bubble')).toHaveCount(0);
+  await expect(page.locator('#round')).toHaveText('R002');
+});
+
 test('keeps a draft when the screen moves to another round, and asks for the lines again', async ({
   page,
   akapen,
