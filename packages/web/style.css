@@ -567,8 +567,23 @@ body.rail-overlay .marker { display: inline-flex; align-items: center; justify-c
 }
 /* The title keeps the one rule: it separates the document from the bar above it */
 .body h1 { font-size: 2.05rem; margin: 0 0 4px; border-bottom: 1px solid var(--ak-border); padding-bottom: 12px; }
-.body h2 { font-size: 1.5rem; margin: 16px 0 8px; }
-.body h3 { font-size: 1.25rem; margin: 12px 0 6px; }
+/*
+ * The space above a heading is a property of its row, used twice: as the heading's top
+ * margin, and as the gutter's top padding, so the line number and the + start level with
+ * the heading's text instead of above it (#91, #28). A --css that changes the space above
+ * headings sets this variable, not their margin, or the gutter is left where it was.
+ */
+.row.h2 { --ak-heading-above: 16px; }
+.row.h3 { --ak-heading-above: 12px; }
+.row.h4 { --ak-heading-above: 10px; }
+.row.h5, .row.h6 { --ak-heading-above: 9px; }
+/* A heading directly under another opens no space of its own: the one above already did */
+.row.heading + .row.heading:not(.h1) { --ak-heading-above: 6px; }
+.row:is(.h1, .h2):first-child { --ak-heading-above: 0px; }
+.body :is(h1, h2, h3, h4, h5, h6) { margin-top: var(--ak-heading-above, 0px); }
+.row.heading .gutter { padding-top: var(--ak-heading-above, 0px); }
+.body h2 { font-size: 1.5rem; margin-bottom: 8px; }
+.body h3 { font-size: 1.25rem; margin-bottom: 6px; }
 /*
  * Below h3 the size alone runs out: a serif at body size reads lighter than the sans around
  * it, so an h4 at 1rem looked like a paragraph. From h4 down the weight is raised to 700,
@@ -576,15 +591,9 @@ body.rail-overlay .marker { display: inline-flex; align-items: center; justify-c
  * keeps a step of size; h5 and h6 stay at body size, since shrinking them under the body
  * would rank them below it, and h6 is told from h5 by ink.
  */
-.body h4 { font-size: 1.1rem; font-weight: 700; margin: 10px 0 4px; }
-.body h5, .body h6 { font-size: 1rem; font-weight: 700; margin: 9px 0 4px; }
+.body h4 { font-size: 1.1rem; font-weight: 700; margin-bottom: 4px; }
+.body h5, .body h6 { font-size: 1rem; font-weight: 700; margin-bottom: 4px; }
 .body h6 { color: var(--ak-fg-2); }
-/* A heading directly under another opens no space of its own: the one above already did */
-.row:has(.body h1, .body h2, .body h3, .body h4, .body h5, .body h6)
-  + .row:has(.body h2, .body h3, .body h4, .body h5, .body h6) :is(h2, h3, h4, h5, h6) {
-  margin-top: 6px;
-}
-.row:first-child .body h1, .row:first-child .body h2 { margin-top: 0; }
 /*
  * Blue, never the accent. A link in the accent colour reads as something a person wrote;
  * in blue it reads as what it is — the machine saying "this leads somewhere".
