@@ -382,6 +382,8 @@ akapen list --session "$CLAUDE_CODE_SESSION_ID"          # only what this sessio
 akapen list --json --session "$CLAUDE_CODE_SESSION_ID"   # the same, with the whole origin
 ```
 
+`--session` also takes the short id the table prints, as long as only one session starts with it; a prefix that more than one session starts with is refused, with the candidates. A value no running session matches is answered as such ("no akapen here was started by a session matching …"), which is also what a session that has closed everything gets. `--json` answers `[]` for both.
+
 `AKAPEN_ORIGIN_LABEL` is carried alongside it and never read: a pane id, a ticket, whatever identifies the instance in a setup akapen knows nothing about.
 
 There is also a reverse index, for a statusline that wants to show the url and cannot afford to fork on every redraw.

@@ -9,7 +9,7 @@ import { loadReview, pendingComments } from '@akapen/core/store';
 import { liveInstances } from '@akapen/core/instances';
 import { liveEntries, sweep as sweepSessions } from '@akapen/core/sessions';
 import { currentToken, resolveToken, rotateToken, secureHome, tokenIsPinned } from '@akapen/core/token';
-import { parseArgs, resolvePort, UsageError, type Args } from './args.ts';
+import { parseArgs, resolvePort, resolveSession, UsageError, type Args } from './args.ts';
 
 const USAGE = `akapen — markdown inline review (PoC)
 
@@ -33,7 +33,7 @@ options:
   --no-auth                serve with no token at all (only behind something that authenticates)
   --all                    comments: include resolved ones
   --json                   list: print as JSON (for agents)
-  --session <id>           list: only what that session started
+  --session <id>           list: only what that session started (a unique prefix works)
   --rotate                 token: replace the stored token
 `;
 
@@ -111,11 +111,26 @@ if (positional[0] === 'list') {
    * where liveness is decided and `sessions/` is a reverse index for a reader that
    * cannot afford to ask. Two answers to "is it running" is one too many.
    */
-  const live = args.session === undefined ? all : all.filter((e) => e.record.origin?.id === args.session);
+  const entries = liveEntries();
+  // Undefined: no filter. Null: a value no session in the registry matches.
+  let session: string | null | undefined;
+  try {
+    session =
+      args.session === undefined
+        ? undefined
+        : resolveSession(
+            args.session,
+            entries.map((e) => e.sessionId),
+          );
+  } catch (err) {
+    if (!(err instanceof UsageError)) throw err;
+    fail(err.message);
+  }
+  const live = session === undefined ? all : all.filter((e) => e.record.origin?.id === session);
   // Reading the registry is the other half of the sweep's rule, and `list` has just
   // done it. Not `all`: an instance that did not answer may simply be busy, and the
   // registry keeps it for that reason — deleting its url here would contradict that.
-  sweepSessions(liveEntries());
+  sweepSessions(entries);
   // Read once for the whole table rather than per row: every instance is on this host,
   // so the answer is the same for all of them and the routing table is a file read.
   const addresses = localAddresses();
@@ -148,7 +163,16 @@ if (positional[0] === 'list') {
     process.exit(0);
   }
   if (live.length === 0) {
-    console.log(args.session === undefined ? 'no akapen is running' : 'that session has none running');
+    // "None running" only for a session the registry knows, whose instances did not
+    // answer. Said of a value nothing matches, it is a claim about a session that may
+    // not exist (#157).
+    console.log(
+      args.session === undefined
+        ? 'no akapen is running'
+        : session === null
+          ? `no akapen here was started by a session matching ${JSON.stringify(args.session)}`
+          : 'that session has none running',
+    );
     process.exit(0);
   }
   const rows = live.map(({ record, status }) => ({

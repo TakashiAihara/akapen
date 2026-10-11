@@ -8,7 +8,7 @@
  * the process starts, serves correctly, and prints an address that opens nothing.
  */
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { networkInterfaces } from 'node:os';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -17,7 +17,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 const CLI = join(import.meta.dirname, '..', 'src', 'cli.ts');
 const SOURCE = ['# Heading', '', 'A paragraph.', ''].join('\n');
 
-type Started = { lines: string[]; stop: () => void };
+type Started = { lines: string[]; stop: () => void; home: string };
 
 let running: (() => void)[] = [];
 let sandboxes: string[] = [];
@@ -38,9 +38,10 @@ async function start(extra: string[] = [], env: NodeJS.ProcessEnv = {}): Promise
   sandboxes.push(sandbox);
   const file = join(sandbox, 'note.md');
   writeFileSync(file, SOURCE);
+  const home = join(sandbox, 'home');
 
   const proc: ChildProcess = spawn('bun', ['run', CLI, file, '-p', '0', ...extra], {
-    env: { ...process.env, AKAPEN_HOME: join(sandbox, 'home'), ...env },
+    env: { ...process.env, AKAPEN_HOME: home, ...env },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   const stop = () => void proc.kill();
@@ -65,7 +66,7 @@ async function start(extra: string[] = [], env: NodeJS.ProcessEnv = {}): Promise
       reject(new Error(`akapen exited with ${code}\n${out}`));
     });
   });
-  return { lines: out.split('\n'), stop };
+  return { lines: out.split('\n'), stop, home };
 }
 
 const urlsIn = (lines: string[]): string[] =>
@@ -213,5 +214,54 @@ describe('--advertise', () => {
   it('an empty AKAPEN_ADVERTISE is an unset one, not a request to advertise nothing', async () => {
     const { lines } = await start([], { AKAPEN_ADVERTISE: '' });
     expect(urlsIn(lines)[0]).toContain('//127.0.0.1:');
+  }, 30_000);
+});
+
+describe('akapen list --session', () => {
+  const SESSION = 'fc40ec79-b629-4c08-9be7-721bb0d306a6';
+  const list = (home: string, extra: string[]) =>
+    spawnSync('bun', ['run', CLI, 'list', ...extra], {
+      env: { ...process.env, AKAPEN_HOME: home, CLAUDE_CODE_SESSION_ID: '' },
+      encoding: 'utf8',
+      timeout: 20_000,
+    });
+
+  it('takes back the session id its own table printed (#157)', async () => {
+    const { home } = await start([], { CLAUDE_CODE_SESSION_ID: SESSION });
+    const table = list(home, []);
+    const short = /^\d+\s+(\S+)\s/m.exec(table.stdout)?.[1];
+    expect(short).toBe(SESSION.slice(0, 8));
+
+    const filtered = list(home, ['--session', short ?? '']);
+    expect(filtered.status).toBe(0);
+    expect(filtered.stdout).toContain(short);
+    expect(filtered.stdout).not.toContain('none running');
+  }, 30_000);
+
+  it('says nothing was started by a value no session matches, not that it has none running', async () => {
+    const { home } = await start([], { CLAUDE_CODE_SESSION_ID: SESSION });
+    const result = list(home, ['--session', '0a1b2c3d']);
+    expect(result.status).toBe(0);
+    expect(result.stdout.trim()).toBe('no akapen here was started by a session matching "0a1b2c3d"');
+  }, 30_000);
+
+  it('says "none running" for a session the registry knows whose instance does not answer', () => {
+    const home = mkdtempSync(join(tmpdir(), 'akapen-list-'));
+    sandboxes.push(home);
+    mkdirSync(join(home, 'instances'), { recursive: true });
+    // A live pid (this test's own) on a port nothing listens on: registered, never answers.
+    const record = {
+      pid: process.pid,
+      host: '127.0.0.1',
+      port: 1,
+      file: join(home, 'note.md'),
+      startedAt: new Date().toISOString(),
+      origin: { kind: 'claude-code', id: SESSION, cwd: home },
+    };
+    writeFileSync(join(home, 'instances', `${process.pid}.json`), JSON.stringify(record));
+
+    const result = list(home, ['--session', SESSION.slice(0, 8)]);
+    expect(result.status).toBe(0);
+    expect(result.stdout.trim()).toBe('that session has none running');
   }, 30_000);
 });

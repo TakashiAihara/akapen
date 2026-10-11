@@ -136,6 +136,30 @@ export function parseArgs(argv: string[]): Args {
 }
 
 /**
+ * The session `--session` names, out of the ids the registry knows (#157). Null when
+ * none matches.
+ *
+ * `akapen list` prints the first 8 characters, so a prefix has to work or the column
+ * hands out an id the flag refuses. An ambiguous prefix fails with the candidates rather
+ * than picking one. No match is not an error: a session that has closed its last
+ * instance is gone from the registry, so its full id cannot be told from a typo, and the
+ * caller says what is true of both instead.
+ */
+export function resolveSession(raw: string, known: Iterable<string>): string | null {
+  const ids = new Set(known);
+  if (ids.has(raw)) return raw;
+  // Every id starts with '', so an empty value would resolve whenever one session is running.
+  const matches = raw === '' ? [] : [...ids].filter((id) => id.startsWith(raw)).toSorted();
+  if (matches.length === 1) return matches[0]!;
+  if (matches.length > 1) {
+    throw new UsageError(
+      `--session ${JSON.stringify(raw)} matches more than one session: ${matches.join(', ')}`,
+    );
+  }
+  return null;
+}
+
+/**
  * Port 0 is allowed and means "let the OS pick" — the server tests rely on it, and it
  * is the only way to start akapen without guessing at what is already listening.
  */

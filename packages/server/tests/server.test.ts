@@ -1337,7 +1337,11 @@ describe('the session that started an instance', () => {
       const all = JSON.parse(run(['--json']).stdout) as { pid: number }[];
       expect(all.map((e) => e.pid)).toEqual(expect.arrayContaining([mine.pid, theirs.pid]));
 
-      expect(run(['--session', 'nobody-started-this']).stdout.trim()).toBe('that session has none running');
+      // A value no session matches is not answered as a session with nothing open
+      // (#157). That message is for a session the registry knows.
+      expect(run(['--session', 'nobody-started-this']).stdout.trim()).toBe(
+        'no akapen here was started by a session matching "nobody-started-this"',
+      );
     } finally {
       mine.stop();
       theirs.stop();
