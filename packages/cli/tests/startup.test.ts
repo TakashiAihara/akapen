@@ -8,7 +8,7 @@
  * the process starts, serves correctly, and prints an address that opens nothing.
  */
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { networkInterfaces } from 'node:os';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -221,7 +221,7 @@ describe('akapen list --session', () => {
   const SESSION = 'fc40ec79-b629-4c08-9be7-721bb0d306a6';
   const list = (home: string, extra: string[]) =>
     spawnSync('bun', ['run', CLI, 'list', ...extra], {
-      env: { ...process.env, AKAPEN_HOME: home },
+      env: { ...process.env, AKAPEN_HOME: home, CLAUDE_CODE_SESSION_ID: '' },
       encoding: 'utf8',
       timeout: 20_000,
     });
@@ -238,26 +238,30 @@ describe('akapen list --session', () => {
     expect(filtered.stdout).not.toContain('none running');
   }, 30_000);
 
-  it('refuses a value that matches no session, rather than saying it has none running', async () => {
+  it('says nothing was started by a value no session matches, not that it has none running', async () => {
     const { home } = await start([], { CLAUDE_CODE_SESSION_ID: SESSION });
     const result = list(home, ['--session', '0a1b2c3d']);
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain('"0a1b2c3d"');
-    expect(result.stdout).not.toContain('none running');
+    expect(result.status).toBe(0);
+    expect(result.stdout.trim()).toBe('no akapen here was started by a session matching "0a1b2c3d"');
   }, 30_000);
-});
 
-describe('akapen list --session for the caller itself', () => {
-  it('says its own session has none running, rather than refusing the id', () => {
+  it('says "none running" for a session the registry knows whose instance does not answer', () => {
     const home = mkdtempSync(join(tmpdir(), 'akapen-list-'));
     sandboxes.push(home);
-    const id = 'fc40ec79-b629-4c08-9be7-721bb0d306a6';
-    const result = spawnSync('bun', ['run', CLI, 'list', '--session', id], {
-      env: { ...process.env, AKAPEN_HOME: home, CLAUDE_CODE_SESSION_ID: id },
-      encoding: 'utf8',
-      timeout: 20_000,
-    });
+    mkdirSync(join(home, 'instances'), { recursive: true });
+    // A live pid (this test's own) on a port nothing listens on: registered, never answers.
+    const record = {
+      pid: process.pid,
+      host: '127.0.0.1',
+      port: 1,
+      file: join(home, 'note.md'),
+      startedAt: new Date().toISOString(),
+      origin: { kind: 'claude-code', id: SESSION, cwd: home },
+    };
+    writeFileSync(join(home, 'instances', `${process.pid}.json`), JSON.stringify(record));
+
+    const result = list(home, ['--session', SESSION.slice(0, 8)]);
     expect(result.status).toBe(0);
-    expect(result.stdout).toContain('that session has none running');
+    expect(result.stdout.trim()).toBe('that session has none running');
   }, 30_000);
 });

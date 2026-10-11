@@ -136,18 +136,16 @@ export function parseArgs(argv: string[]): Args {
 }
 
 /**
- * Port 0 is allowed and means "let the OS pick" — the server tests rely on it, and it
- * is the only way to start akapen without guessing at what is already listening.
- */
-/**
- * The session `--session` names, out of the ids the registry knows (#157).
+ * The session `--session` names, out of the ids the registry knows (#157). Null when
+ * none matches.
  *
  * `akapen list` prints the first 8 characters, so a prefix has to work or the column
  * hands out an id the flag refuses. An ambiguous prefix fails with the candidates rather
- * than picking one, and a value nothing matches fails as such: "that session has none
- * running" is kept for a session the registry knows whose instances did not answer.
+ * than picking one. No match is not an error: a session that has closed its last
+ * instance is gone from the registry, so its full id cannot be told from a typo, and the
+ * caller says what is true of both instead.
  */
-export function resolveSession(raw: string, known: Iterable<string>): string {
+export function resolveSession(raw: string, known: Iterable<string>): string | null {
   const ids = new Set(known);
   if (ids.has(raw)) return raw;
   // Every id starts with '', so an empty value would resolve whenever one session is running.
@@ -158,9 +156,13 @@ export function resolveSession(raw: string, known: Iterable<string>): string {
       `--session ${JSON.stringify(raw)} matches more than one session: ${matches.join(', ')}`,
     );
   }
-  throw new UsageError(`no akapen on this host was started by a session matching ${JSON.stringify(raw)}`);
+  return null;
 }
 
+/**
+ * Port 0 is allowed and means "let the OS pick" — the server tests rely on it, and it
+ * is the only way to start akapen without guessing at what is already listening.
+ */
 export function resolvePort(raw: string | undefined, fallback: number): number {
   if (raw === undefined) return fallback;
   // The shape is checked before the conversion. Number('') and Number(' ') are both 0,

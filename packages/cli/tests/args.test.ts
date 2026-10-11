@@ -28,20 +28,18 @@ describe('resolveSession', () => {
     expect(resolveSession('0a', [A, B, C])).toBe(C);
   });
 
-  it('refuses an ambiguous prefix and names every candidate', () => {
-    expect(() => resolveSession('fc40ec7', [A, B, C])).toThrow(UsageError);
-    expect(() => resolveSession('fc40ec7', [A, B, C])).toThrow(`more than one session: ${A}, ${B}`);
+  it('refuses an ambiguous prefix and names every candidate, in order', () => {
+    expect(() => resolveSession('fc40ec7', [B, A, C])).toThrow(UsageError);
+    expect(() => resolveSession('fc40ec7', [B, A, C])).toThrow(`more than one session: ${A}, ${B}`);
   });
 
-  it('refuses a value no session matches, in words that are not "none running"', () => {
-    expect(() => resolveSession('dead', [A, C])).toThrow(
-      /no akapen on this host was started by a session matching "dead"/,
-    );
-    expect(() => resolveSession('dead', [])).toThrow(UsageError);
+  it('answers null for a value no session matches, rather than picking one', () => {
+    expect(resolveSession('dead', [A, C])).toBeNull();
+    expect(resolveSession('dead', [])).toBeNull();
   });
 
   it('does not let an empty value stand for the only session running', () => {
-    expect(() => resolveSession('', [A])).toThrow(UsageError);
+    expect(resolveSession('', [A])).toBeNull();
   });
 });
 
