@@ -47,23 +47,33 @@ test('keeps every heading level above body text', async ({ page }) => {
 });
 
 test('keeps line numbers apart at the frontmatter fences (#90)', async ({ page, akapen, request }) => {
-  for (const source of [
-    '---\ntitle: x\nstatus: draft\n---\n\n# Heading\n\nPara.\n',
-    '# Heading\n\nPara.\n\nMore.\n',
-  ]) {
+  for (const [source, fences] of [
+    ['---\ntitle: x\nstatus: draft\n---\n\n# Heading\n\nPara.\n', 2],
+    ['# Heading\n\nPara.\n\nMore.\n', 0],
+  ] as const) {
     writeFileSync(akapen.file, source);
     expect((await request.post(`${akapen.url}/api/rounds`, { headers: AUTH })).ok()).toBe(true);
     await page.goto(akapen.url);
-    await expect(page.locator('.row').first()).toBeVisible();
+    await expect(page.locator('.row.fm-fence')).toHaveCount(fences);
     // Hidden, the fences keep their thin strip: the room is for the number only.
     for (const fence of await page.locator('.row.fm-fence').all()) {
       expect((await fence.boundingBox())!.height).toBeLessThan(8);
     }
     await page.locator('#showLines').check();
-    const overlaps = await page.evaluate(() => {
+    await expect(page.locator('.lineno').first()).toBeVisible();
+    const seen = await page.evaluate(() => {
       const boxes = [...document.querySelectorAll('.lineno')].map((n) => n.getBoundingClientRect());
-      return boxes.slice(1).filter((b, i) => b.top < boxes[i]!.bottom - 0.5).length;
+      const fence = [...document.querySelectorAll('.row.fm-fence')].map(
+        (r) => r.getBoundingClientRect().height,
+      );
+      const para = document.querySelector('.row.paragraph')!.getBoundingClientRect().height;
+      return {
+        overlaps: boxes.slice(1).filter((b, i) => b.top < boxes[i]!.bottom - 0.5).length,
+        // No taller than a line of text needs: the room is the number's, and no more.
+        tallest: Math.max(0, ...fence) / para,
+      };
     });
-    expect(overlaps).toBe(0);
+    expect(seen.overlaps).toBe(0);
+    expect(seen.tallest).toBeLessThan(1.2);
   }
 });
