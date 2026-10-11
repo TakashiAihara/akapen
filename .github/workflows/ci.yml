@@ -41,10 +41,11 @@ jobs:
           bun-version-file: .tool-versions
       - run: bun install --frozen-lockfile
 
-      - run: bun run build:web
       - run: bun run lint
       - run: bun run fmt:check
       - run: bun run typecheck
+      # No build:web before this: the test run builds it (tests/build-web.ts), and building
+      # here first would hide a setup that stopped doing so.
       - name: line mapping and round invariants
         run: bun run test
       - name: block splitting across every markdown file under docs
@@ -63,7 +64,7 @@ jobs:
         with:
           bun-version-file: .tool-versions
       - run: bun install --frozen-lockfile
-      - run: bun run build:web
+      # No build:web here either: Playwright's global setup builds it (tests/build-web.ts).
 
       # The browsers live outside node_modules, under ~/.cache/ms-playwright, and which
       # build they are is decided by the playwright version alone. Keying on that version
