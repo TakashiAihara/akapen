@@ -164,6 +164,10 @@ describe('resolveHost', () => {
       expect(resolveHost(host)).toBe(host);
   });
 
+  it('takes localhost in any case, and hands it on lowercased', () => {
+    expect(resolveHost('LOCALHOST')).toBe('localhost');
+  });
+
   it('gives the rebinding reason for a name, and not for a malformed address', () => {
     expect(() => resolveHost('d1')).toThrow(/rebind/);
     for (const host of ['[::1', '127.0.0.1:4300', 'not a host'])

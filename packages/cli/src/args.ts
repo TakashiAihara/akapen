@@ -161,7 +161,10 @@ export function resolveHost(raw: string | undefined): string {
   }
   const bracketed = /^\[(.*)\]$/.exec(raw)?.[1];
   const address = bracketed === undefined ? isIP(raw) !== 0 : isIP(bracketed) === 6;
-  if (address || raw === 'localhost') return raw;
+  if (address) return raw;
+  // Names are case-insensitive. Handed on lowercased, because that is the spelling the
+  // Host check compares against.
+  if (raw.toLowerCase() === 'localhost') return 'localhost';
   // The rebinding reason only for what is a name; a mistyped address is just malformed.
   const reason = /^[a-z0-9.-]+$/i.test(raw) ? ': another machine can claim a name and rebind it here' : '';
   throw new UsageError(`--host must be an IP address or localhost, got ${JSON.stringify(raw)}${reason}`);

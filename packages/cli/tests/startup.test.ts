@@ -202,13 +202,15 @@ describe('--advertise', () => {
 
   it('refuses to start on an address this host does not answer to', () => {
     const result = failing(['--host', '127.0.0.1', '--advertise', '203.0.113.9']);
-    expect(result.status).not.toBe(0);
+    // 1, not merely non-zero: a run cut off by the timeout has no status and would pass.
+    expect(result.status).toBe(1);
     expect(result.stderr).toContain('203.0.113.9');
   }, 30_000);
 
   it('refuses a hostname, rather than starting and being refused by its own Host check', () => {
     const result = failing(['--host', '0.0.0.0', '--advertise', 'akapen.example.local']);
-    expect(result.status).not.toBe(0);
+    // 1, not merely non-zero: a run cut off by the timeout has no status and would pass.
+    expect(result.status).toBe(1);
     expect(result.stderr).toMatch(/hostname/i);
   }, 30_000);
 
