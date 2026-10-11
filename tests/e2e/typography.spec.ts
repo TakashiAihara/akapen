@@ -6,7 +6,8 @@
  * sheet; an h4 was the size of a paragraph and, in a serif, lighter than one. Nothing
  * errors either way, so only the computed styles can say.
  */
-import { expect, test } from './fixtures.ts';
+import { writeFileSync } from 'node:fs';
+import { AUTH, expect, test } from './fixtures.ts';
 
 test.beforeEach(async ({ page, akapen }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -43,4 +44,22 @@ test('keeps every heading level above body text', async ({ page }) => {
   // 700, not 600: a face with only a regular draws 600 as regular, and the serif h4 then
   // reads lighter than the sans paragraph under it
   expect(seen.h4Weight).toBeGreaterThanOrEqual(700);
+});
+
+test('keeps line numbers apart at the frontmatter fences (#90)', async ({ page, akapen, request }) => {
+  for (const source of [
+    '---\ntitle: x\nstatus: draft\n---\n\n# Heading\n\nPara.\n',
+    '# Heading\n\nPara.\n\nMore.\n',
+  ]) {
+    writeFileSync(akapen.file, source);
+    expect((await request.post(`${akapen.url}/api/rounds`, { headers: AUTH })).ok()).toBe(true);
+    await page.goto(akapen.url);
+    await page.evaluate(() => document.body.classList.add('show-lines'));
+    await expect(page.locator('.row').first()).toBeVisible();
+    const overlaps = await page.evaluate(() => {
+      const boxes = [...document.querySelectorAll('.lineno')].map((n) => n.getBoundingClientRect());
+      return boxes.slice(1).filter((b, i) => b.top < boxes[i]!.bottom - 0.5).length;
+    });
+    expect(overlaps).toBe(0);
+  }
 });

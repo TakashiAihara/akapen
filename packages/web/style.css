@@ -671,6 +671,9 @@ body.rail-overlay .marker { display: inline-flex; align-items: center; justify-c
 .row.fm-first .body { border-radius: 6px 6px 0 0; padding-top: 6px; }
 .row.fm-last .body { border-radius: 0 0 6px 6px; padding-bottom: 6px; margin-bottom: 14px; }
 .fm-fence { height: 4px; }
+/* Tall enough for its number while numbers are shown, or 1 sat on 2 and 15 on 17 (#90).
+   The fence lines are blocks a comment can point at, so the number stays rather than hides. */
+body.show-lines .fm-fence { height: 20px; }
 .fm-row { display: flex; gap: 8px; padding-left: calc(var(--indent, 0) * 8px); }
 .fm-key { color: var(--ak-fg-muted); }
 .fm-key::after { content: ":"; }
