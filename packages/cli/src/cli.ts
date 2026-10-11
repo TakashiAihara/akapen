@@ -220,37 +220,50 @@ if (positional[0] === 'list') {
 /**
  * Reply to and resolve a comment from the command line (#130), rather than with curl.
  *
- * Through the akapen serving the file, found the way `comments` finds its store: the
- * server holds the current round and tells the open screens, so writing the store from
- * here would leave them out of step. A reply carries `X-Akapen-Session` when there is a
- * session to name, so it is filed as the agent's. Resolving toggles on the server, so a
- * comment that is already resolved is refused here instead of being reopened.
+ * Through the akapen serving the file: the server keeps the current round's comments in
+ * memory and writes them back, so a reply written to the store from here would be lost on
+ * its next write. The file is identified as the store identifies it (the resolved path),
+ * for both the comment lookup and the instance. A reply carries `X-Akapen-Session` when
+ * there is a session to name, so it is filed as the agent's. Resolving toggles on the
+ * server, so a comment already resolved is not sent, and the answer is checked.
  */
 if (positional[0] === 'reply' || positional[0] === 'resolve') {
   const verb = positional[0];
-  const [, file, id, text] = positional;
+  const [, file, id, text, ...extra] = positional;
   if (!file || !existsSync(file)) fail(`no such file: ${file ?? '(missing)'}`);
   if (!id) fail(`${verb}: which comment? Give its id, as \`akapen comments\` prints it`);
   if (verb === 'reply' && !text?.trim()) fail('reply: the text of the reply is missing');
+  // A text in several words is one argument; quote it. Dropping the rest would send a part.
+  if (extra.length > 0 || (verb === 'resolve' && text !== undefined)) {
+    fail(
+      `${verb}: unexpected ${JSON.stringify(
+        [text, ...extra]
+          .filter((x) => x !== undefined)
+          .slice(verb === 'reply' ? 1 : 0)
+          .join(' '),
+      )}`,
+    );
+  }
 
   const comment = pendingComments(file, true).find((c) => c.id === id);
   if (!comment) {
     console.error(`akapen: no comment ${id} on ${resolve(file)}`);
     process.exit(1);
   }
-  const resolving = verb === 'resolve' || args.resolve;
-  if (resolving && comment.resolved) {
+  const alreadyResolved = comment.resolved && (verb === 'resolve' || args.resolve);
+  if (verb === 'resolve' && alreadyResolved) {
     console.error(`akapen: ${id} is already resolved; resolving it again would reopen it`);
     process.exit(1);
   }
+  // A reply to a resolved comment still goes; only the resolve is left out.
+  const resolving = (verb === 'resolve' || args.resolve) && !alreadyResolved;
 
   const token = currentToken();
-  const target = realpathSync(file);
-  const serving = (await liveInstances({ token })).find(
-    (e) => existsSync(e.record.file) && realpathSync(e.record.file) === target,
-  );
+  const target = resolve(file);
+  const serving = (await liveInstances({ token })).find((e) => e.record.file === target);
   if (!serving) {
-    console.error(`akapen: no akapen is serving ${target}; start one, then try again`);
+    // Said as observed: one may be running on another token, and not have answered.
+    console.error(`akapen: no akapen serving ${target} answered`);
     process.exit(1);
   }
   const base = `http://${reachableHost(serving.record.host)}:${serving.record.port}`;
@@ -259,20 +272,37 @@ if (positional[0] === 'reply' || positional[0] === 'resolve') {
     ...(token === null ? {} : { authorization: `Bearer ${token}` }),
     ...(session === '' ? {} : { 'x-akapen-session': session }),
   };
-  const post = async (path: string, body?: unknown) => {
+  const post = async (path: string, done: string, body?: unknown): Promise<unknown> => {
     const res = await fetch(`${base}${path}`, {
       method: 'POST',
       headers: body === undefined ? headers : { ...headers, 'content-type': 'application/json' },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      signal: AbortSignal.timeout(10_000),
     });
     if (!res.ok) {
-      console.error(`akapen: ${path} answered ${res.status}: ${await res.text()}`);
+      console.error(`akapen: ${done}${path} answered ${res.status}: ${await res.text()}`);
       process.exit(1);
     }
+    return res.json();
   };
-  if (verb === 'reply') await post(`/api/comments/${encodeURIComponent(id)}/replies`, { body: text });
-  if (resolving) await post(`/api/comments/${encodeURIComponent(id)}/resolve`);
-  console.log(verb === 'reply' ? (resolving ? 'replied and resolved' : 'replied') : 'resolved');
+  if (verb === 'reply') {
+    await post(`/api/comments/${encodeURIComponent(id)}/replies`, '', { body: text });
+    console.log(`replied (filed as ${session === '' ? 'a person, no CLAUDE_CODE_SESSION_ID' : 'the agent'})`);
+  }
+  if (resolving) {
+    const answer = (await post(
+      `/api/comments/${encodeURIComponent(id)}/resolve`,
+      verb === 'reply' ? 'replied, but ' : '',
+    )) as {
+      comment?: { resolved?: boolean };
+    };
+    // A toggle: someone else may have resolved it since the store was read, and this reopened it.
+    if (answer.comment?.resolved !== true) {
+      console.error(`akapen: ${id} is open after the call; it was resolved meanwhile, and this reopened it`);
+      process.exit(1);
+    }
+    console.log('resolved');
+  } else if (alreadyResolved) console.log(`${id} was already resolved; left as it is`);
   process.exit(0);
 }
 

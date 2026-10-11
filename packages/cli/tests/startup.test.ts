@@ -8,7 +8,7 @@
  * the process starts, serves correctly, and prints an address that opens nothing.
  */
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { networkInterfaces } from 'node:os';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -347,24 +347,40 @@ describe('akapen reply and resolve', () => {
     await new Promise((r) => setTimeout(r, 500));
     const nobody = cli(home, ['reply', file, comment.id, 'into the void']);
     expect(nobody.status).toBe(1);
-    expect(nobody.stderr).toContain('no akapen is serving');
+    expect(nobody.stderr).toContain('answered');
   }, 60_000);
 
-  it('replies and resolves in one call with --resolve', async () => {
-    const { lines, home, file } = await start(['--no-auth']);
-    const [url] = urlsIn(lines);
+  it('replies and resolves in one call with --resolve, with auth on', async () => {
+    const { lines, home, file } = await start([]);
+    const url = new URL(urlsIn(lines)[0]!).origin;
+    const auth = { authorization: `Bearer ${readFileSync(join(home, 'token'), 'utf8').trim()}` };
     const posted = await fetch(`${url}/api/comments`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { ...auth, 'content-type': 'application/json' },
       body: JSON.stringify({ startLine: 1, endLine: 1, body: 'x' }),
     });
     const { comment } = (await posted.json()) as { comment: { id: string } };
+    const read = async () =>
+      ((await (await fetch(`${url}/api/comments`, { headers: auth })).json()) as Thread[]).find(
+        (c) => c.id === comment.id,
+      )!;
+
     const done = cli(home, ['reply', file, comment.id, 'fixed', '--resolve']);
     expect(done.status).toBe(0);
-    const thread = ((await (await fetch(`${url}/api/comments`)).json()) as Thread[]).find(
-      (c) => c.id === comment.id,
-    )!;
-    expect(thread.resolved).toBe(true);
-    expect(thread.replies.map((r) => r.body)).toEqual(['fixed']);
+    expect((await read()).resolved).toBe(true);
+    expect((await read()).replies.map((r) => r.body)).toEqual(['fixed']);
+
+    // Already resolved: the reply still goes, and the resolve is left out rather than reopening it.
+    const late = cli(home, ['reply', file, comment.id, 'and one more', '--resolve']);
+    expect(late.status).toBe(0);
+    expect(late.stdout).toContain('already resolved');
+    expect((await read()).resolved).toBe(true);
+    expect((await read()).replies.map((r) => r.body)).toEqual(['fixed', 'and one more']);
+
+    // An unquoted text would send only its first word; refused before anything is sent.
+    const split = cli(home, ['reply', file, comment.id, 'two', 'words']);
+    expect(split.status).toBe(1);
+    expect(split.stderr).toContain('unexpected "words"');
+    expect((await read()).replies).toHaveLength(2);
   }, 60_000);
 });
