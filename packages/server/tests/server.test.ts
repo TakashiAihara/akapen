@@ -976,6 +976,18 @@ describe('the other instances on this host', () => {
     expect(JSON.stringify(after)).not.toContain(sandbox);
   });
 
+  it('lists the others without deleting entries it cannot read (#184)', async () => {
+    // A server outlives an upgrade, and the page asks this on every focus. What a newer
+    // binary registers in a shape this one does not know has to survive the asking.
+    mkdirSync(instancesDir(), { recursive: true });
+    // Named after a live process (this test's parent), so it is not a crash's leftover.
+    const foreign = join(instancesDir(), `${process.ppid}.json`);
+    writeFileSync(foreign, '{"shape":"from a later version"}');
+
+    expect((await fetch(`${base}/api/instances`)).ok).toBe(true);
+    expect(existsSync(foreign)).toBe(true);
+  });
+
   /** What a document is called, where `akapen list` can reach it (#169). */
   const titleOf = async (url: string) =>
     v.parse(StatusPayloadSchema, await (await fetch(`${url}/api/status`)).json()).title;

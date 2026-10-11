@@ -8,6 +8,9 @@
  * handed over by `akapen comments`. Counting instead of naming re-fires on the same
  * unresolved comment every pass, forever.
  */
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { collect, filesForSession, idsOf, markSent, newEvents } from '../src/channel.ts';
 import type { RoundComment } from '@akapen/shared';
@@ -227,9 +230,7 @@ describe('collect', () => {
 describe('runChannel', () => {
   it('exits when the session closes its stdin', async () => {
     const { spawn } = await import('node:child_process');
-    const { mkdtempSync, rmSync } = await import('node:fs');
-    const { tmpdir } = await import('node:os');
-    const { join } = await import('node:path');
+
     const home = mkdtempSync(join(tmpdir(), 'akapen-channel-'));
     const cli = join(import.meta.dirname, '../src/cli.ts');
     const proc = spawn('bun', ['run', cli, 'channel'], {
@@ -252,4 +253,25 @@ describe('runChannel', () => {
       rmSync(home, { recursive: true, force: true });
     }
   }, 15000);
+});
+
+describe('the store the channel reads by default', () => {
+  it('leaves registry entries it cannot use where they are (#184)', () => {
+    const home = mkdtempSync(join(tmpdir(), 'akapen-channel-'));
+    const before = process.env['AKAPEN_HOME'];
+    process.env['AKAPEN_HOME'] = home;
+    try {
+      mkdirSync(join(home, 'instances'), { recursive: true });
+      // What a newer binary might write and this one cannot read, for a live process.
+      const foreign = `${process.ppid}.json`;
+      writeFileSync(join(home, 'instances', foreign), '{"shape":"from a later version"}');
+
+      expect(collect('channel-sweep-test', new Map())).toEqual([]);
+      expect(readdirSync(join(home, 'instances'))).toEqual([foreign]);
+    } finally {
+      if (before === undefined) delete process.env['AKAPEN_HOME'];
+      else process.env['AKAPEN_HOME'] = before;
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
 });

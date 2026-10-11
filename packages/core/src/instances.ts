@@ -101,6 +101,11 @@ export function instancesDir(): string {
   return join(akapenHome(), 'instances');
 }
 
+/**
+ * `<pid>.json`, and it has to stay that: the long-lived readers tell a crash's leftover
+ * from a newer binary's entry by the pid in the name alone (#184). A name they cannot
+ * parse is deleted on sight, so renaming this would bring back what #184 fixed.
+ */
 function instanceFile(pid: number): string {
   return join(instancesDir(), `${pid}.json`);
 }
@@ -181,11 +186,20 @@ function isRecord(v: unknown): v is InstanceRecord {
  * Every entry whose process still exists, cheapest check first.
  *
  * A crash leaves the entry behind, so entries that cannot be read or name a process
- * that is gone are deleted as they are found and the directory heals itself. An entry
- * that survives this is not yet proof of anything: pids are reused, and the process
- * holding one may have nothing to do with akapen. That is what `liveInstances` asks.
+ * that is gone are left out and deleted as they are found: the directory heals itself.
+ * An entry that survives this is not yet proof of anything: pids are reused, and the
+ * process holding one may have nothing to do with akapen. That is what `liveInstances`
+ * asks.
+ *
+ * `sweep: false` keeps an entry it cannot read while the process it is named after is
+ * alive, for a reader that outlives an upgrade (#184): `akapen channel`, which reads
+ * every few seconds for a whole Claude Code session, and a server's `/api/instances`.
+ * One started from an older binary would otherwise delete every entry a newer one
+ * writes in a shape it does not know. The commands that run and exit (`list`, startup)
+ * still sweep, so an old binary run as one of those still can; that ends when the old
+ * binary is gone.
  */
-export function readInstances(): InstanceRecord[] {
+export function readInstances({ sweep = true }: { sweep?: boolean } = {}): InstanceRecord[] {
   const dir = instancesDir();
   if (!existsSync(dir)) return [];
   const out: InstanceRecord[] = [];
@@ -197,12 +211,21 @@ export function readInstances(): InstanceRecord[] {
       const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
       if (isRecord(parsed) && alive(parsed.pid)) record = parsed;
     } catch {
-      /* Unreadable or not JSON. Indistinguishable from gone, and treated the same. */
+      /* Unreadable or not JSON. Left out of the answer; whether it is deleted is below. */
     }
     if (record) out.push(record);
-    else removeStale(path);
+    // Not sweeping still heals a crash: the pid in the name is the one thing every
+    // version writes the same way, so an entry whose process is gone is gone whoever
+    // wrote it. What is kept is a live process's entry in a shape this binary cannot read.
+    else if (sweep || !alive(pidOfEntry(name))) removeStale(path);
   }
   return out.toSorted((a, b) => a.port - b.port);
+}
+
+/** The pid an entry is named after, or NaN for a name no version writes. */
+function pidOfEntry(name: string): number {
+  const stem = name.slice(0, -'.json'.length);
+  return /^[1-9]\d*$/.test(stem) ? Number(stem) : NaN;
 }
 
 function removeStale(path: string): void {
@@ -279,14 +302,15 @@ async function askStatus(
  *
  * @param opts.excludePid  the caller's own pid, when the caller is one of them
  * @param opts.timeoutMs   a peer on the same host answers immediately or not at all
+ * @param opts.sweep       false for a long-lived caller, as `readInstances` explains
  * @param opts.token       the credential to probe with; null only where none is in use
  */
 export async function liveInstances(
-  opts: { excludePid?: number; timeoutMs?: number; token?: string | null } = {},
+  opts: { excludePid?: number; timeoutMs?: number; token?: string | null; sweep?: boolean } = {},
 ): Promise<LiveInstance[]> {
   const timeoutMs = opts.timeoutMs ?? 500;
   const token = opts.token ?? null;
-  const records = readInstances().filter((r) => r.pid !== opts.excludePid);
+  const records = readInstances({ sweep: opts.sweep ?? true }).filter((r) => r.pid !== opts.excludePid);
   // Asked all at once: one instance that is slow to answer must not add its timeout to
   // the wait for every instance after it.
   const probed = await Promise.all(

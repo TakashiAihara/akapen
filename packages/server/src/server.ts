@@ -675,9 +675,12 @@ export function startServer(opts: ServeOptions) {
    * The browser cannot do it. Every instance is a different origin, so it would need
    * CORS on an endpoint that has none, and one bound to `127.0.0.1` is not reachable
    * from the reader's machine at all while being perfectly reachable from here.
+   *
+   * Without sweeping: a server outlives an upgrade as a channel does, and this runs on
+   * every focus of the page, so an old one would delete what a newer one registers (#184).
    */
   app.get('/api/instances', async (c) => {
-    const live = await liveInstances({ excludePid: process.pid, token: currentSecret() });
+    const live = await liveInstances({ sweep: false, excludePid: process.pid, token: currentSecret() });
     const payload: InstancesPayload = {
       instances: live.map(({ record, status }) => ({
         pid: record.pid,
