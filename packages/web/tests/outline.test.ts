@@ -7,7 +7,13 @@
  */
 import { buildDoc } from '@akapen/core/blocks';
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_DEEPEST, buildOutline, flattenOutline, headingCount } from '../src/outline.ts';
+import {
+  DEFAULT_DEEPEST,
+  buildOutline,
+  flattenOutline,
+  headingCount,
+  type OutlineEntry,
+} from '../src/outline.ts';
 
 const doc = (source: string) => buildDoc('/home/x/notes/20-auth.md', source);
 
@@ -18,13 +24,19 @@ const shape = (source: string, deepest?: number) =>
 /**
  * The tree as indentation, to say who is under whom rather than only what order they are in.
  *
- * Indented by each entry's own `depth` rather than by how far the walk has recursed, so
- * this is also the check that `depth` agrees with where the entry actually sits.
+ * Indented by how far the walk has recursed through `children`, so the nesting itself is
+ * what is checked. An entry whose own `depth` disagrees with where it sits is marked, so
+ * this is also the check that the two agree.
  */
 function tree(source: string, deepest?: number): string {
-  return flattenOutline(buildOutline(doc(source), deepest))
-    .map((e) => '  '.repeat(e.depth) + e.text)
-    .join('\n');
+  return walk(buildOutline(doc(source), deepest), 0).join('\n');
+}
+
+function walk(entries: readonly OutlineEntry[], at: number): string[] {
+  return entries.flatMap((e) => [
+    '  '.repeat(at) + e.text + (e.depth === at ? '' : ` (depth ${e.depth})`),
+    ...walk(e.children, at + 1),
+  ]);
 }
 
 describe('buildOutline', () => {
