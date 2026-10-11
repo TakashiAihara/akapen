@@ -7,7 +7,7 @@ import { AdvertiseError, localAddresses, resolveAdvertised, urlsFor } from '@aka
 
 import { isInside } from '@akapen/core/files';
 import { loadReview, pendingComments } from '@akapen/core/store';
-import { liveInstances } from '@akapen/core/instances';
+import { liveInstances, readInstances } from '@akapen/core/instances';
 import { liveEntries, sweep as sweepSessions } from '@akapen/core/sessions';
 import { currentToken, resolveToken, rotateToken, secureHome, tokenIsPinned } from '@akapen/core/token';
 import { parseArgs, resolveHost, resolvePort, resolveSession, UsageError, type Args } from './args.ts';
@@ -106,7 +106,7 @@ if (positional[0] === 'list') {
   const entries = liveEntries();
   // `currentToken`, not `resolveToken`: listing is a read, and a read that generates and
   // stores a secret as a side effect is a surprise. An instance running on a token this
-  // caller does not have simply does not answer, and reads as not running.
+  // caller does not have simply does not answer, and is reported as not answering.
   const all = await liveInstances({ token: currentToken() });
   /**
    * Only what one session started.
@@ -172,9 +172,14 @@ if (positional[0] === 'list') {
     // typo or a session that has closed everything, so it is not called a session. A
     // match with nothing live is a registered instance that did not answer — busy, or on
     // another token — so it is not called "none running" either.
+    // An entry whose process is alive but did not answer is not "nothing running" (#221).
+    // Why it did not answer is not known here, so no cause is named.
+    const registered = args.session === undefined ? readInstances().length : 0;
     console.log(
       args.session === undefined
-        ? 'no akapen is running'
+        ? registered === 0
+          ? 'no akapen is running'
+          : `no akapen answered (${registered} registered)`
         : session === null
           ? `no akapen running here was started by a session matching ${JSON.stringify(args.session)}`
           : "that session's akapen did not answer",

@@ -304,6 +304,24 @@ describe('akapen list --session', () => {
     expect(result.status).toBe(0);
     expect(result.stdout.trim()).toBe("that session's akapen did not answer");
   }, 30_000);
+
+  it('says no akapen answered, not that none is running, when the registry is not empty (#221)', () => {
+    const home = mkdtempSync(join(tmpdir(), 'akapen-list-'));
+    sandboxes.push(home);
+    mkdirSync(join(home, 'instances'), { recursive: true });
+    // A live pid (this test's own) on a port nothing listens on: registered, never answers.
+    const record = {
+      pid: process.pid,
+      host: '127.0.0.1',
+      port: 1,
+      file: join(home, 'note.md'),
+      startedAt: new Date().toISOString(),
+    };
+    writeFileSync(join(home, 'instances', `${process.pid}.json`), JSON.stringify(record));
+    const all = list(home, []);
+    expect(all.status).toBe(0);
+    expect(all.stdout.trim()).toBe('no akapen answered (1 registered)');
+  }, 30_000);
 });
 
 /** Hold a port on loopback until released. Resolves with null when it is already taken. */

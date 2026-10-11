@@ -369,7 +369,7 @@ A link is built from the address the page was opened on, `location.hostname`, no
 
 A row shows the basename, the round and the unresolved count. Not the title either, which nothing on the switcher uses (`akapen list --json` has it). **Not the path**: directory layout is not something to hand out, and the token says a reader may see the review rather than everything about the machine holding it. `akapen list` does print it in full — that is read on the host, by whoever started them.
 
-Instances find each other by asking, and the request carries the same token, so a peer started with a different one reads as not running.
+Instances find each other by asking, and the request carries the same token, so a peer started with a different one does not answer, and `akapen list` says so rather than that nothing is running.
 
 Only instances sharing an `AKAPEN_HOME` see each other, and only on one host. Reaching across hosts is a different thing and is not built.
 
