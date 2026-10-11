@@ -242,6 +242,43 @@ function listen(url: string) {
   return { seen, stop: async () => (ctrl.abort(), done) };
 }
 
+// #71: Bun drops a connection idle for 10 seconds. Without a heartbeat a quiet stream was
+// closed after about 12, and a screen saw it reopen over and over.
+describe('the event stream', () => {
+  it('stays open past the idle timeout, kept warm by comment frames', async () => {
+    const res = await fetch(`${base}/events`);
+    const reader = res.body!.getReader();
+    const dec = new TextDecoder();
+    let text = '';
+    let closed = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const elapsed = new Promise<null>((r) => {
+      timer = setTimeout(() => r(null), 14_000);
+    });
+    try {
+      for (;;) {
+        // An idle close arrives as a rejected read (`terminated`), not as `done`; both count.
+        const chunk = await Promise.race([reader.read().catch(() => ({ done: true as const })), elapsed]);
+        if (chunk === null) break;
+        if (chunk.done) {
+          closed = true;
+          break;
+        }
+        text += dec.decode(chunk.value, { stream: true });
+      }
+    } finally {
+      clearTimeout(timer);
+      await reader.cancel().catch(() => {});
+    }
+    expect(closed).toBe(false);
+    // Several in 14 seconds, and as comments, which EventSource does not deliver as messages.
+    const frames = text.split('\n\n').filter(Boolean);
+    expect(frames.filter((f) => f === ': ping').length).toBeGreaterThanOrEqual(3);
+    // Only the comment frame carries it: as a data frame EventSource would deliver it.
+    expect(frames.filter((f) => f.includes('ping') && f !== ': ping')).toEqual([]);
+  }, 30_000);
+});
+
 describe('the document', () => {
   it('answers with a payload that satisfies the contract', async () => {
     const res = await fetch(`${base}/api/doc`);
@@ -1703,6 +1740,47 @@ describe('authentication', () => {
       await running.stopped;
     }
   });
+
+  it('closes an event stream opened before a rotation (#237)', async () => {
+    // The heartbeat keeps a quiet stream open, so the rotation has to end it itself.
+    const home = join(sandbox, 'rotating-stream-home');
+    const note = join(sandbox, 'rotating-stream.md');
+    writeFileSync(note, SOURCE);
+    const running = await start(note, home, [], { token: null });
+    try {
+      const before = readFileSync(join(home, 'token'), 'utf8').trim();
+      const res = await globalThis.fetch(`${running.url}/events`, {
+        headers: { authorization: `Bearer ${before}` },
+      });
+      expect(res.status).toBe(200);
+      const reader = res.body!.getReader();
+      await reader.read();
+
+      execFileSync('bun', ['run', CLI, 'token', '--rotate'], {
+        env: { ...process.env, AKAPEN_HOME: home },
+        encoding: 'utf8',
+      });
+      // Up to a second for the server to re-read the token, then up to a heartbeat (3 s)
+      // to carry it out: 8 s leaves room for a slow runner.
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const waited = new Promise<'open'>((r) => {
+        timer = setTimeout(() => r('open'), 8_000);
+      });
+      const ended = (async () => {
+        for (;;) {
+          const chunk = await reader.read().catch(() => ({ done: true as const }));
+          if (chunk.done) return 'closed' as const;
+        }
+      })();
+      const outcome = await Promise.race([ended, waited]);
+      clearTimeout(timer);
+      await reader.cancel().catch(() => {});
+      expect(outcome).toBe('closed');
+    } finally {
+      running.stop();
+      await running.stopped;
+    }
+  }, 30_000);
 
   it('keeps a token it was handed, whatever the store says afterwards', async () => {
     // The other half of the rule: `--token` and `AKAPEN_TOKEN` belong to whoever passed

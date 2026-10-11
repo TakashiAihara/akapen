@@ -63,7 +63,7 @@ The examples below use `bun run packages/cli/src/cli.ts`; read that as `akapen` 
 | Option | Meaning |
 |---|---|
 | `--host <addr>` | listen address: an IP address or `localhost`; any other name is refused (default `127.0.0.1`) |
-| `-p, --port <n>` | port (default `4300`) |
+| `-p, --port <n>` | port (default `4300`; when that is taken, one the OS picks, said on the startup line. A port given here is not moved off) |
 | `-A, --advertise <addr\|iface>` | address to print in the URL, or an interface to take one from (`AKAPEN_ADVERTISE` sets it once per host) |
 | `--css <file>` | extra stylesheet, loaded after the defaults so it can override everything |
 | `--keymap <file>` | JSON overriding the keymap, merged over the defaults |
@@ -217,7 +217,7 @@ Current-round comments come first, ordered by line. Entries with `current_round:
 
 An agent resolves with `POST /api/comments/<id>/resolve` and the `Authorization` header. The call flips the state, so a second one reopens the comment; check `resolved` in the response. Which comments an agent should resolve is the caller's policy; the channel's instructions say: ones it changed the document for or did what they asked, or when the person says so, and not a reply that only answers a question.
 
-There is an example stylesheet in `examples/dense.css`.
+There is an example stylesheet in `examples/dense.css`. The space above a heading is the variable `--ak-heading-above`, set per heading row (`.row.heading { --ak-heading-above: 12px; }`), not the heading's `margin-top`: the line number and the + are placed with it, so a sheet that sets the margin leaves them behind.
 
 ```bash
 bun run packages/cli/src/cli.ts note.md --css examples/dense.css
@@ -369,7 +369,7 @@ A link is built from the address the page was opened on, `location.hostname`, no
 
 A row shows the basename, the round and the unresolved count. Not the title either, which nothing on the switcher uses (`akapen list --json` has it). **Not the path**: directory layout is not something to hand out, and the token says a reader may see the review rather than everything about the machine holding it. `akapen list` does print it in full — that is read on the host, by whoever started them.
 
-Instances find each other by asking, and the request carries the same token, so a peer started with a different one reads as not running.
+Instances find each other by asking, and the request carries the same token, so a peer started with a different one does not answer, and `akapen list` says so rather than that nothing is running.
 
 Only instances sharing an `AKAPEN_HOME` see each other, and only on one host. Reaching across hosts is a different thing and is not built.
 

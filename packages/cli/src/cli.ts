@@ -7,7 +7,7 @@ import { AdvertiseError, localAddresses, resolveAdvertised, urlsFor } from '@aka
 
 import { isInside } from '@akapen/core/files';
 import { loadReview, pendingComments } from '@akapen/core/store';
-import { liveInstances, reachableHost } from '@akapen/core/instances';
+import { liveInstances, reachableHost, readInstances } from '@akapen/core/instances';
 import { liveEntries, sweep as sweepSessions } from '@akapen/core/sessions';
 import { currentToken, resolveToken, rotateToken, secureHome, tokenIsPinned } from '@akapen/core/token';
 import { parseArgs, resolveHost, resolvePort, resolveSession, UsageError, type Args } from './args.ts';
@@ -24,7 +24,8 @@ const USAGE = `akapen — markdown inline review (PoC)
 
 options:
   --host <addr>            listen address: an IP address or localhost (default 127.0.0.1)
-  -p, --port <n>           port (default 4300)
+  -p, --port <n>           port (default 4300, or one the OS picks when that is taken;
+                           a port given here is never moved off. 0: let the OS pick)
   -A, --advertise <addr>   address to print in the URL, or an interface to take one
                            from ($AKAPEN_ADVERTISE sets it once per host)
   --css <file>             extra stylesheet to load
@@ -108,7 +109,7 @@ if (positional[0] === 'list') {
   const entries = liveEntries();
   // `currentToken`, not `resolveToken`: listing is a read, and a read that generates and
   // stores a secret as a side effect is a surprise. An instance running on a token this
-  // caller does not have simply does not answer, and reads as not running.
+  // caller does not have simply does not answer, and is reported as not answering.
   const all = await liveInstances({ token: currentToken() });
   /**
    * Only what one session started.
@@ -174,9 +175,14 @@ if (positional[0] === 'list') {
     // typo or a session that has closed everything, so it is not called a session. A
     // match with nothing live is a registered instance that did not answer — busy, or on
     // another token — so it is not called "none running" either.
+    // An entry whose process is alive but did not answer is not "nothing running" (#221).
+    // Why it did not answer is not known here, so no cause is named.
+    const registered = args.session === undefined ? readInstances().length : 0;
     console.log(
       args.session === undefined
-        ? 'no akapen is running'
+        ? registered === 0
+          ? 'no akapen is running'
+          : `no akapen answered (${registered} registered)`
         : session === null
           ? `no akapen running here was started by a session matching ${JSON.stringify(args.session)}`
           : "that session's akapen did not answer",
@@ -418,20 +424,31 @@ const token = args['no-auth'] ? null : resolveToken(args.token);
 // resident for a whole Claude Code session and never serves a page, so paying for the
 // server there costs about 20MB per session for nothing.
 const { startServer } = await import('@akapen/server');
-const { server, stop, storeDir, round } = startServer({
-  file,
-  host,
-  port,
-  token,
-  tokenPinned: tokenIsPinned(args.token),
-  author: args.author ?? process.env['USER'] ?? 'user',
-  advertised,
-  // exactOptionalPropertyTypes: `?:` means "may be absent", not "may be undefined".
-  // With no value given, drop the key entirely.
-  ...(args.css ? { cssPath: resolve(args.css) } : {}),
-  ...(args.keymap ? { keymapPath: resolve(args.keymap) } : {}),
-  ...(args.root ? { root: resolve(args.root) } : {}),
-});
+let started: ReturnType<typeof startServer>;
+try {
+  started = startServer({
+    file,
+    host,
+    port,
+    // Only the default moves. `-p` named a port, and being moved off it silently would
+    // be worse than failing (#107).
+    fallBackIfTaken: args.port === undefined,
+    token,
+    tokenPinned: tokenIsPinned(args.token),
+    author: args.author ?? process.env['USER'] ?? 'user',
+    advertised,
+    // exactOptionalPropertyTypes: `?:` means "may be absent", not "may be undefined".
+    // With no value given, drop the key entirely.
+    ...(args.css ? { cssPath: resolve(args.css) } : {}),
+    ...(args.keymap ? { keymapPath: resolve(args.keymap) } : {}),
+    ...(args.root ? { root: resolve(args.root) } : {}),
+  });
+} catch (err) {
+  if ((err as { code?: unknown }).code !== 'EADDRINUSE') throw err;
+  // Only an explicit port reaches here; the default falls back instead.
+  fail(`--port ${port} is in use. Pick another, or -p 0 to let the OS choose`);
+}
+const { server, stop, storeDir, round, movedFrom } = started;
 
 /**
  * Take the registry entry with us. `stop()` removes it, and without this a Ctrl-C —
@@ -458,7 +475,7 @@ for (const [signal, code] of [
  * does not serve, printing one back yields a 403 rather than merely an odd-looking URL.
  *
  * `server.port` is what the OS chose for `-p 0`; Bun only leaves it unset when serving
- * on a unix socket, which nothing here does, so the requested port is the fallback.
+ * on a unix socket, which nothing here does, so the requested port stands in for it.
  */
 // A pinned address stands in for the bind, rather than being offered alongside it.
 // Passing it as the list instead would have been dropped for a concrete bind, where
@@ -488,6 +505,7 @@ console.log(`  url     ${withToken(primary)}`);
 // and this process does not, so all of them are offered rather than one guessed at.
 // Nothing is printed here when `--advertise` named one: the choice has been made.
 for (const also of alternates) console.log(`  also    ${withToken(also)}`);
+if (movedFrom !== null) console.log(`  note    port ${movedFrom} was taken, so the OS picked ${server.port}`);
 console.log(`  round   ${String(round).padStart(3, '0')}`);
 console.log(`  store   ${storeDir}`);
 if (token === null) {

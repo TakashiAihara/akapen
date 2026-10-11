@@ -266,16 +266,16 @@ function walkTable(tokens: Token[], openIdx: number, ctx: Ctx): number {
       });
       // The separator row (|---|---|) produces no token, so add it explicitly after the header
       if (isHeader) {
-        const sepLine = e + 1;
-        if (/^\s*\|?[\s:|-]+\|?\s*$/.test(ctx.lines[sepLine - 1] ?? '')) {
-          push(ctx, {
-            startLine: sepLine,
-            endLine: sepLine,
-            kind: 'table-row',
-            html: '<div class="table-separator"></div>',
-            flags: ['table-separator'],
-          });
-        }
+        // markdown-it makes a table only when the delimiter row follows the header, so the
+        // next line is it. Not read back from the source: its quote markers (`>`, and nested
+        // ones spaced apart) made a pattern miss it, and it was filled in as a gap line (#222).
+        push(ctx, {
+          startLine: e + 1,
+          endLine: e + 1,
+          kind: 'table-row',
+          html: '<div class="table-separator"></div>',
+          flags: ['table-separator'],
+        });
       }
       i = trClose;
     }
@@ -288,6 +288,7 @@ function walkList(tokens: Token[], openIdx: number, ctx: Ctx): number {
   const closeIdx = findClose(tokens, openIdx);
   const ordered = open.type === 'ordered_list_open';
   let index = Number(open.attrGet('start') ?? 1);
+  const first = ctx.out.length;
 
   for (let i = openIdx + 1; i < closeIdx; i++) {
     const t = tokens[i]!;
@@ -335,6 +336,17 @@ function walkList(tokens: Token[], openIdx: number, ctx: Ctx): number {
     index++;
     i = itemClose;
   }
+
+  // The list's last row, whatever kind it is (an item, or code or a table inside one), so
+  // the page can space the way out of the list as it spaces the way in (#92).
+  const last = ctx.out
+    .slice(first)
+    .reduce<Block | undefined>(
+      (end, b) => (end === undefined || b.endLine > end.endLine ? b : end),
+      undefined,
+    );
+  // A nested list that ends the outer one has marked this row already.
+  if (last && !last.flags.includes('list-last')) last.flags.push('list-last');
   return closeIdx;
 }
 
