@@ -140,20 +140,36 @@ export function parseArgs(argv: string[]): Args {
 /**
  * `--host`, checked before the socket is opened (#132).
  *
- * An IP address in either IPv6 spelling, or `localhost`. Any other name is refused: the
- * server answers no `Host` but its addresses and `localhost` (`allowedHostnames`), so
- * binding to a name would start a server that refuses every request it was started for.
- * Without this, a value Bun cannot bind surfaced as a stack trace, or as "Is port 0 in
- * use?", which sends the reader after a port that cannot be the problem.
+ * An IP address in either IPv6 spelling, or a host name. Without this, a value Bun
+ * cannot bind surfaced as a stack trace, or as "Is port 0 in use?", which sends the
+ * reader after a port that cannot be the problem.
  *
- * Only the shape is checked. An address this machine does not have still fails inside
- * Bun.serve, with EADDRNOTAVAIL, which at least names the right problem.
+ * Names stay allowed: `allowedHostnames` serves the bind value itself, so `--host
+ * $(uname -n)` answers on that name. Whether a name resolves is checked by the caller,
+ * which can wait on DNS. A zone id (`fe80::1%eth0`) is refused for the reason
+ * `--advertise` refuses link-local addresses: a URL cannot carry it.
+ *
+ * Only the shape is checked here. An address this machine does not have still fails
+ * inside Bun.serve with EADDRNOTAVAIL, as a stack trace that at least names the problem.
  */
 export function resolveHost(raw: string | undefined): string {
   if (raw === undefined) return '127.0.0.1';
-  const bare = /^\[(.*)\]$/.exec(raw)?.[1] ?? raw;
-  if (raw === 'localhost' || isIP(raw) !== 0 || (bare !== raw && isIP(bare) === 6)) return raw;
-  throw new UsageError(`--host must be an IP address or localhost, got ${JSON.stringify(raw)}`);
+  const bracketed = /^\[(.*)\]$/.exec(raw)?.[1];
+  const address = bracketed === undefined ? isIP(raw) !== 0 : isIP(bracketed) === 6;
+  if (raw.includes('%')) {
+    throw new UsageError(`--host ${JSON.stringify(raw)} carries a zone id, which a URL cannot`);
+  }
+  if (address || HOST_NAME.test(raw)) return raw;
+  throw new UsageError(`--host must be an IP address or a host name, got ${JSON.stringify(raw)}`);
+}
+
+/** RFC 1123 labels, dot separated: letters, digits and inner hyphens, at most 63 each. */
+const HOST_NAME =
+  /^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$/i;
+
+/** Whether `host` is a name, as opposed to an address, so the caller knows to look it up. */
+export function isHostName(host: string): boolean {
+  return isIP(host) === 0 && !host.startsWith('[');
 }
 
 /**

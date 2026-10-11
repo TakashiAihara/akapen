@@ -216,14 +216,14 @@ describe('--advertise', () => {
   }, 30_000);
 
   // #132: these reached Bun.serve, and came back as a stack trace or as "Is port 0 in use?"
-  it.each(['[::1', 'not a host', 'example.com', '127.0.0.1:4300', '::1]'])(
+  // `.invalid` is reserved never to resolve (RFC 6761), so it stands for a mistyped name.
+  it.each(['[::1', 'not a host', '127.0.0.1:4300', '::1]', 'fe80::1%lo', 'nonexistent.invalid'])(
     'refuses --host %j by name, with the usage, and says nothing about a port',
     (value) => {
       const result = failing(['--host', value]);
       expect(result.status).toBe(1);
-      expect(result.stderr).toContain(
-        `--host must be an IP address or localhost, got ${JSON.stringify(value)}`,
-      );
+      expect(result.stderr).toContain(`akapen: --host`);
+      expect(result.stderr).toContain(JSON.stringify(value));
       expect(result.stderr).toContain('akapen <file.md> [options]');
       expect(result.stderr).not.toMatch(/Is port|EADDRINUSE|at startServer/);
     },
@@ -235,7 +235,9 @@ describe('--advertise', () => {
     'still starts on --host %s',
     async (value) => {
       const { lines } = await start(['--host', value, '--no-auth']);
-      expect(urlsIn(lines).length).toBeGreaterThan(0);
+      // Answering, not only printing: a bind the Host check then refuses would print fine.
+      const [url] = urlsIn(lines);
+      expect((await fetch(`${url}/api/doc`)).ok).toBe(true);
     },
     30_000,
   );
