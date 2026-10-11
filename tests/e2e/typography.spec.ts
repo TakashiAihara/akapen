@@ -6,7 +6,8 @@
  * sheet; an h4 was the size of a paragraph and, in a serif, lighter than one. Nothing
  * errors either way, so only the computed styles can say.
  */
-import { expect, test } from './fixtures.ts';
+import { writeFileSync } from 'node:fs';
+import { AUTH, expect, test } from './fixtures.ts';
 
 test.beforeEach(async ({ page, akapen }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -43,4 +44,27 @@ test('keeps every heading level above body text', async ({ page }) => {
   // 700, not 600: a face with only a regular draws 600 as regular, and the serif h4 then
   // reads lighter than the sans paragraph under it
   expect(seen.h4Weight).toBeGreaterThanOrEqual(700);
+});
+
+test('starts the line number and the + level with a heading, not above it (#91, #28)', async ({
+  page,
+  akapen,
+  request,
+}) => {
+  writeFileSync(akapen.file, 'Para.\n\n## Section\n\n### Right under\n\nPara.\n\n#### Four\n\nPara.\n');
+  expect((await request.post(`${akapen.url}/api/rounds`, { headers: AUTH })).ok()).toBe(true);
+  await page.goto(akapen.url);
+  await page.evaluate(() => document.body.classList.add('show-lines'));
+  await expect(page.locator('.row.heading')).toHaveCount(3);
+
+  // The number's top against the top of the heading's first line of text.
+  const offsets = await page.evaluate(() =>
+    [...document.querySelectorAll('.row.heading')].map((row) => {
+      const range = document.createRange();
+      range.selectNodeContents(row.querySelector('.body > *')!);
+      return row.querySelector('.lineno')!.getBoundingClientRect().top - range.getClientRects()[0]!.top;
+    }),
+  );
+  // Above it by the heading's own top margin before (16px for an h2); now within a few px.
+  for (const off of offsets) expect(Math.abs(off)).toBeLessThan(8);
 });
