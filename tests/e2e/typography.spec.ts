@@ -6,7 +6,8 @@
  * sheet; an h4 was the size of a paragraph and, in a serif, lighter than one. Nothing
  * errors either way, so only the computed styles can say.
  */
-import { expect, test } from './fixtures.ts';
+import { writeFileSync } from 'node:fs';
+import { AUTH, expect, test } from './fixtures.ts';
 
 test.beforeEach(async ({ page, akapen }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -43,4 +44,27 @@ test('keeps every heading level above body text', async ({ page }) => {
   // 700, not 600: a face with only a regular draws 600 as regular, and the serif h4 then
   // reads lighter than the sans paragraph under it
   expect(seen.h4Weight).toBeGreaterThanOrEqual(700);
+});
+
+test('leaves the same space on the way out of a list as on the way in (#92)', async ({
+  page,
+  akapen,
+  request,
+}) => {
+  writeFileSync(akapen.file, 'Before the list.\n\n- first item\n- last item\n\nAfter the list.\n');
+  expect((await request.post(`${akapen.url}/api/rounds`, { headers: AUTH })).ok()).toBe(true);
+  await page.goto(akapen.url);
+  await expect(page.locator('.row.list-item')).toHaveCount(2);
+
+  // Ink to ink: the text boxes, not the rows, since margins are what is measured.
+  const [before, first, last, after] = await page.evaluate(() =>
+    [...document.querySelectorAll('.body p, .body .li')].map((el) => {
+      const r = el.getBoundingClientRect();
+      return { top: r.top, bottom: r.bottom };
+    }),
+  );
+  const into = first!.top - before!.bottom;
+  const out = after!.top - last!.bottom;
+  expect(out).toBeGreaterThan(0);
+  expect(out).toBeCloseTo(into, 0);
 });
