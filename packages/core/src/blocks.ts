@@ -133,7 +133,14 @@ function highlight(code: string, lang: string): string {
   return esc(code);
 }
 
-type Ctx = { lines: string[]; out: Block[]; depth: number; quoted: boolean };
+/**
+ * The lines a quote or a list item spans (1-based, inclusive), with the depth and quoted
+ * state of what is inside it. Kept so a line no token covers can take its state from the
+ * container it sits in, rather than guessing it from the text (#203).
+ */
+type Container = { start: number; end: number; depth: number; quoted: boolean };
+
+type Ctx = { lines: string[]; out: Block[]; depth: number; quoted: boolean; containers: Container[] };
 
 function rawRange(lines: string[], startLine: number, endLine: number): string {
   return lines.slice(startLine - 1, endLine).join('\n');
@@ -312,6 +319,8 @@ function walkList(tokens: Token[], openIdx: number, ctx: Ctx): number {
     // paragraphs) through the same walk. Enumerating kinds always misses something —
     // it broke on a real note that had a table inside a list.
     ctx.depth++;
+    if (t.map)
+      ctx.containers.push({ start: t.map[0] + 1, end: t.map[1], depth: ctx.depth, quoted: ctx.quoted });
     walk(tokens.slice(restStart, itemClose), ctx);
     ctx.depth--;
 
@@ -372,6 +381,8 @@ function walk(tokens: Token[], ctx: Ctx): void {
         // Restore rather than clear: leaving `> > inner` is still inside the outer quote (#197).
         const outer = ctx.quoted;
         ctx.quoted = true;
+        if (t.map)
+          ctx.containers.push({ start: t.map[0] + 1, end: t.map[1], depth: ctx.depth, quoted: true });
         walk(tokens.slice(i + 1, closeIdx), ctx);
         ctx.quoted = outer;
         i = closeIdx;
@@ -418,7 +429,7 @@ export function buildDoc(path: string, source: string): Doc {
     body = blanked.join('\n');
   }
 
-  const ctx: Ctx = { lines, out, depth: 0, quoted: false };
+  const ctx: Ctx = { lines, out, depth: 0, quoted: false, containers: [] };
   walk(md.parse(body, {}), ctx);
 
   // Pick up lines that produce no token (a bare "> " inside a quote, for example).
@@ -430,7 +441,14 @@ export function buildDoc(path: string, source: string): Doc {
   for (let ln = 1; ln <= lines.length; ln++) {
     const raw = lines[ln - 1]!;
     if (!raw.trim() || covered.has(ln)) continue;
-    const quoted = /^\s*>/.test(raw);
+    // The innermost container holding the line: containers nest, so it is the one that
+    // starts last. Outside every container the line is at the top level, unquoted.
+    const inside = ctx.containers
+      .filter((c) => c.start <= ln && ln <= c.end)
+      .reduce<Container | undefined>(
+        (best, c) => (best === undefined || c.start >= best.start ? c : best),
+        undefined,
+      );
     const stripped = raw.replace(/^\s*>+\s?/, '');
     out.push({
       startLine: ln,
@@ -438,8 +456,8 @@ export function buildDoc(path: string, source: string): Doc {
       kind: 'paragraph',
       html: stripped.trim() ? `<p>${md.renderInline(stripped)}</p>` : '<p class="gap-line"></p>',
       text: raw,
-      depth: 0,
-      quoted,
+      depth: inside?.depth ?? 0,
+      quoted: inside?.quoted ?? false,
       flags: ['gap'],
     });
   }

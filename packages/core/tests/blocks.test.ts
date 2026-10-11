@@ -141,6 +141,44 @@ describe('attribute values', () => {
   });
 });
 
+/**
+ * Lines no token covers take depth and quoted from the quote or list item they sit in
+ * (#203), the way every other line there does. They used to guess quoted from a leading
+ * `>` and always get depth 0.
+ */
+function gaps(text: string): [number, number, boolean][] {
+  return buildDoc('/x.md', text)
+    .blocks.filter((b) => b.flags.includes('gap'))
+    .map((b) => [b.startLine, b.depth, b.quoted]);
+}
+
+describe('gap lines', () => {
+  it('sit at the depth of the list item they are in', () => {
+    expect(gaps('- a\n\n  [x]: http://y\n')).toEqual([[3, 1, false]]);
+    expect(gaps('- a\n  - b\n\n    [x]: http://y\n')).toEqual([[4, 2, false]]);
+  });
+
+  it('are quoted inside a quote, and at its depth when the quote is in a list', () => {
+    expect(gaps('- a\n\n  > q\n  >\n  > r\n')).toEqual([[4, 1, true]]);
+    expect(gaps('> - a\n>\n>   [x]: http://y\n')).toEqual([
+      [2, 1, true],
+      [3, 1, true],
+    ]);
+  });
+
+  it('stay at the top level, unquoted, outside every container', () => {
+    expect(gaps('[x]: http://y\n')).toEqual([[1, 0, false]]);
+    expect(gaps('> a\n>\n> b\n')).toEqual([[2, 0, true]]);
+  });
+
+  it('agree with the line beside them in the same container', () => {
+    const d = buildDoc('/x.md', '- a\n\n  > q\n  >\n  > r\n');
+    const gap = d.blocks.find((b) => b.flags.includes('gap'));
+    const r = d.blocks.find((b) => b.text.includes('> r'))!;
+    expect([gap!.depth, gap!.quoted]).toEqual([r.depth, r.quoted]);
+  });
+});
+
 describe('quoted', () => {
   it('stays set after a nested quote closes inside the outer one', () => {
     const d = buildDoc('/x.md', '> > inner\n>\n> # Outer\n\nAfter\n');
