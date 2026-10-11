@@ -718,8 +718,9 @@ body.rail-overlay .marker { display: inline-flex; align-items: center; justify-c
   overflow-wrap: anywhere;
 }
 .bubble-body, .reply-body { max-height: 12em; overflow-y: auto; }
-/* Only on `active`, which re-runs the rail's layout. Focus does not: a body opened by
-   focus alone grew under the next bubble (#219), and focusing the reply box opened it. */
+/* Only on `active`, which re-runs the rail's layout. Focus inside a bubble does not open
+   a body: one opened that way grew under the next bubble (#219). Focus on the bubble
+   itself makes it active, which is the keyboard's way in. */
 .bubble.active :is(.bubble-body, .reply-body) { max-height: none; }
 .bubble:focus-visible, .row:focus-visible { outline: 2px solid var(--ak-focus); outline-offset: 1px; }
 .bubble-error { padding: 0 10px 8px; color: var(--ak-warn); font-size: 0.8rem; }

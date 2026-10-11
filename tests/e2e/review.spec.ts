@@ -455,6 +455,32 @@ test('opens a long comment only when its bubble is active, not on focus (#219)',
   expect(open.shown).toBe(open.full);
 });
 
+test('opens a long comment for a keyboard reader who tabs onto its bubble', async ({
+  page,
+  akapen,
+  request,
+}) => {
+  // The keyboard's way in, now that focus inside the bubble no longer opens it: focus on
+  // the bubble itself makes it active, which lays the rail out.
+  const long = Array.from({ length: 40 }, (_, i) => `line ${i + 1} of a long comment`).join('\n');
+  expect(
+    (
+      await request.post(`${akapen.url}/api/comments`, {
+        headers: AUTH,
+        data: { startLine: 10, endLine: 10, body: long },
+      })
+    ).ok(),
+  ).toBe(true);
+  await page.goto(akapen.url);
+  const bubble = page.locator('.bubble').first();
+  await bubble.focus();
+  await expect(bubble).toHaveClass(/\bactive\b/);
+  const open = await bubble
+    .locator('.bubble-body')
+    .evaluate((el) => ({ shown: el.clientHeight, full: el.scrollHeight }));
+  expect(open.shown).toBe(open.full);
+});
+
 test('folds a long reply until its bubble is being read, the way a long comment is folded', async ({
   page,
   akapen,
