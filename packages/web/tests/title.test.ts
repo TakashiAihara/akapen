@@ -8,7 +8,7 @@
  */
 import { buildDoc } from '@akapen/core/blocks';
 import { describe, expect, it } from 'vitest';
-import { documentTitle } from '@akapen/shared/title';
+import { documentTitle, isDocumentHeading } from '@akapen/shared/title';
 import { pageTitle } from '../src/title.ts';
 
 const doc = (source: string, path = '/home/x/notes/20-auth.md') => buildDoc(path, source);
@@ -118,5 +118,28 @@ describe('documentTitle', () => {
 
   it('is empty when the only top-level heading is in a list', () => {
     expect(documentTitle(doc('- # Listed\n\nA paragraph.\n'))).toBe('');
+  });
+});
+
+describe('isDocumentHeading', () => {
+  // A link reference definition is a line no token covers, so it is filled in as a gap
+  // line, and an unquoted one: a bare `>` would be quoted, and so false for the old
+  // predicate as well, which would leave the gap-line half of this checking nothing.
+  const blocks = buildDoc(
+    '/home/x/n.md',
+    '---\nstatus: draft\n---\n\n[a]: http://x\n\nText.\n\n- # Listed\n\n# Real\n\n> # Quoted\n',
+  ).blocks;
+
+  it('answers false for paragraphs, frontmatter and gap lines, though they stand outside any quote or list (#202)', () => {
+    const others = blocks.filter((b) => b.kind !== 'heading');
+    // Each kind is there, unquoted and at depth 0, so the answer below is about them.
+    expect(others.some((b) => b.kind === 'frontmatter' && !b.quoted && b.depth === 0)).toBe(true);
+    expect(others.some((b) => b.flags.includes('gap') && !b.quoted && b.depth === 0)).toBe(true);
+    expect(others.some((b) => b.kind === 'paragraph' && b.flags.length === 0 && b.depth === 0)).toBe(true);
+    expect(others.filter(isDocumentHeading)).toEqual([]);
+  });
+
+  it('answers true for a top-level heading, and false for a quoted or a listed one', () => {
+    expect(blocks.filter(isDocumentHeading).map((b) => b.startLine)).toEqual([11]);
   });
 });
