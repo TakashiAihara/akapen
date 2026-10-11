@@ -19,8 +19,9 @@ test('says when the port serves another document, stops writing to it, and stops
   const dir = mkdtempSync(join(tmpdir(), 'akapen-e2e-reuse-'));
   const mine = join(dir, 'first.md');
   writeFileSync(mine, readFileSync(akapen.file, 'utf8'));
+  let first: Awaited<ReturnType<typeof startPeer>> | undefined;
   try {
-    const first = await startPeer(akapen.home, mine);
+    first = await startPeer(akapen.home, mine);
     const url = `http://127.0.0.1:${first.port}`;
     await context.addCookies([{ name: 'akapen_token', value: akapen.token, url }]);
     await page.goto(url);
@@ -70,6 +71,8 @@ test('says when the port serves another document, stops writing to it, and stops
       await again.stop();
     }
   } finally {
+    // Stopping twice is a no-op, so this only matters when a step above threw first.
+    await first?.stop();
     rmSync(dir, { recursive: true, force: true });
   }
 });
