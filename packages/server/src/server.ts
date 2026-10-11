@@ -726,8 +726,16 @@ export function startServer(opts: ServeOptions) {
     const stream = new ReadableStream({
       start(controller) {
         const enc = new TextEncoder();
+        // Let in under this token. A rotation revokes it, and with the heartbeat keeping
+        // the stream open nothing else would, so the next frame closes the stream instead.
+        const openedUnder = currentSecret();
         send = (frame: string) => {
           try {
+            if (currentSecret() !== openedUnder) {
+              clients.delete(send);
+              controller.close();
+              return;
+            }
             controller.enqueue(enc.encode(frame));
           } catch {
             clients.delete(send);

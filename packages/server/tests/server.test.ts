@@ -272,7 +272,10 @@ describe('the event stream', () => {
     }
     expect(closed).toBe(false);
     // Several in 14 seconds, and as comments, which EventSource does not deliver as messages.
-    expect(text.split(': ping\n\n').length - 1).toBeGreaterThanOrEqual(3);
+    const frames = text.split('\n\n').filter(Boolean);
+    expect(frames.filter((f) => f === ': ping').length).toBeGreaterThanOrEqual(3);
+    // Only the comment frame carries it: as a data frame EventSource would deliver it.
+    expect(frames.filter((f) => f.includes('ping') && f !== ': ping')).toEqual([]);
   }, 30_000);
 });
 
@@ -1732,6 +1735,46 @@ describe('authentication', () => {
 
       expect((await bearer(after)).status).toBe(200);
       expect((await bearer(before)).status).toBe(401);
+    } finally {
+      running.stop();
+      await running.stopped;
+    }
+  });
+
+  it('closes an event stream opened before a rotation (#237)', async () => {
+    // The heartbeat keeps a quiet stream open, so the rotation has to end it itself.
+    const home = join(sandbox, 'rotating-stream-home');
+    const note = join(sandbox, 'rotating-stream.md');
+    writeFileSync(note, SOURCE);
+    const running = await start(note, home, [], { token: null });
+    try {
+      const before = readFileSync(join(home, 'token'), 'utf8').trim();
+      const res = await globalThis.fetch(`${running.url}/events`, {
+        headers: { authorization: `Bearer ${before}` },
+      });
+      expect(res.status).toBe(200);
+      const reader = res.body!.getReader();
+      await reader.read();
+
+      execFileSync('bun', ['run', CLI, 'token', '--rotate'], {
+        env: { ...process.env, AKAPEN_HOME: home },
+        encoding: 'utf8',
+      });
+      // A second for the server to re-read the token, then a heartbeat to carry it out.
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const waited = new Promise<'open'>((r) => {
+        timer = setTimeout(() => r('open'), 8_000);
+      });
+      const ended = (async () => {
+        for (;;) {
+          const chunk = await reader.read().catch(() => ({ done: true as const }));
+          if (chunk.done) return 'closed' as const;
+        }
+      })();
+      const outcome = await Promise.race([ended, waited]);
+      clearTimeout(timer);
+      await reader.cancel().catch(() => {});
+      expect(outcome).toBe('closed');
     } finally {
       running.stop();
       await running.stopped;
