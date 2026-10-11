@@ -258,6 +258,11 @@ test('takes a resolve on a carried comment on a screen another one moved past', 
   await page.locator('#nextRound').click();
   await expect(page.locator('#round')).toHaveText('R002');
   await expect(page.locator('#railCarried .bubble')).toHaveCount(1);
+  // One of R002's own, so taking the whole answer would be seen: on R003 it is carried,
+  // and R002's own rail would empty.
+  await openDraft(page, 2);
+  await post(page, 'on R002');
+  await expect(page.locator(A.rail)).toHaveCount(1);
 
   const other = await page.context().newPage();
   await other.goto(akapen.url);
@@ -267,8 +272,14 @@ test('takes a resolve on a carried comment on a screen another one moved past', 
   await expect(other.locator('#round')).toHaveText('R003');
   await expect(page.locator('#movedBar')).toBeVisible();
 
-  await page.locator('#railCarried .bubble').getByRole('button', { name: 'Resolve' }).click();
+  await page
+    .locator('#railCarried .bubble')
+    .filter({ hasText: 'carried from R001' })
+    .getByRole('button', { name: 'Resolve' })
+    .click();
   await expect(page.locator('#railCarried .bubble')).toHaveCount(0);
+  await expect(page.locator(A.rail)).toHaveCount(1);
+  await expect(page.locator(A.rail)).toContainText('on R002');
   await expect(page.locator('#round')).toHaveText('R002');
 });
 
