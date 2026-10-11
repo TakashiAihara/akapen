@@ -7,7 +7,7 @@ import { AdvertiseError, localAddresses, resolveAdvertised, urlsFor } from '@aka
 
 import { isInside } from '@akapen/core/files';
 import { loadReview, pendingComments } from '@akapen/core/store';
-import { liveInstances, readInstances } from '@akapen/core/instances';
+import { liveInstances, reachableHost, readInstances } from '@akapen/core/instances';
 import { liveEntries, sweep as sweepSessions } from '@akapen/core/sessions';
 import { currentToken, resolveToken, rotateToken, secureHome, tokenIsPinned } from '@akapen/core/token';
 import { parseArgs, resolveHost, resolvePort, resolveSession, UsageError, type Args } from './args.ts';
@@ -16,6 +16,8 @@ const USAGE = `akapen — markdown inline review (PoC)
 
   akapen <file.md> [options]     start the review server
   akapen comments <file.md>      print unresolved comments as JSON (for agents)
+  akapen reply <file.md> <id> <text>   reply to a comment (--resolve to close it too)
+  akapen resolve <file.md> <id>  resolve a comment
   akapen list                    print the akapen running on this host
   akapen channel                 push this session's comments to Claude Code (MCP channel)
   akapen token                   print this host's token (--rotate to replace it)
@@ -37,6 +39,7 @@ options:
   --json                   list: print as JSON (for agents)
   --session <id>           list: only what that session started (a unique prefix works)
   --rotate                 token: replace the stored token
+  --resolve                reply: resolve the comment after replying
 `;
 
 /** Anything typed wrong ends here: the reason, then how to type it. */
@@ -217,6 +220,103 @@ if (positional[0] === 'list') {
       `${r.pid.padEnd(w.pid)}  ${r.session.padEnd(w.session)}  ${r.url.padEnd(w.url)}  ${r.round.padEnd(w.round)}  ${r.unresolved.padEnd(w.unresolved)}  ${r.file}`,
     );
   }
+  process.exit(0);
+}
+
+/**
+ * Reply to and resolve a comment from the command line (#130), rather than with curl.
+ *
+ * Through the akapen serving the file: the server keeps the current round's comments in
+ * memory and writes them back, so a reply written to the store from here would be lost on
+ * its next write. The file is identified as the store identifies it (the resolved path),
+ * for both the comment lookup and the instance. A reply carries `X-Akapen-Session` when
+ * there is a session to name, so it is filed as the agent's. Resolving toggles on the
+ * server, so a comment already resolved is not sent, and the answer is checked.
+ */
+if (positional[0] === 'reply' || positional[0] === 'resolve') {
+  const verb = positional[0];
+  const [, file, id, text, ...extra] = positional;
+  if (!file || !existsSync(file)) fail(`no such file: ${file ?? '(missing)'}`);
+  if (!id) fail(`${verb}: which comment? Give its id, as \`akapen comments\` prints it`);
+  if (verb === 'reply' && !text?.trim()) fail('reply: the text of the reply is missing');
+  // A text in several words is one argument; quote it. Dropping the rest would send a part.
+  if (extra.length > 0 || (verb === 'resolve' && text !== undefined)) {
+    fail(
+      `${verb}: unexpected ${JSON.stringify(
+        [text, ...extra]
+          .filter((x) => x !== undefined)
+          .slice(verb === 'reply' ? 1 : 0)
+          .join(' '),
+      )}`,
+    );
+  }
+
+  const comment = pendingComments(file, true).find((c) => c.id === id);
+  if (!comment) {
+    console.error(`akapen: no comment ${id} on ${resolve(file)}`);
+    process.exit(1);
+  }
+  const alreadyResolved = comment.resolved && (verb === 'resolve' || args.resolve);
+  if (verb === 'resolve' && alreadyResolved) {
+    console.error(`akapen: ${id} is already resolved; resolving it again would reopen it`);
+    process.exit(1);
+  }
+  // A reply to a resolved comment still goes; only the resolve is left out.
+  const resolving = (verb === 'resolve' || args.resolve) && !alreadyResolved;
+
+  // `--token` as the server takes it, so an instance started with one can be reached.
+  const token = args.token !== undefined && args.token !== '' ? args.token : currentToken();
+  const target = resolve(file);
+  const serving = (await liveInstances({ token })).find((e) => e.record.file === target);
+  if (!serving) {
+    // Said as observed: one may be running on another token, and not have answered.
+    console.error(`akapen: no akapen serving ${target} answered`);
+    process.exit(1);
+  }
+  const base = `http://${reachableHost(serving.record.host)}:${serving.record.port}`;
+  const session = process.env['CLAUDE_CODE_SESSION_ID'] ?? '';
+  const headers: Record<string, string> = {
+    ...(token === null ? {} : { authorization: `Bearer ${token}` }),
+    ...(session === '' ? {} : { 'x-akapen-session': session }),
+  };
+  const post = async (path: string, done: string, body?: unknown): Promise<unknown> => {
+    const res = await fetch(`${base}${path}`, {
+      method: 'POST',
+      headers: body === undefined ? headers : { ...headers, 'content-type': 'application/json' },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      signal: AbortSignal.timeout(10_000),
+    }).catch((err: unknown) => {
+      // It may have landed before the answer was lost, so a retry could post it twice.
+      console.error(
+        `akapen: ${done}${path} did not answer (${err instanceof Error ? err.name : String(err)}); ` +
+          'check `akapen comments` before sending it again',
+      );
+      process.exit(1);
+    });
+    if (!res.ok) {
+      console.error(`akapen: ${done}${path} answered ${res.status}: ${await res.text()}`);
+      process.exit(1);
+    }
+    return res.json();
+  };
+  if (verb === 'reply') {
+    await post(`/api/comments/${encodeURIComponent(id)}/replies`, '', { body: text });
+    console.log(`replied (filed as ${session === '' ? 'a person, no CLAUDE_CODE_SESSION_ID' : 'the agent'})`);
+  }
+  if (resolving) {
+    const answer = (await post(
+      `/api/comments/${encodeURIComponent(id)}/resolve`,
+      verb === 'reply' ? 'replied, but ' : '',
+    )) as {
+      comment?: { resolved?: boolean };
+    };
+    // A toggle: someone else may have resolved it since the store was read, and this reopened it.
+    if (answer.comment?.resolved !== true) {
+      console.error(`akapen: ${id} is open after the call; it was resolved meanwhile, and this reopened it`);
+      process.exit(1);
+    }
+    console.log('resolved');
+  } else if (alreadyResolved) console.log(`${id} was already resolved; left as it is`);
   process.exit(0);
 }
 

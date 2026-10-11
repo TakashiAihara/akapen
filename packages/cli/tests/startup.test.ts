@@ -8,7 +8,7 @@
  * the process starts, serves correctly, and prints an address that opens nothing.
  */
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { networkInterfaces } from 'node:os';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -18,7 +18,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 const CLI = join(import.meta.dirname, '..', 'src', 'cli.ts');
 const SOURCE = ['# Heading', '', 'A paragraph.', ''].join('\n');
 
-type Started = { lines: string[]; stop: () => void; home: string };
+type Started = { lines: string[]; stop: () => void; home: string; file: string };
 
 let running: (() => void)[] = [];
 let sandboxes: string[] = [];
@@ -76,7 +76,7 @@ async function start(
       reject(new Error(`akapen exited with ${code}\n${out}`));
     });
   });
-  return { lines: out.split('\n'), stop, home };
+  return { lines: out.split('\n'), stop, home, file };
 }
 
 const urlsIn = (lines: string[]): string[] =>
@@ -371,4 +371,109 @@ describe('a taken port', () => {
       held?.close();
     }
   }, 30_000);
+});
+
+// #130: the other half of `akapen comments`, through the akapen serving the file.
+describe('akapen reply and resolve', () => {
+  const SESSION = 'fc40ec79-b629-4c08-9be7-721bb0d306a6';
+  const cli = (home: string, extra: string[]) =>
+    spawnSync('bun', ['run', CLI, ...extra], {
+      env: { ...process.env, AKAPEN_HOME: home, CLAUDE_CODE_SESSION_ID: SESSION },
+      encoding: 'utf8',
+      timeout: 20_000,
+    });
+  type Thread = {
+    id: string;
+    resolved: boolean;
+    replies: { body: string; authorKind: string; sessionId?: string }[];
+  };
+
+  it('replies as the session, resolves, and refuses to resolve twice', async () => {
+    const { lines, home, file, stop } = await start(['--no-auth']);
+    const [url] = urlsIn(lines);
+    const posted = await fetch(`${url}/api/comments`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ startLine: 1, endLine: 1, body: 'about the heading' }),
+    });
+    const { comment } = (await posted.json()) as { comment: { id: string } };
+    const read = async () =>
+      ((await (await fetch(`${url}/api/comments`)).json()) as Thread[]).find((c) => c.id === comment.id)!;
+
+    const replied = cli(home, ['reply', file, comment.id, 'reworded']);
+    expect(replied.status).toBe(0);
+    expect((await read()).replies).toMatchObject([
+      { body: 'reworded', authorKind: 'agent', sessionId: SESSION },
+    ]);
+    expect((await read()).resolved).toBe(false);
+
+    expect(cli(home, ['resolve', file, comment.id]).status).toBe(0);
+    expect((await read()).resolved).toBe(true);
+
+    // The server toggles, so a second resolve would reopen it. Refused instead.
+    const again = cli(home, ['resolve', file, comment.id]);
+    expect(again.status).toBe(1);
+    expect(again.stderr).toContain('already resolved');
+    expect((await read()).resolved).toBe(true);
+
+    const unknown = cli(home, ['reply', file, 'no-such-id', 'x']);
+    expect(unknown.status).toBe(1);
+    expect(unknown.stderr).toContain('no comment no-such-id');
+
+    stop();
+    await new Promise((r) => setTimeout(r, 500));
+    const nobody = cli(home, ['reply', file, comment.id, 'into the void']);
+    expect(nobody.status).toBe(1);
+    expect(nobody.stderr).toContain('answered');
+  }, 60_000);
+
+  it('reaches an akapen started with --token when given the same --token', async () => {
+    const pinned = 'pinned-for-the-reply-test';
+    const { lines, home, file } = await start(['--token', pinned]);
+    const url = new URL(urlsIn(lines)[0]!).origin;
+    const posted = await fetch(`${url}/api/comments`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${pinned}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ startLine: 1, endLine: 1, body: 'x' }),
+    });
+    const { comment } = (await posted.json()) as { comment: { id: string } };
+
+    expect(cli(home, ['reply', file, comment.id, 'without it']).status).toBe(1);
+    const given = cli(home, ['reply', file, comment.id, 'with it', '--token', pinned]);
+    expect(given.status).toBe(0);
+  }, 60_000);
+
+  it('replies and resolves in one call with --resolve, with auth on', async () => {
+    const { lines, home, file } = await start([]);
+    const url = new URL(urlsIn(lines)[0]!).origin;
+    const auth = { authorization: `Bearer ${readFileSync(join(home, 'token'), 'utf8').trim()}` };
+    const posted = await fetch(`${url}/api/comments`, {
+      method: 'POST',
+      headers: { ...auth, 'content-type': 'application/json' },
+      body: JSON.stringify({ startLine: 1, endLine: 1, body: 'x' }),
+    });
+    const { comment } = (await posted.json()) as { comment: { id: string } };
+    const read = async () =>
+      ((await (await fetch(`${url}/api/comments`, { headers: auth })).json()) as Thread[]).find(
+        (c) => c.id === comment.id,
+      )!;
+
+    const done = cli(home, ['reply', file, comment.id, 'fixed', '--resolve']);
+    expect(done.status).toBe(0);
+    expect((await read()).resolved).toBe(true);
+    expect((await read()).replies.map((r) => r.body)).toEqual(['fixed']);
+
+    // Already resolved: the reply still goes, and the resolve is left out rather than reopening it.
+    const late = cli(home, ['reply', file, comment.id, 'and one more', '--resolve']);
+    expect(late.status).toBe(0);
+    expect(late.stdout).toContain('already resolved');
+    expect((await read()).resolved).toBe(true);
+    expect((await read()).replies.map((r) => r.body)).toEqual(['fixed', 'and one more']);
+
+    // An unquoted text would send only its first word; refused before anything is sent.
+    const split = cli(home, ['reply', file, comment.id, 'two', 'words']);
+    expect(split.status).toBe(1);
+    expect(split.stderr).toContain('unexpected "words"');
+    expect((await read()).replies).toHaveLength(2);
+  }, 60_000);
 });
