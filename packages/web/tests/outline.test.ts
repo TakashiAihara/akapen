@@ -72,6 +72,10 @@ describe('buildOutline', () => {
     expect(shape('# Mine\n\n> ## Theirs\n\n## Also mine\n')).toEqual(['h1 Mine(1)', 'h2 Also mine(5)']);
   });
 
+  it('still leaves out a quoted heading after a nested quote closes inside the outer one', () => {
+    expect(shape('> > Nested\n>\n> # Quoted\n\n# Real\n')).toEqual(['h1 Real(5)']);
+  });
+
   it('goes to h3 by default and no further', () => {
     expect(shape('# 1\n\n## 2\n\n### 3\n\n#### 4\n\n##### 5\n\n###### 6\n')).toEqual([
       'h1 1(1)',
