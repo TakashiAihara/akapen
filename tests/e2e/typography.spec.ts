@@ -110,6 +110,10 @@ test('leaves a paragraph after a code block or a table the space it leaves after
   // Nor before the next item of a list the block sits in: items stay tight.
   const inList = await gapsOf(page, '- item\n\n  ```sh\n  make\n  ```\n- next\n', akapen, request);
   expect(inList.at(-1)).toBeLessThan(paraToPara - 3);
+  const tableInList = await gapsOf(page, '- item\n\n  | a |\n  |---|\n  | 1 |\n- next\n', akapen, request);
+  expect(tableInList.at(-1)).toBeLessThan(paraToPara - 3);
+  const headerOnlyInList = await gapsOf(page, '- item\n\n  | a |\n  |---|\n- next\n', akapen, request);
+  expect(headerOnlyInList.at(-2)! + headerOnlyInList.at(-1)!).toBeLessThan(paraToPara - 3);
 });
 
 test('spaces the way out of a list that ends in a code block, and not the way into it', async ({
