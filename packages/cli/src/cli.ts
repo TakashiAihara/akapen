@@ -100,7 +100,7 @@ if (positional[0] === 'token') {
 }
 
 if (positional[0] === 'list') {
-  // Before the probes, so the ids resolved against are the ones that were probed.
+  // Read before the probes as well as by them, so an id is known whichever read saw it.
   const entries = liveEntries();
   // `currentToken`, not `resolveToken`: listing is a read, and a read that generates and
   // stores a secret as a side effect is a surprise. An instance running on a token this
@@ -119,10 +119,10 @@ if (positional[0] === 'list') {
     session =
       args.session === undefined
         ? undefined
-        : resolveSession(
-            args.session,
-            entries.map((e) => e.sessionId),
-          );
+        : resolveSession(args.session, [
+            ...entries.map((e) => e.sessionId),
+            ...all.flatMap((e) => (e.record.origin?.id === undefined ? [] : [e.record.origin.id])),
+          ]);
   } catch (err) {
     if (!(err instanceof UsageError)) throw err;
     fail(err.message);
@@ -131,7 +131,9 @@ if (positional[0] === 'list') {
   // Reading the registry is the other half of the sweep's rule, and `list` has just
   // done it. Not `all`: an instance that did not answer may simply be busy, and the
   // registry keeps it for that reason — deleting its url here would contradict that.
-  sweepSessions(entries);
+  // Read again rather than reusing `entries`: an instance that registered during the
+  // probes would otherwise have its url swept away while it runs.
+  sweepSessions(liveEntries());
   // Read once for the whole table rather than per row: every instance is on this host,
   // so the answer is the same for all of them and the routing table is a file read.
   const addresses = localAddresses();
