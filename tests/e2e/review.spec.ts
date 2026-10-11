@@ -373,6 +373,15 @@ test('folds a long reply until its bubble is being read, the way a long comment 
   const folded = await reply.evaluate((el) => ({ shown: el.clientHeight, full: el.scrollHeight }));
   expect(folded.shown).toBeLessThan(folded.full);
 
+  // Focus alone does not open it: that path does not re-run the rail's layout, so an
+  // opened reply would grow under the next bubble.
+  // The reply body itself, which a keyboard reaches as a scroll box; focusing the bubble
+  // makes it active, which is the path that does lay the rail out again.
+  await reply.focus();
+  expect(await reply.evaluate((el) => document.activeElement === el)).toBe(true);
+  const focused = await reply.evaluate((el) => ({ shown: el.clientHeight, full: el.scrollHeight }));
+  expect(focused.shown).toBeLessThan(focused.full);
+
   await page.locator('.bubble').first().click();
   const open = await reply.evaluate((el) => ({ shown: el.clientHeight, full: el.scrollHeight }));
   expect(open.shown).toBe(open.full);
