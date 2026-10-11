@@ -267,7 +267,10 @@ function walkTable(tokens: Token[], openIdx: number, ctx: Ctx): number {
       // The separator row (|---|---|) produces no token, so add it explicitly after the header
       if (isHeader) {
         const sepLine = e + 1;
-        if (/^\s*\|?[\s:|-]+\|?\s*$/.test(ctx.lines[sepLine - 1] ?? '')) {
+        // Inside a quote the line carries its `>` markers; without them it read as no
+        // separator and was filled in as a gap line (#222).
+        const sep = (ctx.lines[sepLine - 1] ?? '').replace(/^\s*(?:>\s?)+/, '');
+        if (/^\s*\|?[\s:|-]+\|?\s*$/.test(sep)) {
           push(ctx, {
             startLine: sepLine,
             endLine: sepLine,

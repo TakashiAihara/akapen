@@ -212,3 +212,15 @@ describe('quoted', () => {
     expect(text('After').quoted).toBe(false);
   });
 });
+
+describe('a table inside a quote', () => {
+  it('keeps its delimiter row as a table separator, not a gap line (#222)', () => {
+    const blocks = buildDoc('/x.md', '> | a | b |\n> |---|---|\n> | 1 | 2 |\n').blocks;
+    expect(blocks.map((b) => [b.startLine, b.kind, b.flags])).toEqual([
+      [1, 'table-row', ['table-header']],
+      [2, 'table-row', ['table-separator']],
+      [3, 'table-row', []],
+    ]);
+    expect(blocks.every((b) => b.quoted)).toBe(true);
+  });
+});
