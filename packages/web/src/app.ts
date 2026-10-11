@@ -577,10 +577,9 @@ function repliesFor(c: Comment | RoundComment, past: boolean): HTMLElement {
       const payload = await decode(res, CommentsPayloadSchema);
       ta.value = '';
       // The response always carries the *current* round's comments, whichever round the
-      // parent was in. Two cases cannot use them: a carried bubble, whose parent is in
-      // an earlier round, and the history view, whose bubbles are that round's own. In
-      // the second, applying them would not merely fail to show the reply — it would
-      // swap the round on screen for the current one. Re-open the round instead.
+      // parent was in. The history view cannot use them, since its bubbles are that
+      // round's own: applying them would swap the round on screen for the current one, so
+      // the round is opened again instead. Everywhere else `takeAnswer` decides.
       if ((past || state.history) && state.round?.viewing) void showRound(state.round.viewing, c.id);
       else takeAnswer(payload);
     } catch (err) {
