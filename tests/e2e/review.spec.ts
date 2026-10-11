@@ -423,6 +423,8 @@ test('replies to a comment, and keeps the thread on a comment carried past a rou
   // click: clicking a carried bubble opens that round's history, so a form that needed a
   // click to appear could never be reached with a mouse.
   await carried.hover();
+  // Opened in place on hover, since it never becomes active.
+  expect(await carried.locator('.bubble-body').evaluate((b) => getComputedStyle(b).maxHeight)).toBe('none');
   await carried.locator('.reply-input').fill('still open because X');
   await carried.locator('.reply-send').click();
   await expect(page.locator('#railCarried .bubble').first().locator('.reply-body')).toHaveCount(2);
