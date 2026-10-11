@@ -51,6 +51,9 @@ const nextRoundBtn = must<HTMLButtonElement>('nextRound');
 const movedBarEl = must('movedBar');
 const movedTextEl = must('movedText');
 const loadCurrentBtn = must<HTMLButtonElement>('loadCurrent');
+const otherDocBarEl = must('otherDocBar');
+const otherDocTextEl = must('otherDocText');
+must<HTMLButtonElement>('reloadPage').addEventListener('click', () => location.reload());
 const showLines = must<HTMLInputElement>('showLines');
 const topbarEl = must('topbar');
 const themeToggleEl = must<HTMLButtonElement>('themeToggle');
@@ -1596,6 +1599,8 @@ async function boot() {
  */
 const sse = new EventSource('/events');
 sse.addEventListener('message', (e) => {
+  // Another document's events say nothing about the one on screen (#177).
+  if (foreign) return;
   // An event arrives outside any request, so a throw here has nobody to catch it.
   // A payload we cannot read is dropped: the next one, or the next /api/doc, recovers.
   // JSON.parse has to be inside the guard — it runs while building safeParse's argument,
@@ -1616,6 +1621,87 @@ sse.addEventListener('message', (e) => {
     return;
   }
   if (!state.history) renderBanner(parsed.output);
+});
+
+/**
+ * Notice when the server behind this tab is now another akapen (#177).
+ *
+ * Ports are handed out lowest-free first, so when an instance stops, the next one to
+ * start often takes its port. The stream reconnects to it without complaint and the tab
+ * keeps drawing the old document, with nothing saying it is not what that port serves.
+ * So after a reconnect the document's path is asked again, and a different one is said.
+ * Not swapped in: the old document may still be under review in this tab. From a drop
+ * until the path is known to match again, the port is treated as another document's:
+ * its events are ignored (the first one arrives before the path is asked) and nothing is
+ * fetched — a write would land on a document the reader is not looking at, and a read
+ * (history, the round picker) would swap the other document in. A stream the browser
+ * has given up on (a 401 from an akapen on another token) is said too, since no
+ * reconnect will come to say anything else.
+ */
+let reconnecting = false;
+let foreign = false;
+const realFetch = window.fetch.bind(window);
+// Cast: the declared type also carries Bun's `preconnect`, which a page never calls.
+// The instance list is let through: it neither writes nor swaps the document in, and it
+// is how the reader finds where their own document went.
+const isInstanceList = (input: RequestInfo | URL) =>
+  new URL(input instanceof Request ? input.url : String(input), location.href).pathname === '/api/instances';
+window.fetch = ((input: RequestInfo | URL, init?: RequestInit) =>
+  foreign && !isInstanceList(input)
+    ? Promise.reject(new Error('not sent: this port may now serve another document; reload to check'))
+    : realFetch(input, init)) as typeof fetch;
+const say = (text: string | null) => {
+  otherDocTextEl.textContent = text ?? '';
+  otherDocBarEl.hidden = text === null;
+};
+/** Bumped by each drop, so a check that answers after a newer one began is not used. */
+let checks = 0;
+let retry: ReturnType<typeof setTimeout> | undefined;
+const checkPath = async (): Promise<void> => {
+  clearTimeout(retry);
+  const mine = ++checks;
+  try {
+    if (!state.doc) return;
+    const res = await realFetch('/api/doc');
+    if (!res.ok || !state.doc) throw new Error(`answered ${res.status}`);
+    const payload = await decode(res, DocPayloadSchema);
+    if (mine !== checks) return;
+    // Decided afresh each time, so the bar goes when the document comes back to the port.
+    foreign = payload.doc.path !== state.doc.path;
+    if (foreign) {
+      say(`⟳ this port now serves ${payload.doc.path} — reload to switch to it`);
+      return;
+    }
+    say(null);
+    // Events while it was unchecked were dropped, so take their news from the answer.
+    noteServerRound(payload.round.n);
+    renderMoved();
+    if (!state.history) renderBanner(payload.changed);
+  } catch {
+    if (mine !== checks) return;
+    // The stream may stay up with no reconnect to ask again, so ask again here.
+    say('⟳ this port does not answer as this akapen — reload to try again');
+    retry = setTimeout(() => void checkPath(), 2_000);
+  }
+};
+sse.addEventListener('error', () => {
+  reconnecting = true;
+  // Nothing on screen yet to keep apart from another document, and the first load must
+  // not be refused by its own guard.
+  if (!state.doc) return;
+  foreign = true;
+  checks++;
+  clearTimeout(retry);
+  say(
+    sse.readyState === EventSource.CLOSED
+      ? '⟳ lost the connection to this akapen — reload to try again'
+      : '⟳ reconnecting to this akapen…',
+  );
+});
+sse.addEventListener('open', () => {
+  if (!reconnecting) return;
+  reconnecting = false;
+  void checkPath();
 });
 
 boot();
