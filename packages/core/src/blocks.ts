@@ -266,19 +266,16 @@ function walkTable(tokens: Token[], openIdx: number, ctx: Ctx): number {
       });
       // The separator row (|---|---|) produces no token, so add it explicitly after the header
       if (isHeader) {
-        const sepLine = e + 1;
-        // Inside a quote the line carries its `>` markers; without them it read as no
-        // separator and was filled in as a gap line (#222).
-        const sep = (ctx.lines[sepLine - 1] ?? '').replace(/^\s*(?:>\s?)+/, '');
-        if (/^\s*\|?[\s:|-]+\|?\s*$/.test(sep)) {
-          push(ctx, {
-            startLine: sepLine,
-            endLine: sepLine,
-            kind: 'table-row',
-            html: '<div class="table-separator"></div>',
-            flags: ['table-separator'],
-          });
-        }
+        // markdown-it makes a table only when the delimiter row follows the header, so the
+        // next line is it. Not read back from the source: its quote markers and list indent
+        // made a pattern miss it, and it was filled in as a gap line (#222).
+        push(ctx, {
+          startLine: e + 1,
+          endLine: e + 1,
+          kind: 'table-row',
+          html: '<div class="table-separator"></div>',
+          flags: ['table-separator'],
+        });
       }
       i = trClose;
     }

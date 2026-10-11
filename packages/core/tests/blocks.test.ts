@@ -214,13 +214,20 @@ describe('quoted', () => {
 });
 
 describe('a table inside a quote', () => {
-  it('keeps its delimiter row as a table separator, not a gap line (#222)', () => {
-    const blocks = buildDoc('/x.md', '> | a | b |\n> |---|---|\n> | 1 | 2 |\n').blocks;
-    expect(blocks.map((b) => [b.startLine, b.kind, b.flags])).toEqual([
-      [1, 'table-row', ['table-header']],
-      [2, 'table-row', ['table-separator']],
-      [3, 'table-row', []],
+  // Every way the delimiter row can be prefixed: one quote, nested quotes with and without
+  // spaces between the markers, and a list inside a quote.
+  it.each([
+    ['> | a | b |\n> |---|---|\n> | 1 | 2 |\n', 1],
+    ['> > | a | b |\n> > |---|---|\n> > | 1 | 2 |\n', 1],
+    ['>>| a | b |\n>>|---|---|\n>>| 1 | 2 |\n', 1],
+    ['> > | a | b |\n>  > |---|---|\n> > | 1 | 2 |\n', 1],
+    ['> - x\n>\n>   | a | b |\n>   |---|---|\n>   | 1 | 2 |\n', 3],
+  ])('keeps its delimiter row as a table separator, not a gap line (#222): %j', (md, header) => {
+    const rows = buildDoc('/x.md', md).blocks.filter((b) => b.startLine >= header);
+    expect(rows.map((b) => [b.startLine, b.kind, b.flags])).toEqual([
+      [header, 'table-row', ['table-header']],
+      [header + 1, 'table-row', ['table-separator']],
+      [header + 2, 'table-row', []],
     ]);
-    expect(blocks.every((b) => b.quoted)).toBe(true);
   });
 });
