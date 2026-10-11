@@ -709,15 +709,19 @@ body.rail-overlay .marker { display: inline-flex; align-items: center; justify-c
   font-size: 0.74rem;
 }
 .bubble-head .at { font-family: var(--ak-mono); }
-/* Collapse long bodies: one comment filling the rail hides all the others */
+/* Collapse long bodies: one comment filling the rail hides all the others. Replies too,
+   each on its own, so a short one is not hidden with a long one: they run ten times
+   longer than comments (#160). */
 .bubble-body {
   padding: 3px 10px 8px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  max-height: 12em;
-  overflow-y: auto;
 }
+.bubble-body, .reply-body { max-height: 12em; overflow-y: auto; }
 .bubble.active .bubble-body, .bubble:focus-within .bubble-body { max-height: none; }
+/* Only on `active`, which re-runs the rail's layout. Focus does not: a reply opened by
+   focus alone grew under the next bubble, and focusing the reply box opened the thread. */
+.bubble.active .reply-body { max-height: none; }
 .bubble:focus-visible, .row:focus-visible { outline: 2px solid var(--ak-focus); outline-offset: 1px; }
 .bubble-error { padding: 0 10px 8px; color: var(--ak-warn); font-size: 0.8rem; }
 

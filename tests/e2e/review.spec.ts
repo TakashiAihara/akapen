@@ -352,6 +352,49 @@ test('replies to a comment, and keeps the thread on a comment carried past a rou
   await expect(page.locator('#railCarried .bubble').first().locator('.reply-body')).toHaveCount(2);
 });
 
+test('folds a long reply until its bubble is being read, the way a long comment is folded', async ({
+  page,
+  akapen,
+  request,
+}) => {
+  const posted = await request.post(`${akapen.url}/api/comments`, {
+    headers: AUTH,
+    data: { startLine: 10, endLine: 10, body: 'short remark' },
+  });
+  expect(posted.ok()).toBe(true);
+  const { id } = ((await posted.json()) as { comment: { id: string } }).comment;
+  // Replies run about ten times longer than comments (#160); forty lines is well past 12em.
+  const long = Array.from({ length: 40 }, (_, i) => `line ${i + 1} of a long answer`).join('\n');
+  await request.post(`${akapen.url}/api/comments/${id}/replies`, { headers: AUTH, data: { body: long } });
+
+  await page.goto(akapen.url);
+  const reply = page.locator('.bubble').first().locator('.reply-body');
+  await expect(reply).toHaveCount(1);
+  const folded = await reply.evaluate((el) => ({ shown: el.clientHeight, full: el.scrollHeight }));
+  expect(folded.shown).toBeLessThan(folded.full);
+
+  // Focus alone does not open it: that path does not re-run the rail's layout, so an
+  // opened reply would grow under the next bubble.
+  // The reply body itself, which a keyboard reaches as a scroll box; focusing the bubble
+  // makes it active, which is the path that does lay the rail out again.
+  await reply.focus();
+  expect(await reply.evaluate((el) => document.activeElement === el)).toBe(true);
+  const focused = await reply.evaluate((el) => ({ shown: el.clientHeight, full: el.scrollHeight }));
+  expect(focused.shown).toBeLessThan(focused.full);
+
+  await page.locator('.bubble').first().click();
+  const open = await reply.evaluate((el) => ({ shown: el.clientHeight, full: el.scrollHeight }));
+  expect(open.shown).toBe(open.full);
+
+  // Answering it rebuilds the rail; the bubble being read stays open.
+  const bubble = page.locator('.bubble').first();
+  await bubble.locator('.reply-input').fill('a second reply');
+  await bubble.locator('.reply-send').click();
+  await expect(bubble.locator('.reply-body')).toHaveCount(2);
+  const after = await reply.first().evaluate((el) => ({ shown: el.clientHeight, full: el.scrollHeight }));
+  expect(after.shown).toBe(after.full);
+});
+
 test('replies from the history view without swapping the round on screen', async ({ page, akapen }) => {
   await page.goto(akapen.url);
   await page.locator('.row').nth(2).hover();

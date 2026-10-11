@@ -583,6 +583,9 @@ function bubbleFor(c: RoundComment, opts: { past: true }): HTMLElement;
 function bubbleFor(c: Comment | RoundComment, opts: { past?: boolean } = {}): HTMLElement {
   const box = el('div', `bubble${c.resolved ? ' resolved' : ''}${opts.past ? ' past' : ''}`);
   box.dataset['id'] = c.id;
+  // The rail is rebuilt on every comments update; without this a reply just sent folded
+  // the bubble being read.
+  if (c.id === active) box.classList.add('active');
   setLine(box, 'line', c.startLine);
 
   const head = el('div', 'bubble-head');
@@ -820,7 +823,7 @@ function setActive(id: string, scroll?: 'doc' | 'rail') {
     const e = getLine(row, 'end');
     row.classList.toggle('linked', !!target && s <= target.endLine && e >= target.startLine);
   }
-  // `active` un-collapses .bubble-body, so the height changes. Re-run the alignment
+  // `active` un-collapses .bubble-body and .reply-body, so the height changes. Re-run the alignment
   layoutRail();
   if (!target) return;
   if (scroll === 'doc') rowFor(target.startLine)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
