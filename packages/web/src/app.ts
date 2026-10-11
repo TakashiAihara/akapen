@@ -1534,41 +1534,48 @@ sse.addEventListener('message', (e) => {
  * start often takes its port. The stream reconnects to it without complaint and the tab
  * keeps drawing the old document, with nothing saying it is not what that port serves.
  * So after a reconnect the document's path is asked again, and a different one is said.
- * Not swapped in: the old document may still be under review in this tab. While the
- * port serves another document, its events are ignored and nothing is written to it —
- * a comment, a reply or a round cut from this screen would land on a document the reader
- * is not looking at. A stream the browser has given up on (a 401 from an akapen on
- * another token) is said too, since no reconnect will come to say anything else.
+ * Not swapped in: the old document may still be under review in this tab. From a drop
+ * until the path is known to match again, the port is treated as another document's:
+ * its events are ignored (the first one arrives before the path is asked) and nothing is
+ * fetched — a write would land on a document the reader is not looking at, and a read
+ * (history, the round picker) would swap the other document in. A stream the browser
+ * has given up on (a 401 from an akapen on another token) is said too, since no
+ * reconnect will come to say anything else.
  */
 let reconnecting = false;
 let foreign = false;
 const realFetch = window.fetch.bind(window);
 // Cast: the declared type also carries Bun's `preconnect`, which a page never calls.
 window.fetch = ((input: RequestInfo | URL, init?: RequestInit) =>
-  foreign && (init?.method ?? 'GET').toUpperCase() !== 'GET'
-    ? Promise.reject(new Error('this port now serves another document; reload to switch to it'))
+  foreign
+    ? Promise.reject(new Error('not sent: this port may now serve another document; reload to check'))
     : realFetch(input, init)) as typeof fetch;
-sse.addEventListener('error', () => {
-  reconnecting = true;
-  if (sse.readyState === EventSource.CLOSED) {
-    otherDocTextEl.textContent = '⟳ lost the connection to this akapen — reload to try again';
-    otherDocBarEl.hidden = false;
-  }
-});
-sse.addEventListener('open', async () => {
-  if (!reconnecting) return;
-  reconnecting = false;
+const checkPath = async (): Promise<void> => {
   try {
     const res = await realFetch('/api/doc');
-    if (!res.ok || !state.doc) return;
+    if (!res.ok || !state.doc) throw new Error(`answered ${res.status}`);
     const now = (await decode(res, DocPayloadSchema)).doc.path;
     // Decided afresh each time, so the bar goes when the document comes back to the port.
     foreign = now !== state.doc.path;
     otherDocTextEl.textContent = `⟳ this port now serves ${now} — reload to switch to it`;
     otherDocBarEl.hidden = !foreign;
   } catch {
-    /* The next reconnect asks again. */
+    // The stream may stay up with no reconnect to ask again, so ask again here.
+    setTimeout(() => void checkPath(), 2_000);
   }
+};
+sse.addEventListener('error', () => {
+  reconnecting = true;
+  foreign = true;
+  if (sse.readyState === EventSource.CLOSED) {
+    otherDocTextEl.textContent = '⟳ lost the connection to this akapen — reload to try again';
+    otherDocBarEl.hidden = false;
+  }
+});
+sse.addEventListener('open', () => {
+  if (!reconnecting) return;
+  reconnecting = false;
+  void checkPath();
 });
 
 boot();

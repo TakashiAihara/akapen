@@ -4,7 +4,7 @@
  * The event stream reconnects to whatever now listens there, so the tab kept drawing the
  * old document with nothing saying the port serves another one.
  */
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, startPeer, test } from './fixtures.ts';
@@ -28,7 +28,9 @@ test('says when the port serves another document, stops writing to it, and stops
     await expect(page.locator('#otherDocBar')).toBeHidden();
 
     await first.stop();
-    const second = await startPeer(akapen.home, 'second.md', [], first.port);
+    const other = join(dir, 'second.md');
+    writeFileSync(other, '# Second\n\nAnother document.\n');
+    const second = await startPeer(akapen.home, other, [], first.port);
     try {
       await expect(page.locator('#otherDocBar')).toBeVisible({ timeout: 25_000 });
       await expect(page.locator('#otherDocText')).toContainText('second.md');
@@ -42,6 +44,18 @@ test('says when the port serves another document, stops writing to it, and stops
         ),
       );
       expect(refused).toContain('another document');
+      // Nor read from it: the round picker and history would swap the other one in.
+      const read = await page.evaluate(() =>
+        fetch('/api/doc').then(
+          () => 'read',
+          (err: Error) => err.message,
+        ),
+      );
+      expect(read).toContain('another document');
+      // Its edits are not this tab's: no "the document changed" banner for them.
+      appendFileSync(other, '\nMore.\n');
+      await page.waitForTimeout(2_000);
+      await expect(page.locator('#banner')).toBeHidden();
     } finally {
       await second.stop();
     }
