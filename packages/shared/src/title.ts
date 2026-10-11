@@ -16,18 +16,22 @@ import { plainText } from './inline-text.ts';
  * `#` or the setext form, whichever the document uses. A document with two is unusual
  * enough not to be designed for; the first is what a reader would call it anyway.
  *
- * Only a heading the document itself stands under counts (`standsInDocument`).
+ * Only a heading the document itself stands under counts (`isDocumentHeading`).
  */
 export function documentTitle(doc: Doc): string {
-  const h1 = doc.blocks.find((b) => b.kind === 'heading' && b.flags.includes('h1') && standsInDocument(b));
+  const h1 = doc.blocks.find((b) => isDocumentHeading(b) && b.flags.includes('h1'));
   return h1 ? plainText(h1.html) : '';
 }
 
 /**
- * A block the document stands under, rather than one it quotes or lists: a heading in a
- * quote or a list item is something the document shows, not its structure or its name
+ * A heading the document stands under, rather than one it quotes or lists: a heading in
+ * a quote or a list item is something the document shows, not its structure or its name
  * (#197). Shared with the outline so the two readers of headings cannot drift apart.
+ *
+ * The kind is checked here rather than left to callers, because `quoted` and `depth`
+ * only mean something for blocks the parser walked: gap lines and frontmatter always
+ * carry depth 0, so on its own the test answered true for them (#202).
  */
-export function standsInDocument(block: Block): boolean {
-  return !block.quoted && block.depth === 0;
+export function isDocumentHeading(block: Block): boolean {
+  return block.kind === 'heading' && !block.quoted && block.depth === 0;
 }
