@@ -15,5 +15,6 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     include: ['packages/*/tests/*.test.ts', 'tests/repo/*.test.ts'],
+    globalSetup: ['tests/build-web.ts'],
   },
 });
