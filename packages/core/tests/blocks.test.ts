@@ -141,11 +141,120 @@ describe('attribute values', () => {
   });
 });
 
+/**
+ * Lines no token covers take depth and quoted from the quote or list item they sit in
+ * (#203), the way every other line there does.
+ */
+function gaps(text: string): [number, number, boolean][] {
+  return buildDoc('/x.md', text)
+    .blocks.filter((b) => b.flags.includes('gap'))
+    .map((b) => [b.startLine, b.depth, b.quoted]);
+}
+
+describe('gap lines', () => {
+  it('sit at the depth of the list item they are in', () => {
+    expect(gaps('- a\n\n  [x]: http://y\n')).toEqual([[3, 1, false]]);
+    expect(gaps('- a\n  - b\n\n    [x]: http://y\n')).toEqual([[4, 2, false]]);
+  });
+
+  it('sit at the depth of their siblings when the line is a list marker with nothing after it', () => {
+    // The marker line is the item's own line, so it is at the item's depth, not inside it.
+    expect(gaps('- a\n-\n- c\n')).toEqual([[2, 0, false]]);
+    expect(gaps('- [x]: http://y\n- b\n')).toEqual([[1, 0, false]]);
+    expect(gaps('- a\n  - b\n  -\n')).toEqual([[3, 1, false]]);
+  });
+
+  it('are quoted when the quote opens after a list marker, which a leading > does not show', () => {
+    // The one change the page draws: the line gains the quote bar.
+    expect(gaps('- >\n')).toEqual([[1, 1, true]]);
+  });
+
+  it('take the innermost of items opened on the same line', () => {
+    // `- -` opens two items; the line and what follows belong to the inner one.
+    expect(gaps('- - a\n\n    [x]: http://y\n')).toEqual([[3, 2, false]]);
+    expect(gaps('- - a\n- -\n')).toEqual([[2, 1, false]]);
+  });
+
+  it('are quoted inside a quote opened on the list marker line', () => {
+    // The quote starts before the item's own container does, and is still inside it.
+    expect(gaps('- > a\n  >\n  > b\n')).toEqual([[2, 1, true]]);
+  });
+
+  it('are quoted inside a quote in a list, at the depth of the quote', () => {
+    expect(gaps('- a\n\n  > q\n  >\n  > r\n')).toEqual([[4, 1, true]]);
+  });
+
+  it('are quoted inside a list inside a quote, at the depth of the list item', () => {
+    expect(gaps('> - a\n>\n>   [x]: http://y\n')).toEqual([
+      [2, 1, true],
+      [3, 1, true],
+    ]);
+  });
+
+  it('stay at the top level, unquoted, outside every container', () => {
+    expect(gaps('[x]: http://y\n')).toEqual([[1, 0, false]]);
+    expect(gaps('> a\n>\n> b\n')).toEqual([[2, 0, true]]);
+  });
+
+  it('agree with the sibling items beside an empty marker', () => {
+    const d = buildDoc('/x.md', '> - a\n> -\n> - c\n');
+    const gap = d.blocks.find((b) => b.flags.includes('gap'))!;
+    const c = d.blocks.find((b) => b.text.includes('- c'))!;
+    expect([gap.depth, gap.quoted]).toEqual([c.depth, c.quoted]);
+  });
+});
+
 describe('quoted', () => {
   it('stays set after a nested quote closes inside the outer one', () => {
     const d = buildDoc('/x.md', '> > inner\n>\n> # Outer\n\nAfter\n');
     const text = (s: string) => d.blocks.find((b) => b.text.includes(s))!;
     expect(text('# Outer').quoted).toBe(true);
     expect(text('After').quoted).toBe(false);
+  });
+});
+
+/** `list-last` belongs to the list a table may sit in, not to the table. */
+const tableFlags = (b: { flags: string[] }) => b.flags.filter((f) => f !== 'list-last');
+
+describe('a table inside a quote', () => {
+  // Every way the delimiter row can be prefixed: one quote, nested quotes with and without
+  // spaces between the markers, and a list inside a quote.
+  it.each([
+    ['> | a | b |\n> |---|---|\n> | 1 | 2 |\n', 1],
+    ['> > | a | b |\n> > |---|---|\n> > | 1 | 2 |\n', 1],
+    ['>>| a | b |\n>>|---|---|\n>>| 1 | 2 |\n', 1],
+    ['> > | a | b |\n>  > |---|---|\n> > | 1 | 2 |\n', 1],
+    ['> - x\n>\n>   | a | b |\n>   |---|---|\n>   | 1 | 2 |\n', 3],
+  ])('keeps its delimiter row as a table separator, not a gap line (#222): %j', (md, header) => {
+    const rows = buildDoc('/x.md', md).blocks.filter((b) => b.startLine >= header);
+
+    expect(rows.map((b) => [b.startLine, b.kind, tableFlags(b)])).toEqual([
+      [header, 'table-row', ['table-header']],
+      [header + 1, 'table-row', ['table-separator']],
+      [header + 2, 'table-row', []],
+    ]);
+    expect(rows.every((b) => b.quoted)).toBe(true);
+  });
+});
+
+function lastOf(text: string): number[] {
+  return buildDoc('/x.md', text)
+    .blocks.filter((b) => b.flags.includes('list-last'))
+    .map((b) => b.startLine);
+}
+
+describe('list-last', () => {
+  it('marks the last row of a list, whatever kind of block it is', () => {
+    expect(lastOf('- a\n- b\n\nAfter.\n')).toEqual([2]);
+    expect(lastOf('- a\n\n  ```\n  x\n  ```\n\nAfter.\n')).toEqual([5]);
+  });
+
+  it('marks each list, a nested one included, and nothing outside a list', () => {
+    expect(lastOf('- a\n  - b\n- c\n')).toEqual([2, 3]);
+    // The last row of both a nested list and its outer one is marked once.
+    expect(buildDoc('/x.md', '- a\n  - b\n').blocks[1]!.flags.filter((f) => f === 'list-last')).toHaveLength(
+      1,
+    );
+    expect(lastOf('Para.\n\n| a |\n| - |\n| 1 |\n')).toEqual([]);
   });
 });
