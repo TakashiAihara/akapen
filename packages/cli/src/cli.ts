@@ -284,6 +284,13 @@ if (positional[0] === 'reply' || positional[0] === 'resolve') {
       headers: body === undefined ? headers : { ...headers, 'content-type': 'application/json' },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       signal: AbortSignal.timeout(10_000),
+    }).catch((err: unknown) => {
+      // It may have landed before the answer was lost, so a retry could post it twice.
+      console.error(
+        `akapen: ${done}${path} did not answer (${err instanceof Error ? err.name : String(err)}); ` +
+          'check `akapen comments` before sending it again',
+      );
+      process.exit(1);
     });
     if (!res.ok) {
       console.error(`akapen: ${done}${path} answered ${res.status}: ${await res.text()}`);
