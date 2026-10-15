@@ -98,7 +98,7 @@ Every request needs a token, at every bind address. The URL akapen prints carrie
 
 ```text
 akapen  /home/you/notes/design.md
-  url     http://192.168.0.151:4300/?token=Cu1fE0h07o__JPQQYfF_5zDjTxU6A2X8NriPndNrSHc
+  url     http://192.168.1.20:4300/?token=<token>
 ```
 
 Opening that once is the whole of logging in. akapen answers with a cookie and a redirect that takes the token back out of the address bar, so every later visit is the bare `http://host:4300` — and the URL above, kept as a bookmark, still works when the cookie is gone or you are on another browser. Opening the bookmark again redirects again: the token comes out of the address bar every time, not only on the first visit.
@@ -139,7 +139,7 @@ bun run packages/cli/src/cli.ts list --json   # the same, for agents
 
 ```text
 PID     URL                          ROUND  UNRESOLVED  FILE
-81234   http://192.168.0.151:4300    R002   3           /path/to/design.md
+81234   http://192.168.1.20:4300    R002   3           /path/to/design.md
 81235   http://127.0.0.1:4391        R001   0           /path/to/plan.md
 ```
 
@@ -151,8 +151,8 @@ The column is a URL rather than the address each was bound to, for the same reas
 
 ```text
 akapen  /home/me/notes/design.md
-  url     http://192.168.0.151:4300/?token=6Qk3vN…
-  also    http://172.17.0.1:4300/?token=6Qk3vN…
+  url     http://192.168.1.20:4300/?token=<token>…
+  also    http://172.17.0.1:4300/?token=<token>…
   round   001
   store   /home/me/.akapen/reviews/design-ab12cd34ef56
 ```
@@ -164,7 +164,7 @@ A concrete `--host` is printed unchanged. Ordering by the default route reads `/
 Listing every address is honest and still leaves you picking one out of three that cannot work. `--advertise` (`-A`) says which one, and `AKAPEN_ADVERTISE` says it once for a host that always wants the same answer — the flag wins, so reaching for it is what marks this run as the exception.
 
 ```bash
-akapen note.md --host 0.0.0.0 --advertise 192.168.0.151   # this address
+akapen note.md --host 0.0.0.0 --advertise 192.168.1.20   # this address
 akapen note.md --host 0.0.0.0 -A eth0                     # whatever that interface has
 export AKAPEN_ADVERTISE=eth0                              # and then neither
 ```
