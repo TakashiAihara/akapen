@@ -4,7 +4,39 @@ A tool for leaving inline feedback on rendered markdown, and handing that feedba
 
 Comments are never written into the markdown file. They live in a sidecar under `~/.akapen/reviews/`. When the markdown itself is the deliverable, as it is in a vault, this removes by design the path by which review notes end up in a commit.
 
-Still a proof of concept. It works, but multiple files and automatic agent integration are not in it.
+![A design note rendered by akapen, with two comments in the right rail and an agent's reply under the first](docs/images/review.png)
+
+## How a review goes
+
+An agent writes a markdown file and serves it. A person reads the rendered page in a browser and comments on lines. The agent picks the comments up, edits the file, and answers on the thread.
+
+```mermaid
+sequenceDiagram
+    participant A as Agent (Claude Code)
+    participant K as akapen
+    participant P as Person (browser)
+    A->>K: akapen note.md
+    P->>K: comment on a line
+    K-->>A: channel event, or akapen comments
+    A->>A: edit note.md
+    A->>K: akapen reply note.md <id> --resolve
+    P->>K: End this round, to read the new text
+```
+
+- One binary, one file per process. Nothing to install on the reading side but a browser.
+- Comments are anchored to source lines and carry the text they point at, so an agent can find the spot even after the file moves on.
+- Rounds freeze what was reviewed. The page shows that snapshot, not the live file, so the agent can keep writing while the person keeps reading.
+- Replies are threaded one level deep, and each reply says whether a person or an agent wrote it, and which Claude Code session.
+- Every request needs a token, and the bind address defaults to `127.0.0.1`.
+- Mermaid, tables, code with highlighting, frontmatter, and images beside the document all render. The keymap and the stylesheet can be overridden.
+
+## Quick start
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/TakashiAihara/akapen/main/install.sh | sh
+akapen notes/design.md                 # prints the URL to open, token included
+akapen comments notes/design.md        # what the reader wrote, as JSON
+```
 
 ## Why it exists
 
@@ -477,8 +509,7 @@ Across all 152 notes in a vault, no line was dropped or duplicated (24164 blocks
 ## Not done yet
 
 - Reviewing several files. One file per process today; the others on the host are listed and linked to, not held by one process.
-- Automating the agent handoff. `comments` has to be called; there is no equivalent of crit's `agent_cmd`.
-- Replies and threads. One comment is one thread.
+- Starting the agent from akapen. The channel pushes comments into a session that is already running; nothing like crit's `agent_cmd` starts one.
 
 ## Licence
 
