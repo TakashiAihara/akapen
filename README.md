@@ -37,6 +37,7 @@ The push needs Claude Code's development channel flag, since channels are a rese
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/TakashiAihara/akapen/main/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"   # where install.sh puts it, if not on PATH yet
 akapen notes/design.md                 # serves in the foreground and prints the URL to open, token included
 ```
 
