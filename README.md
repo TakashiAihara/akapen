@@ -4,7 +4,50 @@ A tool for leaving inline feedback on rendered markdown, and handing that feedba
 
 Comments are never written into the markdown file. They live in a sidecar under `~/.akapen/reviews/`. When the markdown itself is the deliverable, as it is in a vault, this removes by design the path by which review notes end up in a commit.
 
-Still a proof of concept. It works, but multiple files and automatic agent integration are not in it.
+![A design note rendered by akapen, with comments in the right rail and an agent's reply under the first](docs/images/review.png)
+
+## How a review goes
+
+An agent writes a markdown file and serves it. A person reads the rendered page in a browser and comments on lines. The agent picks the comments up, edits the file, and answers on the thread.
+
+```mermaid
+sequenceDiagram
+    participant A as Agent (Claude Code)
+    participant K as akapen
+    participant P as Person (browser)
+    A->>K: akapen note.md
+    P->>K: comment on a line
+    K-->>A: channel event (pushed)
+    A->>K: or akapen comments (pulled)
+    A->>A: edit note.md
+    A->>K: akapen reply note.md <id> "done" --resolve
+    P->>K: End this round, to read the new text
+```
+
+The push needs Claude Code's development channel flag, since channels are a research preview (see below). An agent resolves what it changed the document for; a reply that only answers a question, or asks the person to decide, stays open.
+
+- One binary, one file per process. Nothing to install on the reading side but a browser.
+- Comments are anchored to source lines in a frozen round and carry the text they point at, so an agent can find the spot while the live file has moved on.
+- Rounds freeze what was reviewed. The page shows that snapshot, not the live file, so the agent can keep writing while the person keeps reading.
+- Replies are threaded one level deep, and each reply says whether a person or an agent wrote it, and which Claude Code session.
+- Every request needs a token unless you start it with `--no-auth`, and the bind address defaults to `127.0.0.1`.
+- Mermaid, tables, code with highlighting, frontmatter, and images beside the document all render. The keymap and the stylesheet can be overridden.
+
+## Quick start
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/TakashiAihara/akapen/main/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"   # where install.sh puts it, if not on PATH yet
+akapen notes/design.md                 # serves in the foreground and prints the URL to open, token included
+```
+
+From another shell, once someone has commented:
+
+```bash
+akapen comments notes/design.md        # unresolved comments, as JSON
+```
+
+On a remote machine, add `--host 0.0.0.0` and open the printed LAN address (see Usage).
 
 ## Why it exists
 
@@ -138,9 +181,9 @@ bun run packages/cli/src/cli.ts list --json   # the same, for agents
 ```
 
 ```text
-PID     URL                          ROUND  UNRESOLVED  FILE
-81234   http://192.168.1.20:4300    R002   3           /path/to/design.md
-81235   http://127.0.0.1:4391        R001   0           /path/to/plan.md
+PID     SESSION   URL                         ROUND  UNRESOLVED  FILE
+81234   0e79fa27  http://192.168.1.20:4300    R002   3           /path/to/design.md
+81235   -         http://127.0.0.1:4391       R001   0           /path/to/plan.md
 ```
 
 The column is a URL rather than the address each was bound to, for the same reason the startup block is one: `0.0.0.0:4300` is not somewhere to go. It carries no token — the terminal it is read in belongs to whoever started them, and a secret printed on every row would be in the scrollback of every other thing they did. `akapen token` prints it when a script needs one.
@@ -173,7 +216,9 @@ An interface yields its IPv4 address. What is pinned is checked rather than beli
 
 A hostname is refused rather than resolved, and this is deliberate. The `Host` check leaves this machine's own name out of the set it serves — a name is the one entry somebody else on the network can claim, and rebinding it produces a same-origin page rather than a cross-origin one, which is the attack the check exists to stop. Advertising a name would mean widening that set, which is a separate decision.
 
-The handoff to an agent is a CLI command.
+### Handing comments to an agent
+
+Besides the channel, the handoff to an agent is a CLI command.
 
 ```bash
 bun run packages/cli/src/cli.ts comments <file.md>          # unresolved comments as JSON
@@ -216,6 +261,8 @@ Current-round comments come first, ordered by line. Entries with `current_round:
 `replies` is the thread on that comment, oldest first, one level deep — a reply cannot be replied to. An agent's own replies are noise to it, but a person's answer to one is not: "could not fix, because X" met with "then do Y instead" makes Y new feedback, and it only arrives if the thread comes with the comment. `author_kind` says which side wrote it, and `session_id` which Claude Code session. An agent replies with `akapen reply <file.md> <id> <text>` (`--resolve` to close it in the same call) and resolves with `akapen resolve <file.md> <id>`; both go through the akapen serving the file and send the session header themselves. Over HTTP the same reply is `POST /api/comments/<id>/replies`, the body `{"body": "..."}`, and the headers `Authorization: Bearer $(akapen token)` and `X-Akapen-Session: ${CLAUDE_CODE_SESSION_ID:?}`. The server files a reply carrying the second header as `agent` and keeps the id; one without it is `human`, printed here with `session_id: null`. Write `:?` rather than a bare `$`: curl leaves out a header whose value is empty, so an unset variable would file the reply as a person's without a word. Replies written before this existed are all `human`, whoever wrote them. The header is a claim made by whoever holds the token, not an identity.
 
 An agent resolves with `POST /api/comments/<id>/resolve` and the `Authorization` header. The call flips the state, so a second one reopens the comment; check `resolved` in the response. Which comments an agent should resolve is the caller's policy; the channel's instructions say: ones it changed the document for or did what they asked, or when the person says so, and not a reply that only answers a question.
+
+### Extra CSS and the sample document
 
 There is an example stylesheet in `examples/dense.css`. The space above a heading is the variable `--ak-heading-above`, set per heading row (`.row.heading { --ak-heading-above: 12px; }`), not the heading's `margin-top`: the line number and the + are placed with it, so a sheet that sets the margin leaves them behind.
 
@@ -297,7 +344,7 @@ One binary, five packages. The split is about which direction knowledge is allow
 | `@akapen/core` | line mapping and the comment store. Knows nothing about HTTP |
 | `@akapen/server` | Hono routes over `Bun.serve`, plus the embedded assets |
 | `@akapen/web` | the browser side, bundled by `bun build` |
-| `@akapen/cli` | argument parsing and the `comments` and `list` subcommands |
+| `@akapen/cli` | argument parsing and the subcommands (`comments`, `reply`, `resolve`, `list`, `token`, `channel`) |
 
 Everything points at `shared`, and nothing points back. `server` embeds `web`'s build output, which is the one edge that runs the other way; it stays acyclic because `web` never reaches for the server. A typed client generated from the routes (Hono's `hc`, tRPC) would close that loop — the browser would import the server to learn the shapes — and clients only get added over time. Putting the contract in `shared` keeps every client one hop from the same definition.
 
@@ -477,8 +524,7 @@ Across all 152 notes in a vault, no line was dropped or duplicated (24164 blocks
 ## Not done yet
 
 - Reviewing several files. One file per process today; the others on the host are listed and linked to, not held by one process.
-- Automating the agent handoff. `comments` has to be called; there is no equivalent of crit's `agent_cmd`.
-- Replies and threads. One comment is one thread.
+- Starting the agent from akapen. The channel pushes comments into a session that is already running; nothing like crit's `agent_cmd` starts one.
 
 ## Licence
 

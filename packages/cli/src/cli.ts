@@ -12,7 +12,7 @@ import { liveEntries, sweep as sweepSessions } from '@akapen/core/sessions';
 import { currentToken, resolveToken, rotateToken, secureHome, tokenIsPinned } from '@akapen/core/token';
 import { parseArgs, resolveHost, resolvePort, resolveSession, UsageError, type Args } from './args.ts';
 
-const USAGE = `akapen — markdown inline review (PoC)
+const USAGE = `akapen — markdown inline review
 
   akapen <file.md> [options]     start the review server
   akapen comments <file.md>      print unresolved comments as JSON (for agents)
