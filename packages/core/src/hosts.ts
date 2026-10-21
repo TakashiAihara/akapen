@@ -12,23 +12,6 @@
 import { networkInterfaces } from 'node:os';
 
 /**
- * The hostnames this instance answers to.
- *
- * A token says who on the network may connect. It says nothing about the attack that
- * makes "it only listens on loopback" untrue: a page the reader visits can point its own
- * hostname at `127.0.0.1` after loading — DNS rebinding — and the browser then treats
- * akapen as that page's origin, attaches the cookie itself and lets the page read the
- * answer. Being `HttpOnly` changes nothing; the browser is the one holding it.
- *
- * What the attacker cannot do is choose the `Host` header — it is forbidden to scripts —
- * so refusing every name akapen is not actually serving closes the whole class.
- *
- * A wildcard bind answers on every interface, so every local address is a real name for
- * it. The machine's own hostname is included because reaching it that way is normal
- * (`http://mcdev:4300`), and an attacker who can put that name in a browser's address
- * bar already controls this network's DNS.
- */
-/**
  * A literal address as a `Host` header can spell it.
  *
  * IPv6 goes in brackets there and nowhere else; IPv4 and names have one spelling and
@@ -42,6 +25,22 @@ function bothForms(address: string): string[] {
   return address.includes(':') ? [address, `[${address}]`] : [address];
 }
 
+/**
+ * The hostnames this instance answers to.
+ *
+ * A token says who on the network may connect. It says nothing about the attack that
+ * makes "it only listens on loopback" untrue: a page the reader visits can point its own
+ * hostname at `127.0.0.1` after loading — DNS rebinding — and the browser then treats
+ * akapen as that page's origin, attaches the cookie itself and lets the page read the
+ * answer. Being `HttpOnly` changes nothing; the browser is the one holding it.
+ *
+ * What the attacker cannot do is choose the `Host` header — it is forbidden to scripts —
+ * so refusing every name akapen is not actually serving closes the whole class.
+ *
+ * A wildcard bind answers on every interface, so every local address is a real name for
+ * it. What is deliberately absent is the machine's own name; the reason is at the end of
+ * the function, next to the line that would otherwise add it.
+ */
 export function allowedHostnames(bind: string): Set<string> {
   const names = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
   const wildcard = bind === '0.0.0.0' || bind === '::' || bind === '[::]';
