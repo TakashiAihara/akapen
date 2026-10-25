@@ -1,0 +1,44 @@
+name: opencode-review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+# A push supersedes the review of the previous head, the way CodeRabbit drops it.
+concurrency:
+  group: opencode-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    # Fork PRs get no secrets, so the run could only fail. pull_request_target is not used
+    # because it would hand the secret to code from the fork.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+      # PR comments go through the issues API.
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: anomalyco/opencode/github@148842ef7cb1bc34192b3fff57d0f9721ab9c801 # v1.19.4
+        env:
+          # Zen with no balance and no auto-recharge: a leaked key reaches the free models only.
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # Zen free tier, not used for training and kept 0 days (opencode docs, 2026-10-21).
+          model: opencode/glm-5.3-flash-free
+          use_github_token: true
+          # Public repos share the session by default; the review stays on the PR only.
+          share: false
+          prompt: |
+            このプルリクエストをレビューし、結果を日本語で 1 件のコメントにまとめてください。
+            - 見るのはバグ、壊れうる入力・順序、テストが押さえていない挙動、セキュリティ
+            - 書式や好みの指摘は書かない
+            - 指摘ごとにファイルと行、何が起きるか、直し方を書く
+            - 指摘が無ければ「指摘なし」とだけ書く
