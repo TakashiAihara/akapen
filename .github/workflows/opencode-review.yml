@@ -40,6 +40,17 @@ jobs:
           fetch-depth: 0
           # The review pushes nothing, so the token has no reason to sit in .git/config.
           persist-credentials: false
+      # opencode re-fetches the PR branch with --depth=max(commits, 20), which makes the clone
+      # shallow and cuts the merge base off a PR of 20 commits or more. Find it while the
+      # history is still whole; a two-dot diff then needs only the two commits.
+      - id: base
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        # Assigned first: a failing substitution inside echo's argument would not stop the step.
+        run: |
+          merge_base=$(git merge-base "$BASE_SHA" "$HEAD_SHA")
+          echo "merge_base=$merge_base" >> "$GITHUB_OUTPUT"
       # shortcut: the action installs whatever opencode release is latest, so the binary is
       # not pinned like the rest of CI, and opencode fetches the PR branch anonymously, which
       # only a public repo allows. Pin it and give the fetch credentials before this reaches
@@ -64,7 +75,7 @@ jobs:
           use_github_token: true
           prompt: |
             このプルリクエストをレビューし、結果を日本語で 1 件のコメントにまとめてください。
-            - 変更は `git diff ${{ github.event.pull_request.base.sha }}...HEAD` で読む
+            - 変更は `git diff ${{ steps.base.outputs.merge_base }} HEAD` で読む
             - 既存のコメントやレビューの指摘は繰り返さず、変更そのものを独立に見る
             - ファイルを編集しない。コマンドは git の読み取りだけを使う
             - 見るのはバグ、壊れうる入力・順序、テストが押さえていない挙動、セキュリティ
