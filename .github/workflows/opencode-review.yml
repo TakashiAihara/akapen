@@ -1,0 +1,84 @@
+name: opencode-review
+
+# Drafts are reviewed too: CodeRabbit skips them, and they are where its hourly limit is
+# not spent. ready_for_review is left out because the head it fires on was already
+# reviewed when it was pushed.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+# A push makes the review of the previous head pointless. Each run still posts its own
+# comment; nothing edits an earlier one.
+concurrency:
+  group: opencode-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    # Fork PRs get no secrets, so the run could only fail. pull_request_target is not used
+    # because it would hand the secret to code from the fork. A run started by Dependabot
+    # gets no Actions secrets either, and opencode refuses an actor without write
+    # permission; a person pushing to a Dependabot PR still gets a review.
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      # Commenting on a PR number through the issues API was refused with 403 under
+      # issues: write alone (run 40163784587); the reaction opencode adds needs issues.
+      pull-requests: write
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The prompt carries no diff; the agent reads it from git against the base.
+          fetch-depth: 0
+          # The review pushes nothing, so the token has no reason to sit in .git/config.
+          persist-credentials: false
+      # opencode re-fetches the PR branch with --depth=max(commits, 20), which makes the clone
+      # shallow and cuts the merge base off a PR of 20 commits or more. Find it while the
+      # history is still whole; a two-dot diff then needs only the two commits.
+      - id: base
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        # Assigned first: a failing substitution inside echo's argument would not stop the step.
+        run: |
+          merge_base=$(git merge-base "$BASE_SHA" "$HEAD_SHA")
+          echo "merge_base=$merge_base" >> "$GITHUB_OUTPUT"
+      # shortcut: the action installs whatever opencode release is latest, so the binary is
+      # not pinned like the rest of CI, and opencode fetches the PR branch anonymously, which
+      # only a public repo allows. Pin it and give the fetch credentials before this reaches
+      # a private repo.
+      - uses: anomalyco/opencode/github@148842ef7cb1bc34192b3fff57d0f9721ab9c801 # v1.19.4
+        env:
+          # Zen with no balance and no auto-recharge: a leaked key reaches the free models only.
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # The action's agent input is not read at v1.19.4, so the agent comes from config.
+          # Without it the build agent may edit files, and the dirty tree turns the run into
+          # a push that contents: read refuses, losing the review. The last matching rule
+          # wins, so the --output deny (which writes the diff to a file) comes after the allows.
+          OPENCODE_CONFIG_CONTENT: >-
+            {"default_agent": "plan", "share": "disabled", "permission": {"edit": "deny",
+            "webfetch": "deny", "websearch": "deny", "bash": {"*": "deny", "git diff*": "allow",
+            "git log*": "allow", "git show*": "allow", "*--output*": "deny"}}}
+        with:
+          # Zen free tier, not used for training and kept 0 days (opencode docs, 2026-10-21).
+          # Free models are withdrawn without notice; that shows as this job failing.
+          model: opencode/glm-5.3-flash-free
+          use_github_token: true
+          prompt: |
+            このプルリクエストをレビューし、結果を日本語で 1 件のコメントにまとめてください。
+            - 変更は `git diff ${{ steps.base.outputs.merge_base }} HEAD` で読む
+            - 既存のコメントやレビューの指摘は繰り返さず、変更そのものを独立に見る
+            - ファイルを編集しない。コマンドは git の読み取りだけを使う
+            - 見るのはバグ、壊れうる入力・順序、テストが押さえていない挙動、セキュリティ
+            - 書式や好みの指摘は書かない
+            - 指摘ごとにファイルと行、何が起きるか、直し方を書く
+            - 指摘が無ければ「指摘なし」とだけ書く
