@@ -19,11 +19,12 @@ concurrency:
 jobs:
   review:
     # Fork PRs get no secrets, so the run could only fail. pull_request_target is not used
-    # because it would hand the secret to code from the fork. Bot PRs (Dependabot) get no
-    # Actions secrets either, and opencode refuses an actor without write permission.
+    # because it would hand the secret to code from the fork. A run started by Dependabot
+    # gets no Actions secrets either, and opencode refuses an actor without write
+    # permission; a person pushing to a Dependabot PR still gets a review.
     if: >-
       github.event.pull_request.head.repo.full_name == github.repository &&
-      github.event.pull_request.user.type != 'Bot'
+      github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -40,7 +41,9 @@ jobs:
           # The review pushes nothing, so the token has no reason to sit in .git/config.
           persist-credentials: false
       # shortcut: the action installs whatever opencode release is latest, so the binary is
-      # not pinned like the rest of CI. Pin it before this reaches a private repo.
+      # not pinned like the rest of CI, and opencode fetches the PR branch anonymously, which
+      # only a public repo allows. Pin it and give the fetch credentials before this reaches
+      # a private repo.
       - uses: anomalyco/opencode/github@148842ef7cb1bc34192b3fff57d0f9721ab9c801 # v1.19.4
         env:
           # Zen with no balance and no auto-recharge: a leaked key reaches the free models only.
@@ -48,10 +51,12 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # The action's agent input is not read at v1.19.4, so the agent comes from config.
           # Without it the build agent may edit files, and the dirty tree turns the run into
-          # a push that contents: read refuses, losing the review.
+          # a push that contents: read refuses, losing the review. The last matching rule
+          # wins, so the --output deny (which writes the diff to a file) comes after the allows.
           OPENCODE_CONFIG_CONTENT: >-
-            {"default_agent": "plan", "permission": {"edit": "deny", "webfetch": "deny",
-            "bash": {"*": "deny", "git diff*": "allow", "git log*": "allow", "git show*": "allow"}}}
+            {"default_agent": "plan", "share": "disabled", "permission": {"edit": "deny",
+            "webfetch": "deny", "websearch": "deny", "bash": {"*": "deny", "git diff*": "allow",
+            "git log*": "allow", "git show*": "allow", "*--output*": "deny"}}}
         with:
           # Zen free tier, not used for training and kept 0 days (opencode docs, 2026-10-21).
           # Free models are withdrawn without notice; that shows as this job failing.
@@ -59,7 +64,7 @@ jobs:
           use_github_token: true
           prompt: |
             このプルリクエストをレビューし、結果を日本語で 1 件のコメントにまとめてください。
-            - 変更は `git diff origin/${{ github.event.pull_request.base.ref }}...HEAD` で読む
+            - 変更は `git diff ${{ github.event.pull_request.base.sha }}...HEAD` で読む
             - 既存のコメントやレビューの指摘は繰り返さず、変更そのものを独立に見る
             - ファイルを編集しない。コマンドは git の読み取りだけを使う
             - 見るのはバグ、壊れうる入力・順序、テストが押さえていない挙動、セキュリティ
