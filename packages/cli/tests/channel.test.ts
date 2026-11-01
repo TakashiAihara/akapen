@@ -8,11 +8,32 @@
  * handed over by `akapen comments`. Counting instead of naming re-fires on the same
  * unresolved comment every pass, forever.
  */
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  statSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { collect, filesForSession, idsOf, markSent, newEvents } from '../src/channel.ts';
+import {
+  collect,
+  filesForSession,
+  fingerprint,
+  askInstructions,
+  idsOf,
+  INSTRUCTIONS,
+  instructionsEvent,
+  markSent,
+  newEvents,
+  type Loaded,
+} from '../src/channel.ts';
 import type { RoundComment } from '@akapen/shared';
 
 const comment = (id: string, over: Partial<RoundComment> = {}): RoundComment => ({
@@ -273,5 +294,212 @@ describe('the store the channel reads by default', () => {
       else process.env['AKAPEN_HOME'] = before;
       rmSync(home, { recursive: true, force: true });
     }
+  });
+});
+
+const withDir = (fn: (dir: string) => void): void => {
+  const dir = mkdtempSync(join(tmpdir(), 'akapen-replaced-'));
+  try {
+    fn(dir);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+};
+
+const reads = (answer: string | null) => {
+  const calls: number[] = [];
+  return { calls, read: () => (calls.push(1), answer) };
+};
+
+describe('handing the session new instructions after an update (#248)', () => {
+  const OLD = 'old instructions';
+  const NEW = 'new instructions';
+  const started = (paths: string[]): Loaded => ({ files: fingerprint(paths), instructions: OLD });
+
+  it('asks nothing while every file is the one it started from', () => {
+    withDir((dir) => {
+      const bin = join(dir, 'akapen');
+      writeFileSync(bin, 'old');
+      const r = reads(NEW);
+      const out = instructionsEvent(started([bin]), fingerprint([bin]), r.read);
+      expect(out.event).toBeUndefined();
+      expect(r.calls).toHaveLength(0);
+    });
+  });
+
+  it('carries the new instructions once an install renamed a binary over it', () => {
+    withDir((dir) => {
+      const bin = join(dir, 'akapen');
+      writeFileSync(bin, 'old');
+      const loaded = started([bin]);
+      writeFileSync(join(dir, 'next'), 'new');
+      renameSync(join(dir, 'next'), bin);
+      const out = instructionsEvent(loaded, fingerprint([bin]), reads(NEW).read);
+      expect(out.event?.meta).toEqual({ event: 'instructions' });
+      expect(out.event?.content).toContain(`\n\n${NEW}`);
+      // Told once: the next pass compares against what it just sent.
+      const again = reads(NEW);
+      expect(instructionsEvent(out.loaded, fingerprint([bin]), again.read).event).toBeUndefined();
+      expect(again.calls).toHaveLength(0);
+    });
+  });
+
+  it('notices a change in the second file it watches, as a pull from source makes', () => {
+    withDir((dir) => {
+      const [bun, source] = [join(dir, 'bun'), join(dir, 'channel.ts')];
+      writeFileSync(bun, 'bun');
+      writeFileSync(source, 'a');
+      const loaded = started([bun, source]);
+      writeFileSync(join(dir, 'next'), 'b');
+      renameSync(join(dir, 'next'), source);
+      expect(instructionsEvent(loaded, fingerprint([bun, source]), reads(NEW).read).event).toBeDefined();
+    });
+  });
+
+  it('stays quiet when the update left the instructions as they were, and stops asking', () => {
+    withDir((dir) => {
+      const bin = join(dir, 'akapen');
+      writeFileSync(bin, 'old');
+      const loaded = started([bin]);
+      writeFileSync(join(dir, 'next'), 'new');
+      renameSync(join(dir, 'next'), bin);
+      const out = instructionsEvent(loaded, fingerprint([bin]), reads(OLD).read);
+      expect(out.event).toBeUndefined();
+      const again = reads(NEW);
+      expect(instructionsEvent(out.loaded, fingerprint([bin]), again.read).event).toBeUndefined();
+      expect(again.calls).toHaveLength(0);
+    });
+  });
+
+  it('asks again a minute after a failed read, not on every pass, with nothing else changing', () => {
+    withDir((dir) => {
+      const bin = join(dir, 'akapen');
+      writeFileSync(bin, 'old');
+      const loaded = started([bin]);
+      writeFileSync(join(dir, 'next'), 'new');
+      renameSync(join(dir, 'next'), bin);
+      const failed = instructionsEvent(loaded, fingerprint([bin]), reads(null).read, 1_000_000);
+      expect(failed.event).toBeUndefined();
+      expect(failed.loaded.instructions).toBe(OLD);
+      const soon = reads(NEW);
+      expect(
+        instructionsEvent(failed.loaded, fingerprint([bin]), soon.read, 1_059_999).event,
+      ).toBeUndefined();
+      expect(soon.calls).toHaveLength(0);
+      const later = instructionsEvent(failed.loaded, fingerprint([bin]), reads(NEW).read, 1_060_000);
+      expect(later.event?.content).toContain(NEW);
+    });
+  });
+
+  it('says nothing about a later install that keeps the instructions it already sent', () => {
+    withDir((dir) => {
+      const bin = join(dir, 'akapen');
+      writeFileSync(bin, 'v1');
+      const first = started([bin]);
+      writeFileSync(join(dir, 'next'), 'v2');
+      renameSync(join(dir, 'next'), bin);
+      const sent = instructionsEvent(first, fingerprint([bin]), reads(NEW).read);
+      expect(sent.event).toBeDefined();
+      writeFileSync(join(dir, 'next'), 'v3');
+      renameSync(join(dir, 'next'), bin);
+      expect(instructionsEvent(sent.loaded, fingerprint([bin]), reads(NEW).read).event).toBeUndefined();
+    });
+  });
+
+  it('keeps the mark of a file it could not read, so its return still counts', () => {
+    withDir((dir) => {
+      const [bun, source] = [join(dir, 'bun'), join(dir, 'channel.ts')];
+      writeFileSync(bun, 'bun');
+      writeFileSync(source, 'a');
+      const loaded = started([bun, source]);
+      writeFileSync(join(dir, 'next'), 'bun2');
+      renameSync(join(dir, 'next'), bun);
+      rmSync(source);
+      const quiet = instructionsEvent(loaded, fingerprint([bun, source]), reads(OLD).read);
+      writeFileSync(source, 'b');
+      expect(
+        instructionsEvent(quiet.loaded, fingerprint([bun, source]), reads(NEW).read).event,
+      ).toBeDefined();
+    });
+  });
+
+  it('sees a rename even when the new file keeps the old size and mtime', () => {
+    withDir((dir) => {
+      const bin = join(dir, 'akapen');
+      writeFileSync(bin, 'old');
+      const loaded = started([bin]);
+      const { atime, mtime } = statSync(bin);
+      writeFileSync(join(dir, 'next'), 'new');
+      utimesSync(join(dir, 'next'), atime, mtime);
+      renameSync(join(dir, 'next'), bin);
+      expect(instructionsEvent(loaded, fingerprint([bin]), reads(NEW).read).event).toBeDefined();
+    });
+  });
+
+  it('sees a write in place, which keeps the inode', () => {
+    withDir((dir) => {
+      const bin = join(dir, 'akapen');
+      writeFileSync(bin, 'old');
+      utimesSync(bin, 1, 1);
+      const loaded = started([bin]);
+      writeFileSync(bin, 'new');
+      expect(instructionsEvent(loaded, fingerprint([bin]), reads(NEW).read).event).toBeDefined();
+    });
+  });
+
+  it('waits while the binary is missing, rather than asking a half-done install', () => {
+    withDir((dir) => {
+      const bin = join(dir, 'akapen');
+      writeFileSync(bin, 'old');
+      const loaded = started([bin]);
+      rmSync(bin);
+      const r = reads(NEW);
+      expect(instructionsEvent(loaded, fingerprint([bin]), r.read).event).toBeUndefined();
+      expect(r.calls).toHaveLength(0);
+    });
+  });
+});
+
+describe('asking the akapen on disk for its instructions (#248)', () => {
+  const CLI = join(import.meta.dirname, '..', 'src', 'cli.ts');
+
+  it('gets exactly what this version hands over at the handshake', () => {
+    // bun by name: vitest runs under node, and akapen is run by bun or compiled by it.
+    expect(askInstructions(['bun', CLI, 'channel', 'instructions'])).toBe(INSTRUCTIONS);
+  });
+
+  it('refuses what a failing akapen printed before it failed', () => {
+    withDir((dir) => {
+      const failing = join(dir, 'failing');
+      writeFileSync(failing, '#!/bin/sh\necho http://127.0.0.1:4300\nexit 1\n');
+      chmodSync(failing, 0o755);
+      expect(askInstructions([failing])).toBeNull();
+    });
+  });
+
+  it('refuses an older akapen that starts a channel and prints nothing', () => {
+    withDir((dir) => {
+      // What a version before `channel instructions` does: a channel when it has a session.
+      const old = join(dir, 'old');
+      writeFileSync(old, '#!/bin/sh\n[ -n "$CLAUDE_CODE_SESSION_ID" ] && exit 0\nexit 2\n');
+      chmodSync(old, 0o755);
+      const prev = process.env['CLAUDE_CODE_SESSION_ID'];
+      process.env['CLAUDE_CODE_SESSION_ID'] = 'test';
+      try {
+        expect(askInstructions([old, 'channel', 'instructions'])).toBeNull();
+      } finally {
+        if (prev === undefined) delete process.env['CLAUDE_CODE_SESSION_ID'];
+        else process.env['CLAUDE_CODE_SESSION_ID'] = prev;
+      }
+    });
+  });
+
+  it('refuses empty output even with status 0', () => {
+    withDir((dir) => {
+      const empty = join(dir, 'empty');
+      writeFileSync(empty, '#!/bin/sh\necho\n');
+      chmodSync(empty, 0o755);
+      expect(askInstructions([empty])).toBeNull();
+    });
   });
 });
