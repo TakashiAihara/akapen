@@ -55,6 +55,15 @@ describe('positional arguments', () => {
     expect(args.help).toBe(false);
   });
 
+  it('refuses -- anywhere but reply, where the flags after it would be lost', () => {
+    for (const argv of [
+      ['token', '--', '--rotate'],
+      ['--', 'note.md', '-p', '4300'],
+      ['comments', '--', 'a.md'],
+    ])
+      expect(() => parseArgs(argv)).toThrow('-- is only for the text of akapen reply');
+  });
+
   it('defaults every boolean flag to off', () => {
     const args = parseArgs(['note.md']);
     expect(args.help).toBe(false);
