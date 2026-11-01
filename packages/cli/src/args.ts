@@ -73,6 +73,12 @@ export function parseArgs(argv: string[]): Args {
   for (let i = 0; i < argv.length; i++) {
     const token = argv[i]!;
 
+    // The usual end of options (#245): a reply that is a markdown list starts with `-`.
+    if (token === '--') {
+      args.positional.push(...argv.slice(i + 1));
+      break;
+    }
+
     if (token === '-p' || token === '--port') {
       const next = argv[i + 1];
       if (missing(next)) throw new UsageError(`${token} needs a value`);
