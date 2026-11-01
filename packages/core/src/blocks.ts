@@ -199,7 +199,11 @@ function walkFence(token: Token, ctx: Ctx): void {
     return;
   }
 
-  const codeLines = splitHighlighted(highlight(token.content.replace(/\n$/, ''), info));
+  // An empty fence has no lines. Splitting '' gives one, which took the closing fence's
+  // line as content and left the block without its last row (#262) — or, unclosed at the
+  // end of the file, made a row for a line that does not exist.
+  const codeLines =
+    token.content === '' ? [] : splitHighlighted(highlight(token.content.replace(/\n$/, ''), info));
   // opening fence line
   push(ctx, {
     startLine,

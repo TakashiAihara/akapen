@@ -258,3 +258,19 @@ describe('list-last', () => {
     expect(lastOf('Para.\n\n| a |\n| - |\n| 1 |\n')).toEqual([]);
   });
 });
+
+describe('an empty fence (#262)', () => {
+  it('is its two fence rows, the closing one marked as the end of the block', () => {
+    const blocks = buildDoc('e.md', '```sh\n```\n\nAfter.\n').blocks.filter((b) => b.kind === 'code');
+    expect(blocks.map((b) => [b.startLine, b.flags])).toEqual([
+      [1, ['code-first']],
+      [2, ['code-last']],
+    ]);
+  });
+
+  it('is its opening row alone when it is never closed, with no row past the end', () => {
+    const blocks = buildDoc('e.md', 'Before.\n\n```sh').blocks;
+    expect(blocks.filter((b) => b.kind === 'code').map((b) => b.startLine)).toEqual([3]);
+    expect(Math.max(...blocks.map((b) => b.endLine))).toBe(3);
+  });
+});
