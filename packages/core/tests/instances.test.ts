@@ -25,6 +25,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   instancesDir,
   liveInstances,
+  reachableHost,
   readInstances,
   registerInstance,
   removeInstance,
@@ -95,6 +96,20 @@ async function freePort(): Promise<number> {
   await server.stop();
   return port;
 }
+
+describe('where an instance is reached from this host', () => {
+  it('turns every spelling of a wildcard into the loopback it answers on (#215)', () => {
+    expect(reachableHost('0.0.0.0')).toBe('127.0.0.1');
+    expect(reachableHost('::ffff:0:0')).toBe('127.0.0.1');
+    expect(reachableHost('::')).toBe('[::1]');
+    expect(reachableHost('0:0:0:0:0:0:0:0')).toBe('[::1]');
+  });
+
+  it('brackets a concrete IPv6 address in its canonical form', () => {
+    expect(reachableHost('::ffff:127.0.0.1')).toBe('[::ffff:7f00:1]');
+    expect(reachableHost('192.168.0.151')).toBe('192.168.0.151');
+  });
+});
 
 describe('writing an entry', () => {
   it('names the file after the pid and stores identity only', () => {

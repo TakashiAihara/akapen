@@ -9,7 +9,7 @@
  */
 import { hostname, networkInterfaces } from 'node:os';
 import { describe, expect, it } from 'vitest';
-import { allowedHostnames, hostnameOf } from '../src/hosts.ts';
+import { allowedHostnames, canonicalAddress, hostnameOf } from '../src/hosts.ts';
 
 describe('reading a name off a Host header', () => {
   it('drops the port', () => {
@@ -22,6 +22,12 @@ describe('reading a name off a Host header', () => {
     // The colons inside are not a port separator, which is the whole reason for brackets.
     expect(hostnameOf('[::1]:4300')).toBe('[::1]');
     expect(hostnameOf('[fd00::1]')).toBe('[fd00::1]');
+  });
+
+  it('reads an IPv6 literal in the spelling a browser uses, whatever the client sent (#215)', () => {
+    // curl sends `--host`'s spelling as typed, a browser sends it canonical. Both open.
+    expect(hostnameOf('[::ffff:127.0.0.1]:4300')).toBe('[::ffff:7f00:1]');
+    expect(hostnameOf('[0:0:0:0:0:0:0:1]')).toBe('[::1]');
   });
 
   it('reads a name spelled with the root dot as the same name', () => {
@@ -115,5 +121,28 @@ describe('the names a bind address answers to', () => {
       .flatMap((list) => list ?? [])
       .find((ni) => !ni.internal);
     if (other) expect(names.has(other.address.toLowerCase())).toBe(false);
+  });
+});
+
+describe('IPv6 binds spelled more than one way (#215)', () => {
+  it('treats the long spelling of :: and the IPv4 wildcard in IPv6 form as wildcards', () => {
+    const lan = Object.values(networkInterfaces())
+      .flat()
+      .find((ni) => ni?.family === 'IPv4' && !ni.internal)?.address;
+    for (const bind of ['0:0:0:0:0:0:0:0', '::ffff:0:0', '[::ffff:0.0.0.0]']) {
+      const names = allowedHostnames(bind);
+      if (lan !== undefined) expect(names.has(lan)).toBe(true);
+      expect(names.has(bind)).toBe(false);
+    }
+  });
+
+  it('serves the canonical spelling of an address bound in another', () => {
+    expect(allowedHostnames('::ffff:127.0.0.1').has('[::ffff:7f00:1]')).toBe(true);
+  });
+
+  it('leaves what is not an IPv6 literal alone', () => {
+    expect(canonicalAddress('127.0.0.1')).toBe('127.0.0.1');
+    expect(canonicalAddress('localhost')).toBe('localhost');
+    expect(canonicalAddress('[2001:DB8:0::1]')).toBe('[2001:db8::1]');
   });
 });

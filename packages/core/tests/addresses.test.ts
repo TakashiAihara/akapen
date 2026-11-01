@@ -8,6 +8,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import type { NetworkInterfaceInfo } from 'node:os';
+import { allowedHostnames } from '../src/hosts.ts';
 import {
   AdvertiseError,
   defaultRouteInterface,
@@ -122,6 +123,9 @@ describe('the URL to print', () => {
 
   it('never prints the wildcard itself, which is the line that opens nothing', () => {
     for (const url of urlsFor('0.0.0.0', 4300, ['192.168.0.151'])) expect(url).not.toContain('0.0.0.0');
+    // The other spellings of a wildcard (#215).
+    for (const bind of ['::ffff:0:0', '0:0:0:0:0:0:0:0'])
+      expect(urlsFor(bind, 4300, ['192.168.0.151'])).toEqual(['http://192.168.0.151:4300']);
     for (const url of urlsFor('0.0.0.0', 4300, [])) expect(url).not.toContain('0.0.0.0');
   });
 
@@ -187,6 +191,11 @@ describe('the address to advertise', () => {
   it('takes an address the server answers to', () => {
     expect(resolve('192.168.0.151')).toBe('192.168.0.151');
     expect(resolve('172.17.0.1')).toBe('172.17.0.1');
+  });
+
+  it('takes an IPv6 address in another spelling of what is served (#215)', () => {
+    const bound = '::ffff:7f00:1';
+    expect(resolve('::ffff:127.0.0.1', bound, allowedHostnames(bound))).toBe('::ffff:7f00:1');
   });
 
   it('takes localhost, which is a name but not a resolved one', () => {

@@ -194,6 +194,12 @@ describe('resolveHost', () => {
       expect(resolveHost(host)).toBe(host);
   });
 
+  it('hands an IPv6 address on in the form a browser sends as Host (#215)', () => {
+    expect(resolveHost('0:0:0:0:0:0:0:0')).toBe('::');
+    expect(resolveHost('::ffff:127.0.0.1')).toBe('::ffff:7f00:1');
+    expect(resolveHost('[2001:DB8:0::1]')).toBe('[2001:db8::1]');
+  });
+
   it('takes localhost in any case, and hands it on lowercased', () => {
     expect(resolveHost('LOCALHOST')).toBe('localhost');
   });
