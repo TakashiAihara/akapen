@@ -8,11 +8,19 @@
  * handed over by `akapen comments`. Counting instead of naming re-fires on the same
  * unresolved comment every pass, forever.
  */
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { collect, filesForSession, idsOf, markSent, newEvents } from '../src/channel.ts';
+import {
+  collect,
+  filesForSession,
+  fingerprint,
+  idsOf,
+  markSent,
+  newEvents,
+  replacedEvent,
+} from '../src/channel.ts';
 import type { RoundComment } from '@akapen/shared';
 
 const comment = (id: string, over: Partial<RoundComment> = {}): RoundComment => ({
@@ -273,5 +281,49 @@ describe('the store the channel reads by default', () => {
       else process.env['AKAPEN_HOME'] = before;
       rmSync(home, { recursive: true, force: true });
     }
+  });
+});
+
+const withDir = (fn: (dir: string) => void): void => {
+  const dir = mkdtempSync(join(tmpdir(), 'akapen-replaced-'));
+  try {
+    fn(dir);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+};
+
+describe('telling the session akapen was replaced (#248)', () => {
+  it('says nothing while the binary is the one it started from', () => {
+    withDir((dir) => {
+      const bin = join(dir, 'akapen');
+      writeFileSync(bin, 'old');
+      const start = fingerprint([bin]);
+      expect(start.size).toBe(1);
+      expect(replacedEvent(start, fingerprint([bin]))).toBeUndefined();
+    });
+  });
+
+  it('names the binary once an install has renamed a new one over it', () => {
+    withDir((dir) => {
+      const bin = join(dir, 'akapen');
+      writeFileSync(bin, 'old');
+      const start = fingerprint([bin]);
+      writeFileSync(join(dir, 'next'), 'new build');
+      renameSync(join(dir, 'next'), bin);
+      const event = replacedEvent(start, fingerprint([bin]));
+      expect(event?.meta).toEqual({ event: 'replaced', path: bin });
+      expect(event?.content).toContain('restart this session');
+    });
+  });
+
+  it('waits while the binary is missing, rather than calling a half-done install a replacement', () => {
+    withDir((dir) => {
+      const bin = join(dir, 'akapen');
+      writeFileSync(bin, 'old');
+      const start = fingerprint([bin]);
+      rmSync(bin);
+      expect(replacedEvent(start, fingerprint([bin]))).toBeUndefined();
+    });
   });
 });

@@ -15,6 +15,8 @@
  * costs nothing until then.
  */
 
+import { statSync } from 'node:fs';
+
 import { reachableHost, readInstances } from '@akapen/core/instances';
 import { pendingComments } from '@akapen/core/store';
 import type { Reply, RoundComment } from '@akapen/shared';
@@ -195,6 +197,50 @@ export function collect(
   return out;
 }
 
+/**
+ * What identifies the files this process was loaded from, so a replacement can be seen.
+ *
+ * The binary carries no version (the tag is the only place it lives), so the file itself
+ * stands in for one. `process.execPath` is the installed binary; when akapen runs from
+ * source it is bun, and this module's own path is what a pull changes. A path that cannot
+ * be read is left out: an install caught between unlink and rename has not replaced it yet.
+ */
+export function fingerprint(paths: string[]): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const p of paths) {
+    try {
+      const s = statSync(p);
+      out.set(p, `${s.ino}:${s.size}:${s.mtimeMs}`);
+    } catch {
+      /* not readable now; see above */
+    }
+  }
+  return out;
+}
+
+/**
+ * The event that says akapen was replaced since this channel started (#248).
+ *
+ * The instructions are handed over once, at the handshake, and a channel lives as long as
+ * its session. Without this an agent keeps following the old ones for days and nothing
+ * tells it they changed.
+ */
+export function replacedEvent(
+  start: Map<string, string>,
+  now: Map<string, string>,
+): ChannelEvent | undefined {
+  const path = [...start].find(([p, f]) => now.has(p) && now.get(p) !== f)?.[0];
+  if (path === undefined) return undefined;
+  return {
+    content: [
+      `akapen has been replaced on disk since this channel started (${path}).`,
+      'The instructions you were given came with the old version and may no longer match what akapen does now.',
+      'Tell the person, and ask them to restart this session so the channel loads the new ones.',
+    ].join(' '),
+    meta: { event: 'replaced', path },
+  };
+}
+
 /** Record that an event reached the session, so no later pass sends it again. */
 export function markSent(seen: Map<string, Set<string>>, event: ChannelEvent): void {
   const { file, comment_id: commentId, reply_id: replyId } = event.meta;
@@ -250,8 +296,16 @@ export async function runChannel(): Promise<void> {
   process.stdin.on('close', exitOnClose);
 
   const seen = new Map<string, Set<string>>();
+  const self = [process.execPath, import.meta.path];
+  const loaded = fingerprint(self);
+  let toldReplaced = false;
   for (;;) {
     try {
+      const replaced = toldReplaced ? undefined : replacedEvent(loaded, fingerprint(self));
+      if (replaced !== undefined) {
+        await mcp.notification({ method: 'notifications/claude/channel', params: replaced });
+        toldReplaced = true;
+      }
       for (const event of collect(sessionId, seen)) {
         await mcp.notification({ method: 'notifications/claude/channel', params: event });
         markSent(seen, event);
