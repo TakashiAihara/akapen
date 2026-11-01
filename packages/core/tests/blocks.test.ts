@@ -267,4 +267,10 @@ describe('an empty fence (#262)', () => {
       [2, ['code-last']],
     ]);
   });
+
+  it('is its opening row alone when it is never closed, with no row past the end', () => {
+    const blocks = buildDoc('e.md', 'Before.\n\n```sh').blocks;
+    expect(blocks.filter((b) => b.kind === 'code').map((b) => b.startLine)).toEqual([3]);
+    expect(Math.max(...blocks.map((b) => b.endLine))).toBe(3);
+  });
 });

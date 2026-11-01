@@ -96,8 +96,11 @@ test('leaves a paragraph after a code block or a table the space it leaves after
   // An empty fence and an indented block are code too (#262).
   const empty = await gapsOf(page, '```sh\n```\n\nAfter.\n', akapen, request);
   expect(empty.at(-1)).toBeCloseTo(paraToPara, 0);
+  await expect(page.locator('.row.code-last .code-fence')).toHaveText('```');
   const indented = await gapsOf(page, 'Before.\n\n    make\n    install\n\nAfter.\n', akapen, request);
   expect(indented.at(-1)).toBeCloseTo(paraToPara, 0);
+  const indentedThenFence = await gapsOf(page, '    make\n```sh\nrun\n```\n', akapen, request);
+  expect(indentedThenFence[0]).toBeCloseTo(paraToPara, 0);
   const table = await gapsOf(page, '| a | b |\n|---|---|\n| 1 | 2 |\n\nAfter.\n', akapen, request);
   // Header → hidden separator → body row → After. Through the separator the two first
   // gaps add up to the header-to-body gap, which stays as tight as a code block's lines.
