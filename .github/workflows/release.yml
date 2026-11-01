@@ -59,21 +59,25 @@ jobs:
           EVENT: ${{ github.event_name }}
           GIVEN: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
-          set -eu
+          # A substitution inside a command's arguments (echo, [ ]) does not stop `set -e`
+          # when it fails, and a pipe reports only its last command. Every value below is
+          # taken in an assignment of its own so a failing git or next-tag stops the run
+          # instead of releasing nothing while it stays green (#253).
+          set -euo pipefail
           if [ "$EVENT" != workflow_run ]; then
             echo "tag=$GIVEN" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           # A newer commit is already on main and its own run releases it. Releasing this one
           # afterwards would make older code the latest.
-          if [ "$(git rev-parse origin/main)" != "$(git rev-parse HEAD)" ]; then
+          main="$(git rev-parse origin/main)"
+          head="$(git rev-parse HEAD)"
+          if [ "$main" != "$head" ]; then
             echo "main has moved past this commit; not releasing it"
             exit 0
           fi
           # A re-run for the same commit reuses its tag rather than cutting another.
           existing="$(git tag --points-at HEAD --list 'v*' | head -n 1)"
-          # A substitution inside echo's argument does not stop `set -e` when it fails, so
-          # take the next tag in an assignment of its own.
           tag="$existing"
           if [ -z "$tag" ]; then
             tag="$(bun scripts/next-tag.ts)"
