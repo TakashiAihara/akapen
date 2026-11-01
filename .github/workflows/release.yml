@@ -72,7 +72,13 @@ jobs:
           fi
           # A re-run for the same commit reuses its tag rather than cutting another.
           existing="$(git tag --points-at HEAD --list 'v*' | head -n 1)"
-          echo "tag=${existing:-$(bun scripts/next-tag.ts)}" >> "$GITHUB_OUTPUT"
+          # A substitution inside echo's argument does not stop `set -e` when it fails, so
+          # take the next tag in an assignment of its own.
+          tag="$existing"
+          if [ -z "$tag" ]; then
+            tag="$(bun scripts/next-tag.ts)"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
   build:
     needs: tag
