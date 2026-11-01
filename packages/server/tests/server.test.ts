@@ -1950,3 +1950,21 @@ describe('images beside the document', () => {
     }
   }, 30_000);
 });
+
+// #238: what `stop()` is for. A process that started a server in-process and stopped it
+// should have nothing left holding the event loop: the socket, the SSE heartbeat and the
+// file watcher each keep it alive, and the CLI never notices because it exits instead.
+describe('stop', () => {
+  it('leaves nothing holding the process open', () => {
+    const r = spawnSync('bun', [join(import.meta.dirname, 'fixtures', 'start-and-stop.ts'), work], {
+      env: { ...process.env, AKAPEN_HOME: join(sandbox, 'in-process'), CLAUDE_CODE_SESSION_ID: '' },
+      encoding: 'utf8',
+      // A timer or watcher left running never ends the process, so the bound is what
+      // catches it, not an error.
+      timeout: 10_000,
+    });
+    expect(r.stdout).toContain('stopped');
+    // Killed at the bound, the status is null.
+    expect(r.status).toBe(0);
+  }, 20_000);
+});
