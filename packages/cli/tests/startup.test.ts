@@ -8,7 +8,7 @@
  * the process starts, serves correctly, and prints an address that opens nothing.
  */
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { networkInterfaces } from 'node:os';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -439,12 +439,26 @@ describe('akapen reply and resolve', () => {
     const last = () =>
       (JSON.parse(cli(home, ['comments', file]).stdout) as { last_author_kind: string }[])[0]!
         .last_author_kind;
-    const personReplies = () =>
-      fetch(`${url}/api/comments/${comment.id}/replies`, {
+    const personReplies = async () => {
+      const res = await fetch(`${url}/api/comments/${comment.id}/replies`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ body: 'from a person' }),
       });
+      expect(res.ok).toBe(true);
+    };
+
+    // Stored comments from before replies existed have no such key.
+    const stored = readdirSync(join(home, 'reviews'), { recursive: true, encoding: 'utf8' }).find((p) =>
+      p.endsWith('comments.json'),
+    )!;
+    const path = join(home, 'reviews', stored);
+    const original = readFileSync(path, 'utf8');
+    const bare = JSON.parse(original) as Record<string, unknown>[];
+    for (const c of bare) delete c['replies'];
+    writeFileSync(path, JSON.stringify(bare));
+    expect(last()).toBe('human');
+    writeFileSync(path, original);
 
     expect(last()).toBe('human');
     await personReplies();
