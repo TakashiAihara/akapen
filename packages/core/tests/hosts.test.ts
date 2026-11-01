@@ -132,7 +132,7 @@ describe('IPv6 binds spelled more than one way (#215)', () => {
     for (const bind of ['0:0:0:0:0:0:0:0', '::ffff:0:0', '[::ffff:0.0.0.0]']) {
       const names = allowedHostnames(bind);
       if (lan !== undefined) expect(names.has(lan)).toBe(true);
-      expect(names.has('[::1]')).toBe(true);
+      expect(names.has(bind)).toBe(false);
     }
   });
 

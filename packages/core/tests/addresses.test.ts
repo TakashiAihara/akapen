@@ -123,6 +123,9 @@ describe('the URL to print', () => {
 
   it('never prints the wildcard itself, which is the line that opens nothing', () => {
     for (const url of urlsFor('0.0.0.0', 4300, ['192.168.0.151'])) expect(url).not.toContain('0.0.0.0');
+    // The other spellings of a wildcard (#215).
+    for (const bind of ['::ffff:0:0', '0:0:0:0:0:0:0:0'])
+      expect(urlsFor(bind, 4300, ['192.168.0.151'])).toEqual(['http://192.168.0.151:4300']);
     for (const url of urlsFor('0.0.0.0', 4300, [])) expect(url).not.toContain('0.0.0.0');
   });
 

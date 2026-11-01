@@ -18,6 +18,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import type { StatusPayload } from '@akapen/shared';
+import { canonicalAddress, WILDCARD_BINDS } from './hosts.ts';
 import { akapenHome, writeAtomic } from './store.ts';
 
 /**
@@ -256,9 +257,11 @@ function isStatus(v: unknown): v is Omit<StatusPayload, 'title'> & { title?: unk
  * somewhere other than this host is #87, and is a different question.
  */
 export function reachableHost(host: string): string {
-  if (host === '0.0.0.0') return '127.0.0.1';
-  if (host === '::' || host === '[::]') return '[::1]';
-  return host.includes(':') && !host.startsWith('[') ? `[${host}]` : host;
+  const h = canonicalAddress(host.toLowerCase());
+  // `::ffff:0:0` is the IPv4 wildcard spelled in IPv6, so it answers on IPv4 loopback.
+  if (h === '0.0.0.0' || h === '::ffff:0:0' || h === '[::ffff:0:0]') return '127.0.0.1';
+  if (WILDCARD_BINDS.has(h)) return '[::1]';
+  return h.includes(':') && !h.startsWith('[') ? `[${h}]` : h;
 }
 
 /**
