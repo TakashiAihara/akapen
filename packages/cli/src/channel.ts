@@ -229,7 +229,7 @@ export function fingerprint(paths: string[]): Map<string, string> {
  * Empty output is refused, not taken as empty instructions: an akapen from before
  * `channel instructions` existed reads the argument as nothing and starts a channel,
  * which, its stdin closed, exits 0 having printed nothing. One from before `channel`
- * itself serves a file of that name, prints its URL and is killed by the timeout; the
+ * itself takes it for a document and exits non-zero with `no such file: channel`; the
  * status is what refuses that.
  */
 export function askInstructions(command: string[]): string | null {
@@ -243,6 +243,9 @@ export function askInstructions(command: string[]): string | null {
 
 export type Loaded = { files: Map<string, string>; instructions: string; retryAt?: number };
 
+// shortcut: a read that never succeeds (a downgrade to a release without `channel
+// instructions`) is retried every minute for the life of the session, one spawn and one
+// stderr line each time; cap the retries if that ever shows up as a cost.
 const RETRY_MS = 60_000;
 
 /**
