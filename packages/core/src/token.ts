@@ -34,7 +34,7 @@ export function tokenPath(): string {
  * sixty-four would come back out of `akapen token` and fail to go into `--token`. The
  * attached form always works; this is so the obvious thing works too.
  */
-function generate(): string {
+export function generate(): string {
   for (;;) {
     const token = randomBytes(32).toString('base64url');
     if (!token.startsWith('-')) return token;
