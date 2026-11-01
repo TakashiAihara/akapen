@@ -45,8 +45,9 @@ describe('the stored token', () => {
   it('never starts with a dash, so it can be handed back through --token', () => {
     // base64url includes `-`, and a value beginning with one is read as an option in the
     // space-separated form. One token in sixty-four would come out of `akapen token` and
-    // fail to go back in. Generated without writing (#236): 200 rotations, each writing
-    // the file, ran past the 5s timeout on CI. 2000 draws miss a dash with odds of 1e-14.
+    // fail to go back in. Drawn with `generate`, since `rotateToken` writes the file and is
+    // too slow to repeat. A generator that let a dash through passes 2000 draws with odds
+    // of about 2e-14; the one `rotateToken` below only shows it still answers.
     for (let i = 0; i < 2000; i++) {
       expect(generate().startsWith('-')).toBe(false);
     }
