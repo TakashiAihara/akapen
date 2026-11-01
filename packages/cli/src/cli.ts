@@ -354,6 +354,10 @@ if (positional[0] === 'comments') {
         anchor: c.anchor,
         author: c.author,
         resolved: c.resolved,
+        // Who spoke last on the thread (#249), so a reader need not walk `replies`: until
+        // someone resolves it, a comment the agent has answered is still listed here. A
+        // comment carries no kind of its own, so one with no reply is treated as a person's.
+        last_author_kind: c.replies?.at(-1)?.authorKind ?? 'human',
         // The agent's own replies are noise to it, but a person's reply to one is new
         // feedback — "could not fix, because X" answered with "then do Y instead". Y
         // only arrives if the thread comes with the comment.
