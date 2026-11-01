@@ -13,6 +13,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   currentToken,
+  generate,
   readToken,
   resolveToken,
   rotateToken,
@@ -44,10 +45,13 @@ describe('the stored token', () => {
   it('never starts with a dash, so it can be handed back through --token', () => {
     // base64url includes `-`, and a value beginning with one is read as an option in the
     // space-separated form. One token in sixty-four would come out of `akapen token` and
-    // fail to go back in.
-    for (let i = 0; i < 200; i++) {
-      expect(rotateToken().startsWith('-')).toBe(false);
+    // fail to go back in. Drawn with `generate`, since `rotateToken` writes the file and is
+    // too slow to repeat. A generator that let a dash through passes 2000 draws with odds
+    // of about 2e-14; the one `rotateToken` below only shows it still answers.
+    for (let i = 0; i < 2000; i++) {
+      expect(generate().startsWith('-')).toBe(false);
     }
+    expect(rotateToken().startsWith('-')).toBe(false);
   });
 
   it('is generated once and read back every time after', () => {
