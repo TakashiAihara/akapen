@@ -9,6 +9,7 @@
  * unresolved comment every pass, forever.
  */
 import {
+  chmodSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -25,7 +26,9 @@ import {
   collect,
   filesForSession,
   fingerprint,
+  askInstructions,
   idsOf,
+  INSTRUCTIONS,
   instructionsEvent,
   markSent,
   newEvents,
@@ -368,7 +371,7 @@ describe('handing the session new instructions after an update (#248)', () => {
     });
   });
 
-  it('tries again on the next pass when the new akapen could not be asked', () => {
+  it('waits for the next change, not the next pass, when the new akapen could not be asked', () => {
     withDir((dir) => {
       const bin = join(dir, 'akapen');
       writeFileSync(bin, 'old');
@@ -377,7 +380,45 @@ describe('handing the session new instructions after an update (#248)', () => {
       renameSync(join(dir, 'next'), bin);
       const failed = instructionsEvent(loaded, fingerprint([bin]), reads(null).read);
       expect(failed.event).toBeUndefined();
+      expect(failed.loaded.instructions).toBe(OLD);
+      const idle = reads(NEW);
+      expect(instructionsEvent(failed.loaded, fingerprint([bin]), idle.read).event).toBeUndefined();
+      expect(idle.calls).toHaveLength(0);
+      writeFileSync(join(dir, 'next'), 'fixed');
+      renameSync(join(dir, 'next'), bin);
       expect(instructionsEvent(failed.loaded, fingerprint([bin]), reads(NEW).read).event).toBeDefined();
+    });
+  });
+
+  it('says nothing about a later install that keeps the instructions it already sent', () => {
+    withDir((dir) => {
+      const bin = join(dir, 'akapen');
+      writeFileSync(bin, 'v1');
+      const first = started([bin]);
+      writeFileSync(join(dir, 'next'), 'v2');
+      renameSync(join(dir, 'next'), bin);
+      const sent = instructionsEvent(first, fingerprint([bin]), reads(NEW).read);
+      expect(sent.event).toBeDefined();
+      writeFileSync(join(dir, 'next'), 'v3');
+      renameSync(join(dir, 'next'), bin);
+      expect(instructionsEvent(sent.loaded, fingerprint([bin]), reads(NEW).read).event).toBeUndefined();
+    });
+  });
+
+  it('keeps the mark of a file it could not read, so its return still counts', () => {
+    withDir((dir) => {
+      const [bun, source] = [join(dir, 'bun'), join(dir, 'channel.ts')];
+      writeFileSync(bun, 'bun');
+      writeFileSync(source, 'a');
+      const loaded = started([bun, source]);
+      writeFileSync(join(dir, 'next'), 'bun2');
+      renameSync(join(dir, 'next'), bun);
+      rmSync(source);
+      const quiet = instructionsEvent(loaded, fingerprint([bun, source]), reads(OLD).read);
+      writeFileSync(source, 'b');
+      expect(
+        instructionsEvent(quiet.loaded, fingerprint([bun, source]), reads(NEW).read).event,
+      ).toBeDefined();
     });
   });
 
@@ -414,6 +455,40 @@ describe('handing the session new instructions after an update (#248)', () => {
       const r = reads(NEW);
       expect(instructionsEvent(loaded, fingerprint([bin]), r.read).event).toBeUndefined();
       expect(r.calls).toHaveLength(0);
+    });
+  });
+});
+
+describe('asking the akapen on disk for its instructions (#248)', () => {
+  const CLI = join(import.meta.dirname, '..', 'src', 'cli.ts');
+
+  it('gets exactly what this version hands over at the handshake', () => {
+    expect(askInstructions([process.execPath, CLI, 'channel', 'instructions'])).toBe(INSTRUCTIONS);
+  });
+
+  it('refuses an older akapen that starts a channel and prints nothing', () => {
+    withDir((dir) => {
+      // What a version before `channel instructions` does: a channel when it has a session.
+      const old = join(dir, 'old');
+      writeFileSync(old, '#!/bin/sh\n[ -n "$CLAUDE_CODE_SESSION_ID" ] && exit 0\nexit 2\n');
+      chmodSync(old, 0o755);
+      const prev = process.env['CLAUDE_CODE_SESSION_ID'];
+      process.env['CLAUDE_CODE_SESSION_ID'] = 'test';
+      try {
+        expect(askInstructions([old, 'channel', 'instructions'])).toBeNull();
+      } finally {
+        if (prev === undefined) delete process.env['CLAUDE_CODE_SESSION_ID'];
+        else process.env['CLAUDE_CODE_SESSION_ID'] = prev;
+      }
+    });
+  });
+
+  it('refuses empty output even with status 0', () => {
+    withDir((dir) => {
+      const empty = join(dir, 'empty');
+      writeFileSync(empty, '#!/bin/sh\necho\n');
+      chmodSync(empty, 0o755);
+      expect(askInstructions([empty])).toBeNull();
     });
   });
 });
