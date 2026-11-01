@@ -427,6 +427,34 @@ describe('akapen reply and resolve', () => {
     expect(nobody.stderr).toContain('answered, so nothing was written; start one (akapen');
   }, 60_000);
 
+  it('says who spoke last on the thread (#249)', async () => {
+    const { lines, home, file } = await start(['--no-auth']);
+    const [url] = urlsIn(lines);
+    const posted = await fetch(`${url}/api/comments`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ startLine: 1, endLine: 1, body: 'about the heading' }),
+    });
+    const { comment } = (await posted.json()) as { comment: { id: string } };
+    const last = () =>
+      (JSON.parse(cli(home, ['comments', file]).stdout) as { last_author_kind: string }[])[0]!
+        .last_author_kind;
+    const personReplies = () =>
+      fetch(`${url}/api/comments/${comment.id}/replies`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ body: 'from a person' }),
+      });
+
+    expect(last()).toBe('human');
+    await personReplies();
+    expect(last()).toBe('human');
+    expect(cli(home, ['reply', file, comment.id, 'from the agent']).status).toBe(0);
+    expect(last()).toBe('agent');
+    await personReplies();
+    expect(last()).toBe('human');
+  }, 60_000);
+
   it('reaches an akapen started with --token when given the same --token', async () => {
     const pinned = 'pinned-for-the-reply-test';
     const { lines, home, file } = await start(['--token', pinned]);
