@@ -8,7 +8,16 @@
  * handed over by `akapen comments`. Counting instead of naming re-fires on the same
  * unresolved comment every pass, forever.
  */
-import { mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  statSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -17,9 +26,10 @@ import {
   filesForSession,
   fingerprint,
   idsOf,
+  instructionsEvent,
   markSent,
   newEvents,
-  replacedEvent,
+  type Loaded,
 } from '../src/channel.ts';
 import type { RoundComment } from '@akapen/shared';
 
@@ -293,37 +303,117 @@ const withDir = (fn: (dir: string) => void): void => {
   }
 };
 
-describe('telling the session akapen was replaced (#248)', () => {
-  it('says nothing while the binary is the one it started from', () => {
+const reads = (answer: string | null) => {
+  const calls: number[] = [];
+  return { calls, read: () => (calls.push(1), answer) };
+};
+
+describe('handing the session new instructions after an update (#248)', () => {
+  const OLD = 'old instructions';
+  const NEW = 'new instructions';
+  const started = (paths: string[]): Loaded => ({ files: fingerprint(paths), instructions: OLD });
+
+  it('asks nothing while every file is the one it started from', () => {
     withDir((dir) => {
       const bin = join(dir, 'akapen');
       writeFileSync(bin, 'old');
-      const start = fingerprint([bin]);
-      expect(start.size).toBe(1);
-      expect(replacedEvent(start, fingerprint([bin]))).toBeUndefined();
+      const r = reads(NEW);
+      const out = instructionsEvent(started([bin]), fingerprint([bin]), r.read);
+      expect(out.event).toBeUndefined();
+      expect(r.calls).toHaveLength(0);
     });
   });
 
-  it('names the binary once an install has renamed a new one over it', () => {
+  it('carries the new instructions once an install renamed a binary over it', () => {
     withDir((dir) => {
       const bin = join(dir, 'akapen');
       writeFileSync(bin, 'old');
-      const start = fingerprint([bin]);
-      writeFileSync(join(dir, 'next'), 'new build');
+      const loaded = started([bin]);
+      writeFileSync(join(dir, 'next'), 'new');
       renameSync(join(dir, 'next'), bin);
-      const event = replacedEvent(start, fingerprint([bin]));
-      expect(event?.meta).toEqual({ event: 'replaced', path: bin });
-      expect(event?.content).toContain('restart this session');
+      const out = instructionsEvent(loaded, fingerprint([bin]), reads(NEW).read);
+      expect(out.event?.meta).toEqual({ event: 'instructions' });
+      expect(out.event?.content).toContain(`\n\n${NEW}`);
+      // Told once: the next pass compares against what it just sent.
+      const again = reads(NEW);
+      expect(instructionsEvent(out.loaded, fingerprint([bin]), again.read).event).toBeUndefined();
+      expect(again.calls).toHaveLength(0);
     });
   });
 
-  it('waits while the binary is missing, rather than calling a half-done install a replacement', () => {
+  it('notices a change in the second file it watches, as a pull from source makes', () => {
+    withDir((dir) => {
+      const [bun, source] = [join(dir, 'bun'), join(dir, 'channel.ts')];
+      writeFileSync(bun, 'bun');
+      writeFileSync(source, 'a');
+      const loaded = started([bun, source]);
+      writeFileSync(join(dir, 'next'), 'b');
+      renameSync(join(dir, 'next'), source);
+      expect(instructionsEvent(loaded, fingerprint([bun, source]), reads(NEW).read).event).toBeDefined();
+    });
+  });
+
+  it('stays quiet when the update left the instructions as they were, and stops asking', () => {
     withDir((dir) => {
       const bin = join(dir, 'akapen');
       writeFileSync(bin, 'old');
-      const start = fingerprint([bin]);
+      const loaded = started([bin]);
+      writeFileSync(join(dir, 'next'), 'new');
+      renameSync(join(dir, 'next'), bin);
+      const out = instructionsEvent(loaded, fingerprint([bin]), reads(OLD).read);
+      expect(out.event).toBeUndefined();
+      const again = reads(NEW);
+      expect(instructionsEvent(out.loaded, fingerprint([bin]), again.read).event).toBeUndefined();
+      expect(again.calls).toHaveLength(0);
+    });
+  });
+
+  it('tries again on the next pass when the new akapen could not be asked', () => {
+    withDir((dir) => {
+      const bin = join(dir, 'akapen');
+      writeFileSync(bin, 'old');
+      const loaded = started([bin]);
+      writeFileSync(join(dir, 'next'), 'new');
+      renameSync(join(dir, 'next'), bin);
+      const failed = instructionsEvent(loaded, fingerprint([bin]), reads(null).read);
+      expect(failed.event).toBeUndefined();
+      expect(instructionsEvent(failed.loaded, fingerprint([bin]), reads(NEW).read).event).toBeDefined();
+    });
+  });
+
+  it('sees a rename even when the new file keeps the old size and mtime', () => {
+    withDir((dir) => {
+      const bin = join(dir, 'akapen');
+      writeFileSync(bin, 'old');
+      const loaded = started([bin]);
+      const { atime, mtime } = statSync(bin);
+      writeFileSync(join(dir, 'next'), 'new');
+      utimesSync(join(dir, 'next'), atime, mtime);
+      renameSync(join(dir, 'next'), bin);
+      expect(instructionsEvent(loaded, fingerprint([bin]), reads(NEW).read).event).toBeDefined();
+    });
+  });
+
+  it('sees a write in place, which keeps the inode', () => {
+    withDir((dir) => {
+      const bin = join(dir, 'akapen');
+      writeFileSync(bin, 'old');
+      utimesSync(bin, 1, 1);
+      const loaded = started([bin]);
+      writeFileSync(bin, 'new');
+      expect(instructionsEvent(loaded, fingerprint([bin]), reads(NEW).read).event).toBeDefined();
+    });
+  });
+
+  it('waits while the binary is missing, rather than asking a half-done install', () => {
+    withDir((dir) => {
+      const bin = join(dir, 'akapen');
+      writeFileSync(bin, 'old');
+      const loaded = started([bin]);
       rmSync(bin);
-      expect(replacedEvent(start, fingerprint([bin]))).toBeUndefined();
+      const r = reads(NEW);
+      expect(instructionsEvent(loaded, fingerprint([bin]), r.read).event).toBeUndefined();
+      expect(r.calls).toHaveLength(0);
     });
   });
 });

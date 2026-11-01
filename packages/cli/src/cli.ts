@@ -71,7 +71,12 @@ if (positional.length === 0 || args.help) {
  * on the command line.
  */
 if (positional[0] === 'channel') {
-  const { runChannel } = await import('./channel.ts');
+  const { INSTRUCTIONS, runChannel } = await import('./channel.ts');
+  // How a running channel asks the akapen now on disk for its instructions (#248).
+  if (positional[1] === 'instructions') {
+    console.log(INSTRUCTIONS);
+    process.exit(0);
+  }
   await runChannel();
   // Only reached if the loop inside ever returns. Falling through would take `channel`
   // for the path of a document to serve.
