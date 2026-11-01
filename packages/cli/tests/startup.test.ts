@@ -424,7 +424,7 @@ describe('akapen reply and resolve', () => {
     await new Promise((r) => setTimeout(r, 500));
     const nobody = cli(home, ['reply', file, comment.id, 'into the void']);
     expect(nobody.status).toBe(1);
-    expect(nobody.stderr).toContain('answered');
+    expect(nobody.stderr).toContain('answered, so nothing was written; start one (akapen');
   }, 60_000);
 
   it('reaches an akapen started with --token when given the same --token', async () => {

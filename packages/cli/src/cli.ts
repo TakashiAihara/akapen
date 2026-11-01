@@ -269,8 +269,13 @@ if (positional[0] === 'reply' || positional[0] === 'resolve') {
   const target = resolve(file);
   const serving = (await liveInstances({ token })).find((e) => e.record.file === target);
   if (!serving) {
-    // Said as observed: one may be running on another token, and not have answered.
-    console.error(`akapen: no akapen serving ${target} answered`);
+    // Said as observed: one may be running on another token, and not have answered. Not
+    // written to the store instead (#258): a server that is running or starting holds the
+    // round in memory and writes it back, and two of these at once would race each other.
+    console.error(
+      `akapen: no akapen serving ${target} answered, so nothing was written; ` +
+        `start one (akapen ${JSON.stringify(file)}) and run this again`,
+    );
     process.exit(1);
   }
   const base = `http://${reachableHost(serving.record.host)}:${serving.record.port}`;
