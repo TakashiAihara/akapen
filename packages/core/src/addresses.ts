@@ -14,7 +14,7 @@
  */
 import { readFileSync } from 'node:fs';
 import { networkInterfaces, type NetworkInterfaceInfo } from 'node:os';
-import { allowedHostnames } from './hosts.ts';
+import { allowedHostnames, canonicalAddress, WILDCARD_BINDS } from './hosts.ts';
 
 /**
  * Whether what was typed was meant as an address at all.
@@ -33,15 +33,6 @@ const ADDRESS_SHAPED = /^\[?[0-9a-f.:]+\]?$/i;
  * can open, which is the same reason `orderedIPv4` never offers one.
  */
 const LINK_LOCAL_V6 = /^\[?fe[89ab][0-9a-f]:/i;
-
-/**
- * Bind addresses that mean "every interface" rather than naming one.
- *
- * `[::]` is here because `--host` takes an IPv6 literal in either spelling and
- * `allowedHostnames` already treats both as the wildcard. Leaving it out made the two
- * disagree: this module called `[::]` a concrete address and printed it back.
- */
-const WILDCARD = new Set(['0.0.0.0', '::', '[::]']);
 
 /**
  * An IPv6 literal has to be bracketed or the port cannot be told from the address.
@@ -140,7 +131,9 @@ export function urlsFor(
   port: number,
   addresses: string[] = localAddresses(),
 ): [string, ...string[]] {
-  if (!WILDCARD.has(host)) return [asUrl(host, port)];
+  // One set with `allowedHostnames`: two lists made them disagree before, and this printed
+  // `[::]` back as if it were a concrete address.
+  if (!WILDCARD_BINDS.has(canonicalAddress(host))) return [asUrl(host, port)];
   // The tuple is the point: there is always a first URL to hand over, so no caller has
   // to answer what to print when the list came back empty.
   const [first, ...rest] = addresses;
@@ -189,7 +182,7 @@ export function resolveAdvertised(
 
   // Addresses first, and `localhost` with them: an interface is never named like either,
   // so nothing is shadowed, and it means the common case never touches the interface list.
-  const literal = name.toLowerCase();
+  const literal = canonicalAddress(name.toLowerCase());
   if (allowed.has(literal)) {
     // Served and still unopenable. Refusing here rather than at the served-set check
     // because the reason is different, and so is what the caller has to do about it.

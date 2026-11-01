@@ -8,6 +8,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import type { NetworkInterfaceInfo } from 'node:os';
+import { allowedHostnames } from '../src/hosts.ts';
 import {
   AdvertiseError,
   defaultRouteInterface,
@@ -187,6 +188,11 @@ describe('the address to advertise', () => {
   it('takes an address the server answers to', () => {
     expect(resolve('192.168.0.151')).toBe('192.168.0.151');
     expect(resolve('172.17.0.1')).toBe('172.17.0.1');
+  });
+
+  it('takes an IPv6 address in another spelling of what is served (#215)', () => {
+    const bound = '::ffff:7f00:1';
+    expect(resolve('::ffff:127.0.0.1', bound, allowedHostnames(bound))).toBe('::ffff:7f00:1');
   });
 
   it('takes localhost, which is a name but not a resolved one', () => {

@@ -12,6 +12,8 @@
 
 import { isIP } from 'node:net';
 
+import { canonicalAddress } from '@akapen/core/hosts';
+
 /** Thrown for anything the caller typed wrong. cli.ts prints it with the usage text. */
 export class UsageError extends Error {}
 
@@ -152,8 +154,9 @@ export function parseArgs(argv: string[]): Args {
  * (`fe80::1%eth0`) is refused for the reason `--advertise` refuses link-local addresses:
  * a URL cannot carry it.
  *
- * Only the shape is checked. An address this machine does not have still fails inside
- * Bun.serve with EADDRNOTAVAIL, as a stack trace that at least names the problem.
+ * Only the shape is checked, and an IPv6 address is rewritten in its canonical form. An
+ * address this machine does not have still fails inside Bun.serve with EADDRNOTAVAIL, as a
+ * stack trace that at least names the problem.
  */
 export function resolveHost(raw: string | undefined): string {
   if (raw === undefined) return '127.0.0.1';
@@ -161,16 +164,9 @@ export function resolveHost(raw: string | undefined): string {
     throw new UsageError(`--host ${JSON.stringify(raw)} carries a zone id, which a URL cannot`);
   }
   const bracketed = /^\[(.*)\]$/.exec(raw)?.[1];
-  const inner = bracketed ?? raw;
   const address = bracketed === undefined ? isIP(raw) !== 0 : isIP(bracketed) === 6;
-  // An IPv6 address in the form a browser puts in Host (#215). `0:0:0:0:0:0:0:0` is then
-  // seen as the wildcard it is, and `::ffff:127.0.0.1` as `::ffff:7f00:1`, which is what
-  // the Host check has to match for the printed URL to open.
-  if (address && isIP(inner) === 6) {
-    const canonical = new URL(`http://[${inner}]/`).hostname.slice(1, -1);
-    return bracketed === undefined ? canonical : `[${canonical}]`;
-  }
-  if (address) return raw;
+  // So the printed URL is the one a browser would write (#215).
+  if (address) return canonicalAddress(raw);
   // Names are case-insensitive. Handed on lowercased, because that is the spelling the
   // Host check compares against.
   if (raw.toLowerCase() === 'localhost') return 'localhost';

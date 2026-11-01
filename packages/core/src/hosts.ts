@@ -9,7 +9,27 @@
  * directly.
  */
 
+import { isIP } from 'node:net';
 import { networkInterfaces } from 'node:os';
+
+/**
+ * An IPv6 address in the form a browser writes it, brackets kept as given (#215).
+ *
+ * `0:0:0:0:0:0:0:0` and `::` are one address, and `::ffff:127.0.0.1` is what a browser
+ * sends as `[::ffff:7f00:1]` while curl sends it as typed. Everything that compares one
+ * spelling with another — the bind, the Host header, `--advertise` — goes through this,
+ * so no pair of them can disagree. Anything that is not an IPv6 literal comes back as is.
+ */
+export function canonicalAddress(value: string): string {
+  const bracketed = value.startsWith('[') && value.endsWith(']');
+  const inner = bracketed ? value.slice(1, -1) : value;
+  if (isIP(inner) !== 6) return value;
+  const canonical = new URL(`http://[${inner}]/`).hostname.slice(1, -1);
+  return bracketed ? `[${canonical}]` : canonical;
+}
+
+/** Binds that answer on every interface. `::ffff:0:0` is the IPv4 wildcard in IPv6 form. */
+export const WILDCARD_BINDS = new Set(['0.0.0.0', '::', '[::]', '::ffff:0:0', '[::ffff:0:0]']);
 
 /**
  * The hostnames this instance answers to.
@@ -44,7 +64,7 @@ function bothForms(address: string): string[] {
 
 export function allowedHostnames(bind: string): Set<string> {
   const names = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
-  const wildcard = bind === '0.0.0.0' || bind === '::' || bind === '[::]';
+  const wildcard = WILDCARD_BINDS.has(canonicalAddress(bind.toLowerCase()));
   if (wildcard) {
     for (const list of Object.values(networkInterfaces())) {
       for (const ni of list ?? []) {
@@ -56,7 +76,7 @@ export function allowedHostnames(bind: string): Set<string> {
     // `Host` header bracketed, and `--host` takes it bare, so adding only what was passed
     // in means an explicit IPv6 bind answers 403 to every request it was started for.
     // `::1` happened to work only because the set above already carries both forms.
-    for (const form of bothForms(bind.toLowerCase())) names.add(form);
+    for (const form of bothForms(canonicalAddress(bind.toLowerCase()))) names.add(form);
   }
   /**
    * The machine's own name is deliberately not here.
@@ -87,7 +107,7 @@ export function hostnameOf(header: string): string {
   const value = header.trim().toLowerCase();
   if (value.startsWith('[')) {
     const close = value.indexOf(']');
-    return close === -1 ? value : value.slice(0, close + 1);
+    return close === -1 ? value : canonicalAddress(value.slice(0, close + 1));
   }
   const colon = value.lastIndexOf(':');
   const name = colon === -1 ? value : value.slice(0, colon);
