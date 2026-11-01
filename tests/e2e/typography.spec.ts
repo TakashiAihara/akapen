@@ -81,6 +81,10 @@ test('leaves the same space on the way out of a list as on the way in (#92)', as
   expect(out).toBeCloseTo(into, 0);
   // And not by spacing every item: inside the list the rows stay tight.
   expect(between).toBeLessThan(into - 3);
+  // An hr that ends the list keeps its own margin on both sides (#240).
+  const hr = await gapsOf(page, '- a\n\n  ***\n\nAfter.\n', akapen, request);
+  expect(hr).toHaveLength(2);
+  expect(hr[1]).toBeCloseTo(hr[0]!, 0);
 });
 
 test('leaves a paragraph after a code block or a table the space it leaves after a paragraph (#227)', async ({
