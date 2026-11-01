@@ -16,7 +16,8 @@ const USAGE = `akapen — markdown inline review
 
   akapen <file.md> [options]     start the review server
   akapen comments <file.md>      print unresolved comments as JSON (for agents)
-  akapen reply <file.md> <id> <text>   reply to a comment (--resolve to close it too)
+  akapen reply <file.md> <id> <text>   reply to a comment (--resolve to close it too;
+                                       -- before a text that starts with a dash)
   akapen resolve <file.md> <id>  resolve a comment
   akapen list                    print the akapen running on this host
   akapen channel                 push this session's comments to Claude Code (MCP channel)

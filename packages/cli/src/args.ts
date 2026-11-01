@@ -75,6 +75,17 @@ export function parseArgs(argv: string[]): Args {
   for (let i = 0; i < argv.length; i++) {
     const token = argv[i]!;
 
+    // The usual end of options (#245): a reply that is a markdown list starts with `-`.
+    // Only there: anywhere else what follows would be read as a file or dropped, so
+    // `akapen token -- --rotate` would print the old token as if it had been replaced.
+    if (token === '--') {
+      if (args.positional[0] !== 'reply') {
+        throw new UsageError('-- is only for the text of akapen reply');
+      }
+      args.positional.push(...argv.slice(i + 1));
+      break;
+    }
+
     if (token === '-p' || token === '--port') {
       const next = argv[i + 1];
       if (missing(next)) throw new UsageError(`${token} needs a value`);

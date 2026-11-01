@@ -48,6 +48,22 @@ describe('positional arguments', () => {
     expect(parseArgs(['comments', 'note.md']).positional).toEqual(['comments', 'note.md']);
   });
 
+  it('takes everything after -- as positional, a reply that is a list included (#245)', () => {
+    const args = parseArgs(['reply', 'note.md', 'c1', '--resolve', '--', '- first', '--help']);
+    expect(args.positional).toEqual(['reply', 'note.md', 'c1', '- first', '--help']);
+    expect(args.resolve).toBe(true);
+    expect(args.help).toBe(false);
+  });
+
+  it('refuses -- anywhere but reply, where the flags after it would be lost', () => {
+    for (const argv of [
+      ['token', '--', '--rotate'],
+      ['--', 'note.md', '-p', '4300'],
+      ['comments', '--', 'a.md'],
+    ])
+      expect(() => parseArgs(argv)).toThrow('-- is only for the text of akapen reply');
+  });
+
   it('defaults every boolean flag to off', () => {
     const args = parseArgs(['note.md']);
     expect(args.help).toBe(false);
