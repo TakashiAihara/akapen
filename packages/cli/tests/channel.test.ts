@@ -371,22 +371,23 @@ describe('handing the session new instructions after an update (#248)', () => {
     });
   });
 
-  it('waits for the next change, not the next pass, when the new akapen could not be asked', () => {
+  it('asks again a minute after a failed read, not on every pass, with nothing else changing', () => {
     withDir((dir) => {
       const bin = join(dir, 'akapen');
       writeFileSync(bin, 'old');
       const loaded = started([bin]);
       writeFileSync(join(dir, 'next'), 'new');
       renameSync(join(dir, 'next'), bin);
-      const failed = instructionsEvent(loaded, fingerprint([bin]), reads(null).read);
+      const failed = instructionsEvent(loaded, fingerprint([bin]), reads(null).read, 1_000_000);
       expect(failed.event).toBeUndefined();
       expect(failed.loaded.instructions).toBe(OLD);
-      const idle = reads(NEW);
-      expect(instructionsEvent(failed.loaded, fingerprint([bin]), idle.read).event).toBeUndefined();
-      expect(idle.calls).toHaveLength(0);
-      writeFileSync(join(dir, 'next'), 'fixed');
-      renameSync(join(dir, 'next'), bin);
-      expect(instructionsEvent(failed.loaded, fingerprint([bin]), reads(NEW).read).event).toBeDefined();
+      const soon = reads(NEW);
+      expect(
+        instructionsEvent(failed.loaded, fingerprint([bin]), soon.read, 1_059_999).event,
+      ).toBeUndefined();
+      expect(soon.calls).toHaveLength(0);
+      const later = instructionsEvent(failed.loaded, fingerprint([bin]), reads(NEW).read, 1_060_000);
+      expect(later.event?.content).toContain(NEW);
     });
   });
 
@@ -463,7 +464,17 @@ describe('asking the akapen on disk for its instructions (#248)', () => {
   const CLI = join(import.meta.dirname, '..', 'src', 'cli.ts');
 
   it('gets exactly what this version hands over at the handshake', () => {
-    expect(askInstructions([process.execPath, CLI, 'channel', 'instructions'])).toBe(INSTRUCTIONS);
+    // bun by name: vitest runs under node, and akapen is run by bun or compiled by it.
+    expect(askInstructions(['bun', CLI, 'channel', 'instructions'])).toBe(INSTRUCTIONS);
+  });
+
+  it('refuses what a failing akapen printed before it failed', () => {
+    withDir((dir) => {
+      const failing = join(dir, 'failing');
+      writeFileSync(failing, '#!/bin/sh\necho http://127.0.0.1:4300\nexit 1\n');
+      chmodSync(failing, 0o755);
+      expect(askInstructions([failing])).toBeNull();
+    });
   });
 
   it('refuses an older akapen that starts a channel and prints nothing', () => {

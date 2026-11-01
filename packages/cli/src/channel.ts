@@ -228,19 +228,22 @@ export function fingerprint(paths: string[]): Map<string, string> {
  *
  * Empty output is refused, not taken as empty instructions: an akapen from before
  * `channel instructions` existed reads the argument as nothing and starts a channel,
- * which, its stdin closed, exits 0 having printed nothing.
+ * which, its stdin closed, exits 0 having printed nothing. One from before `channel`
+ * itself serves a file of that name, prints its URL and is killed by the timeout; the
+ * status is what refuses that.
  */
 export function askInstructions(command: string[]): string | null {
   const r = spawnSync(command[0]!, command.slice(1), { encoding: 'utf8', timeout: 10_000 });
   const out = r.stdout?.trim() ?? '';
   if (r.status === 0 && out !== '') return out;
-  console.error(
-    `akapen: channel could not read the new instructions (${r.stderr?.trim() || `status ${r.status}`})`,
-  );
+  const why = r.stderr?.trim() || r.error?.message || `status ${r.status}, signal ${r.signal}`;
+  console.error(`akapen: channel could not read the new instructions (${why})`);
   return null;
 }
 
-export type Loaded = { files: Map<string, string>; instructions: string };
+export type Loaded = { files: Map<string, string>; instructions: string; retryAt?: number };
+
+const RETRY_MS = 60_000;
 
 /**
  * Hand the session akapen's current instructions once they differ from the ones it was
@@ -250,20 +253,23 @@ export type Loaded = { files: Map<string, string>; instructions: string };
  * session, so an agent kept following old ones for days after an update with nothing
  * saying so. Sending the new text, rather than asking for a restart, lets the session act
  * on it where it is. `read` is the akapen now on disk printing its instructions; it runs
- * only when a file changed. A read that fails waits for the next change rather than
- * spawning on every pass: a source tree missing a `bun install` would fail every time.
- * A file that cannot be read keeps the mark it had, so its return is still a change.
+ * only when a file changed. A read that fails is tried again a minute later, not on every
+ * pass: a source tree missing a `bun install` fails each time until someone runs it, and
+ * running it touches nothing this watches. A file that cannot be read keeps the mark it
+ * had, so its return is still a change.
  */
 export function instructionsEvent(
   loaded: Loaded,
   now: Map<string, string>,
   read: () => string | null,
+  clock = Date.now(),
 ): { event?: ChannelEvent; loaded: Loaded } {
   const changed = [...loaded.files].some(([p, f]) => now.has(p) && now.get(p) !== f);
   if (!changed) return { loaded };
+  if (loaded.retryAt !== undefined && clock < loaded.retryAt) return { loaded };
   const files = new Map([...loaded.files, ...now]);
   const instructions = read();
-  if (instructions === null) return { loaded: { files, instructions: loaded.instructions } };
+  if (instructions === null) return { loaded: { ...loaded, retryAt: clock + RETRY_MS } };
   const next = { files, instructions };
   if (instructions === loaded.instructions) return { loaded: next };
   return {

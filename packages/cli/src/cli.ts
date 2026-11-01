@@ -66,10 +66,10 @@ if (positional.length === 0 || args.help) {
 /**
  * The channel, which is not a command a person types.
  *
- * Claude Code spawns it over stdio from an MCP config entry. It takes no arguments: what
- * it watches is decided by the session id it inherits, so there is nothing to get wrong
- * on the command line. `channel instructions` is a running channel asking the akapen on
- * disk what it would say now.
+ * Claude Code spawns it over stdio from an MCP config entry, with no arguments: what it
+ * watches is decided by the session id it inherits, so there is nothing to get wrong on
+ * the command line. `channel instructions` is a running channel asking the akapen on disk
+ * what it would say now.
  */
 if (positional[0] === 'channel') {
   const { INSTRUCTIONS, runChannel } = await import('./channel.ts');
