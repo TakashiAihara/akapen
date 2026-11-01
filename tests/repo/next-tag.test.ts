@@ -37,6 +37,6 @@ describe('nextTag', () => {
   });
 
   test('refuses to invent a first version', () => {
-    expect(() => nextTag(['latest', ''])).toThrow();
+    expect(() => nextTag(['latest', ''])).toThrow('no vX.Y.Z or vX.Y.Z-rc.N tag to count from');
   });
 });
