@@ -81,10 +81,20 @@ test('leaves the same space on the way out of a list as on the way in (#92)', as
   expect(out).toBeCloseTo(into, 0);
   // And not by spacing every item: inside the list the rows stay tight.
   expect(between).toBeLessThan(into - 3);
-  // An hr that ends the list keeps its own margin on both sides (#240).
+});
+
+test('keeps the margin of an hr that ends a list, as one outside a list has (#240)', async ({
+  page,
+  akapen,
+  request,
+}) => {
+  // Below only: above a plain hr sits a paragraph, whose own margin adds to the gap.
+  const [, below] = (await gapsOf(page, 'Before.\n\n***\n\nAfter.\n', akapen, request)) as [number, number];
   const hr = await gapsOf(page, '- a\n\n  ***\n\nAfter.\n', akapen, request);
+  await expect(page.locator('.row.hr.list-last')).toHaveCount(1);
   expect(hr).toHaveLength(2);
-  expect(hr[1]).toBeCloseTo(hr[0]!, 0);
+  expect(hr[1]).toBeCloseTo(below, 0);
+  expect(hr[0]).toBeCloseTo(hr[1]!, 0);
 });
 
 test('leaves a paragraph after a code block or a table the space it leaves after a paragraph (#227)', async ({
