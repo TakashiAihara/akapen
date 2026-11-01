@@ -29,6 +29,11 @@ export type OutlineEntry = {
    */
   depth: number;
   text: string;
+  /**
+   * The headings this one contains. The rail flattens them again and draws by `depth`;
+   * the tree is kept for folding a section away with everything under it (#96), which
+   * needs to know where a section ends and depth alone does not say.
+   */
   children: OutlineEntry[];
 };
 
