@@ -59,10 +59,10 @@ jobs:
           EVENT: ${{ github.event_name }}
           GIVEN: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
-          # A substitution inside a command's arguments (echo, [ ]) or before a pipe does not
-          # stop `set -e` when it fails. Every value below is taken in an assignment of its
-          # own so a failing git or next-tag stops the run instead of releasing nothing while
-          # it stays green (#253).
+          # A substitution inside a command's arguments (echo, [ ]) does not stop `set -e`
+          # when it fails, and a pipe reports only its last command. Every value below is
+          # taken in an assignment of its own, without a pipe, so a failing git or next-tag
+          # stops the run instead of releasing nothing while it stays green (#253).
           set -eu
           if [ "$EVENT" != workflow_run ]; then
             echo "tag=$GIVEN" >> "$GITHUB_OUTPUT"

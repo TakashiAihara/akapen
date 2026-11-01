@@ -58,6 +58,15 @@ function run(git: string, bun: string): { status: number | null; output: string 
 const gitAt = (tags: string): string => `case "$1" in rev-parse) echo abc;; tag) printf '${tags}';; esac`;
 
 describe('release: deciding the tag', () => {
+  test('the step cut out of the workflow is the one that decides the tag', () => {
+    expect(decideStep()).toContain('bun scripts/next-tag.ts');
+  });
+
+  test('a commit main has moved past is left alone', () => {
+    const git = 'case "$1 $2" in "rev-parse origin/main") echo def;; rev-parse*) echo abc;; tag*) :;; esac';
+    expect(run(git, 'echo v9')).toEqual({ status: 0, output: '' });
+  });
+
   test('a commit with no tag gets the next one', () => {
     expect(run(gitAt(''), 'echo v0.1.0-rc.40')).toEqual({ status: 0, output: 'tag=v0.1.0-rc.40\n' });
   });
