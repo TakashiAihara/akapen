@@ -161,7 +161,15 @@ export function resolveHost(raw: string | undefined): string {
     throw new UsageError(`--host ${JSON.stringify(raw)} carries a zone id, which a URL cannot`);
   }
   const bracketed = /^\[(.*)\]$/.exec(raw)?.[1];
+  const inner = bracketed ?? raw;
   const address = bracketed === undefined ? isIP(raw) !== 0 : isIP(bracketed) === 6;
+  // An IPv6 address in the form a browser puts in Host (#215). `0:0:0:0:0:0:0:0` is then
+  // seen as the wildcard it is, and `::ffff:127.0.0.1` as `::ffff:7f00:1`, which is what
+  // the Host check has to match for the printed URL to open.
+  if (address && isIP(inner) === 6) {
+    const canonical = new URL(`http://[${inner}]/`).hostname.slice(1, -1);
+    return bracketed === undefined ? canonical : `[${canonical}]`;
+  }
   if (address) return raw;
   // Names are case-insensitive. Handed on lowercased, because that is the spelling the
   // Host check compares against.
