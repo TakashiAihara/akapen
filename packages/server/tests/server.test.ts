@@ -1786,12 +1786,14 @@ describe('authentication', () => {
     /**
      * Falling back to the startup token instead would undo the rotation: the revoked
      * token would get in again, and every stream opened under the new one would close.
-     * A directory where the file was makes the read itself fail, not just find nothing.
+     * A directory where the file was makes the read throw (EISDIR), the I/O-error case
+     * from #244; chmod 000 would not stop root.
      */
     const home = join(sandbox, 'unreadable-home');
     const note = join(sandbox, 'unreadable.md');
     writeFileSync(note, SOURCE);
     const running = await start(note, home, [], { token: null });
+    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
     try {
       const store = join(home, 'token');
       const before = readFileSync(store, 'utf8').trim();
@@ -1805,8 +1807,9 @@ describe('authentication', () => {
         headers: { authorization: `Bearer ${after}` },
       });
       expect(res.status).toBe(200);
-      const reader = res.body!.getReader();
-      await reader.read();
+      const open = res.body!.getReader();
+      reader = open;
+      await open.read();
 
       rmSync(store);
       mkdirSync(store);
@@ -1824,15 +1827,15 @@ describe('authentication', () => {
       });
       const ended = (async () => {
         for (;;) {
-          const chunk = await reader.read().catch(() => ({ done: true as const }));
+          const chunk = await open.read().catch(() => ({ done: true as const }));
           if (chunk.done) return 'closed' as const;
         }
       })();
       const outcome = await Promise.race([ended, waited]);
       clearTimeout(timer);
-      await reader.cancel().catch(() => {});
       expect(outcome).toBe('open');
     } finally {
+      await reader?.cancel().catch(() => {});
       running.stop();
       await running.stopped;
     }

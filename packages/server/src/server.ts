@@ -322,11 +322,12 @@ export function startServer(opts: ServeOptions) {
   });
 
   /**
-   * `secret` is the value the request was let in on, or null when nothing is checked.
-   * Handlers that hold on to it read it from here rather than asking `currentSecret()`
-   * again, which may have moved on since (#244).
+   * `checkedSecret` is the secret this request was checked against, or null when nothing
+   * is checked. A handler only runs once it has matched, so there it is the token the
+   * request was let in on. Handlers that hold on to it read it from here rather than
+   * asking `currentSecret()` again, which may have moved on since (#244).
    */
-  const app = new Hono<{ Variables: { secret: string | null } }>();
+  const app = new Hono<{ Variables: { checkedSecret: string | null } }>();
 
   const token = opts.token;
 
@@ -339,8 +340,8 @@ export function startServer(opts: ServeOptions) {
    *
    * A store that has become unreadable keeps the last value read from it rather than
    * locking everyone out: losing the file should not end a review in progress. Not the
-   * startup value, which a rotation has already revoked — falling back to it would let
-   * the old token in again and close every stream opened since (#244).
+   * startup value: after a rotation it is revoked, and falling back to it would let the
+   * old token in again and close every stream opened since (#244).
    */
   let secretAt = 0;
   let secret = token;
@@ -440,7 +441,7 @@ export function startServer(opts: ServeOptions) {
       }
     }
     const active = currentSecret();
-    c.set('secret', active);
+    c.set('checkedSecret', active);
     if (active === null) return next();
 
     const cookie = getCookie(c, COOKIE);
@@ -735,7 +736,7 @@ export function startServer(opts: ServeOptions) {
     // from the check that let the request in: reading the token again here could see a
     // rotation that check did not, and a stream let in on the old token would then
     // outlive it.
-    const openedUnder = c.get('secret');
+    const openedUnder = c.get('checkedSecret');
     let send!: (frame: string) => void;
     const stream = new ReadableStream({
       start(controller) {
