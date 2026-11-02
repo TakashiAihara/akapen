@@ -1786,8 +1786,9 @@ describe('authentication', () => {
     /**
      * Falling back to the startup token instead would undo the rotation: the revoked
      * token would get in again, and every stream opened under the new one would close.
-     * A directory where the file was makes the read throw (EISDIR), the I/O-error case
-     * from #244; chmod 000 would not stop root.
+     * Each of the three ways a store goes unreadable is tried in turn: gone, empty, and a
+     * directory where the file was, which makes the read throw (EISDIR) — the I/O-error
+     * case from #244, since chmod 000 would not stop root.
      */
     const home = join(sandbox, 'unreadable-home');
     const note = join(sandbox, 'unreadable.md');
@@ -1807,18 +1808,30 @@ describe('authentication', () => {
         headers: { authorization: `Bearer ${after}` },
       });
       expect(res.status).toBe(200);
+      // Narrowed for the loop below; `reader` is the same one, kept for `finally`.
       const open = res.body!.getReader();
       reader = open;
       await open.read();
 
-      rmSync(store);
-      mkdirSync(store);
-      await new Promise((r) => setTimeout(r, 1_200));
-
       const bearer = (t: string) =>
         globalThis.fetch(`${running.url}/api/doc`, { headers: { authorization: `Bearer ${t}` } });
-      expect((await bearer(after)).status).toBe(200);
-      expect((await bearer(before)).status).toBe(401);
+      const unreadable: [string, () => void][] = [
+        ['gone', () => rmSync(store)],
+        ['empty', () => writeFileSync(store, '')],
+        [
+          'a directory',
+          () => {
+            rmSync(store);
+            mkdirSync(store);
+          },
+        ],
+      ];
+      for (const [how, breakStore] of unreadable) {
+        breakStore();
+        await new Promise((r) => setTimeout(r, 1_200));
+        expect((await bearer(after)).status, `store ${how}`).toBe(200);
+        expect((await bearer(before)).status, `store ${how}`).toBe(401);
+      }
 
       // Longer than a heartbeat (3 s), so a stream that was going to be closed has been.
       let timer: ReturnType<typeof setTimeout> | undefined;
