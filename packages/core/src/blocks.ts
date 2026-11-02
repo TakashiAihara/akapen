@@ -157,6 +157,30 @@ function push(ctx: Ctx, b: Omit<Block, 'text' | 'depth' | 'quoted'> & Partial<Pi
   } as Block);
 }
 
+/** The row of `rows` that ends last on the page. A table's delimiter row is never shown. */
+function lastShown(rows: Block[]): Block | undefined {
+  return rows
+    .filter((b) => !b.flags.includes('table-separator'))
+    .reduce<Block | undefined>(
+      (end, b) => (end === undefined || b.endLine > end.endLine ? b : end),
+      undefined,
+    );
+}
+
+/**
+ * Mark where a code block, a table or a list ends, on the last row the page shows, so the
+ * page can leave a paragraph's space after it (#92, #227). The parser decides it rather
+ * than the page reading row kinds: the kinds cannot tell a list's next item from a new
+ * list, and the last row of a table can be its hidden delimiter row (#242). The mark is
+ * taken off again where the block ends an item that its list continues after (walkList),
+ * and on the last row of the document (buildDoc), where nothing follows to space from.
+ */
+function markEnd(ctx: Ctx, from: number): void {
+  const last = lastShown(ctx.out.slice(from));
+  // A nested list that ends the outer one has marked this row already.
+  if (last && !last.flags.includes('block-end')) last.flags.push('block-end');
+}
+
 function findClose(tokens: Token[], openIdx: number): number {
   const type = tokens[openIdx]!.type;
   const closeType = type.replace(/_open$/, '_close');
@@ -199,6 +223,7 @@ function walkFence(token: Token, ctx: Ctx): void {
     return;
   }
 
+  const first = ctx.out.length;
   // An empty fence has no lines. Splitting '' gives one, which took the closing fence's
   // line as content and left the block without its last row (#262) — or, unclosed at the
   // end of the file, made a row for a line that does not exist.
@@ -232,11 +257,13 @@ function walkFence(token: Token, ctx: Ctx): void {
       flags: ['code-last'],
     });
   }
+  markEnd(ctx, first);
 }
 
 /** Split a table into one block per row. `table-layout: fixed` keeps columns aligned across rows. */
 function walkTable(tokens: Token[], openIdx: number, ctx: Ctx): number {
   const closeIdx = findClose(tokens, openIdx);
+  const first = ctx.out.length;
   let colCount = 0;
   for (let i = openIdx; i <= closeIdx; i++) {
     const t = tokens[i]!;
@@ -284,6 +311,7 @@ function walkTable(tokens: Token[], openIdx: number, ctx: Ctx): number {
       i = trClose;
     }
   }
+  markEnd(ctx, first);
   return closeIdx;
 }
 
@@ -298,6 +326,7 @@ function walkList(tokens: Token[], openIdx: number, ctx: Ctx): number {
     const t = tokens[i]!;
     if (t.type !== 'list_item_open') continue;
     const itemClose = findClose(tokens, i);
+    const itemFirst = ctx.out.length;
 
     // The item's own first line (the inline of its first paragraph) becomes a block
     let restStart = i + 1;
@@ -337,20 +366,19 @@ function walkList(tokens: Token[], openIdx: number, ctx: Ctx): number {
     walk(tokens.slice(restStart, itemClose), ctx);
     ctx.depth--;
 
+    // A block that ends an item ends the item, not the list: the next item follows as
+    // tightly as one item follows another. The last item's end is the list's, marked below.
+    const itemEnd = lastShown(ctx.out.slice(itemFirst));
+    if (itemEnd) itemEnd.flags = itemEnd.flags.filter((f) => f !== 'block-end');
+
     index++;
     i = itemClose;
   }
 
-  // The list's last row, whatever kind it is (an item, or code or a table inside one), so
-  // the page can space the way out of the list as it spaces the way in (#92).
-  const last = ctx.out
-    .slice(first)
-    .reduce<Block | undefined>(
-      (end, b) => (end === undefined || b.endLine > end.endLine ? b : end),
-      undefined,
-    );
-  // A nested list that ends the outer one has marked this row already.
-  if (last && !last.flags.includes('list-last')) last.flags.push('list-last');
+  // Whatever kind the list's last row is (an item, or code or a table inside one), so the
+  // page spaces the way out of the list as it spaces the way in (#92). A list that follows
+  // it is another list, not more of this one, and is spaced from it too (#242).
+  markEnd(ctx, first);
   return closeIdx;
 }
 
@@ -417,6 +445,7 @@ function walk(tokens: Token[], ctx: Ctx): void {
         break;
       case 'code_block': {
         const [s, e] = t.map ?? [0, 0];
+        const first = ctx.out.length;
         for (let ln = s + 1; ln <= e; ln++) {
           push(ctx, {
             startLine: ln,
@@ -426,6 +455,7 @@ function walk(tokens: Token[], ctx: Ctx): void {
             flags: [],
           });
         }
+        markEnd(ctx, first);
         break;
       }
       case 'hr': {
@@ -488,5 +518,7 @@ export function buildDoc(path: string, source: string): Doc {
   }
 
   out.sort((a, b) => a.startLine - b.startLine || a.endLine - b.endLine);
+  const end = lastShown(out);
+  if (end) end.flags = end.flags.filter((f) => f !== 'block-end');
   return { path, blocks: out, lineCount: lines.length };
 }
