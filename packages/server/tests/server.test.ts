@@ -1782,6 +1782,62 @@ describe('authentication', () => {
     }
   }, 30_000);
 
+  it('keeps the rotated token when the store stops being readable (#244)', async () => {
+    /**
+     * Falling back to the startup token instead would undo the rotation: the revoked
+     * token would get in again, and every stream opened under the new one would close.
+     * A directory where the file was makes the read itself fail, not just find nothing.
+     */
+    const home = join(sandbox, 'unreadable-home');
+    const note = join(sandbox, 'unreadable.md');
+    writeFileSync(note, SOURCE);
+    const running = await start(note, home, [], { token: null });
+    try {
+      const store = join(home, 'token');
+      const before = readFileSync(store, 'utf8').trim();
+      const after = execFileSync('bun', ['run', CLI, 'token', '--rotate'], {
+        env: { ...process.env, AKAPEN_HOME: home },
+        encoding: 'utf8',
+      }).trim();
+      await new Promise((r) => setTimeout(r, 1_200));
+
+      const res = await globalThis.fetch(`${running.url}/events`, {
+        headers: { authorization: `Bearer ${after}` },
+      });
+      expect(res.status).toBe(200);
+      const reader = res.body!.getReader();
+      await reader.read();
+
+      rmSync(store);
+      mkdirSync(store);
+      await new Promise((r) => setTimeout(r, 1_200));
+
+      const bearer = (t: string) =>
+        globalThis.fetch(`${running.url}/api/doc`, { headers: { authorization: `Bearer ${t}` } });
+      expect((await bearer(after)).status).toBe(200);
+      expect((await bearer(before)).status).toBe(401);
+
+      // Longer than a heartbeat (3 s), so a stream that was going to be closed has been.
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const waited = new Promise<'open'>((r) => {
+        timer = setTimeout(() => r('open'), 4_500);
+      });
+      const ended = (async () => {
+        for (;;) {
+          const chunk = await reader.read().catch(() => ({ done: true as const }));
+          if (chunk.done) return 'closed' as const;
+        }
+      })();
+      const outcome = await Promise.race([ended, waited]);
+      clearTimeout(timer);
+      await reader.cancel().catch(() => {});
+      expect(outcome).toBe('open');
+    } finally {
+      running.stop();
+      await running.stopped;
+    }
+  }, 30_000);
+
   it('keeps a token it was handed, whatever the store says afterwards', async () => {
     // The other half of the rule: `--token` and `AKAPEN_TOKEN` belong to whoever passed
     // them, and a rotation on this host is not theirs to be told about.

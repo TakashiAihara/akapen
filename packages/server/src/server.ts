@@ -321,7 +321,12 @@ export function startServer(opts: ServeOptions) {
     }, 80);
   });
 
-  const app = new Hono();
+  /**
+   * `secret` is the value the request was let in on, or null when nothing is checked.
+   * Handlers that hold on to it read it from here rather than asking `currentSecret()`
+   * again, which may have moved on since (#244).
+   */
+  const app = new Hono<{ Variables: { secret: string | null } }>();
 
   const token = opts.token;
 
@@ -332,8 +337,10 @@ export function startServer(opts: ServeOptions) {
    * cookies and scripts holding the old one without waiting for a restart. Cached for a
    * moment because this is on the path of every request, including each asset.
    *
-   * A store that has become unreadable falls back to the startup value rather than
-   * locking everyone out: losing the file should not end a review in progress.
+   * A store that has become unreadable keeps the last value read from it rather than
+   * locking everyone out: losing the file should not end a review in progress. Not the
+   * startup value, which a rotation has already revoked — falling back to it would let
+   * the old token in again and close every stream opened since (#244).
    */
   let secretAt = 0;
   let secret = token;
@@ -342,7 +349,7 @@ export function startServer(opts: ServeOptions) {
     const now = Date.now();
     if (now - secretAt >= 1_000) {
       secretAt = now;
-      secret = readToken() ?? token;
+      secret = readToken() ?? secret;
     }
     return secret;
   };
@@ -433,6 +440,7 @@ export function startServer(opts: ServeOptions) {
       }
     }
     const active = currentSecret();
+    c.set('secret', active);
     if (active === null) return next();
 
     const cookie = getCookie(c, COOKIE);
@@ -721,14 +729,17 @@ export function startServer(opts: ServeOptions) {
     return c.json(payload);
   });
 
-  app.get('/events', () => {
+  app.get('/events', (c) => {
+    // Let in under this token. A rotation revokes it, and with the heartbeat keeping the
+    // stream open nothing else would, so the next frame closes the stream instead. Taken
+    // from the check that let the request in: reading the token again here could see a
+    // rotation that check did not, and a stream let in on the old token would then
+    // outlive it.
+    const openedUnder = c.get('secret');
     let send!: (frame: string) => void;
     const stream = new ReadableStream({
       start(controller) {
         const enc = new TextEncoder();
-        // Let in under this token. A rotation revokes it, and with the heartbeat keeping
-        // the stream open nothing else would, so the next frame closes the stream instead.
-        const openedUnder = currentSecret();
         send = (frame: string) => {
           try {
             if (currentSecret() !== openedUnder) {
