@@ -202,9 +202,9 @@ function walkFence(token: Token, ctx: Ctx): void {
   // An empty fence has no lines. Splitting '' gives one, which took the closing fence's
   // line as content and left the block without its last row (#262) — or, unclosed at the
   // end of the file, made a row for a line that does not exist.
-  const source = token.content.replace(/\n$/, '');
-  const sourceLines = token.content === '' ? [] : source.split('\n');
-  const codeLines = token.content === '' ? [] : splitHighlighted(highlight(source, info));
+  const sourceLines = token.content === '' ? [] : token.content.replace(/\n$/, '').split('\n');
+  // Highlighting keeps every newline, so its lines match the source lines one for one.
+  const codeLines = splitHighlighted(highlight(sourceLines.join('\n'), info));
   // opening fence line
   push(ctx, {
     startLine,
@@ -213,23 +213,23 @@ function walkFence(token: Token, ctx: Ctx): void {
     html: `<div class="code-line code-fence">${esc(ctx.lines[startLine - 1] ?? '')}</div>`,
     flags: ['code-first'],
   });
-  // The copy button reads these marks, not the rows (#243). A fence left open inside a quote
-  // can be followed on the very next line by an indented block, and an empty line is drawn
-  // as a non-breaking space, the same as a line holding only that. Empty is read from the
-  // source line: inside a multi-line token an empty line is drawn as the token's empty span.
-  // The two arrays line up one for one because highlighting keeps every newline.
-  codeLines.forEach((h, i) => {
+  // Empty is decided from the source: in the highlighted HTML an empty line inside a
+  // multi-line token is the token's span with nothing in it, which drew a row with no
+  // height. The copy button reads the marks (#243): the non-breaking space an empty row
+  // is drawn with is also what a line holding only that character looks like.
+  sourceLines.forEach((line, i) => {
     const ln = startLine + 1 + i;
+    const empty = line === '';
     push(ctx, {
       startLine: ln,
       endLine: ln,
       kind: 'code',
-      html: `<div class="code-line"><code>${h || '&nbsp;'}</code></div>`,
-      flags: sourceLines[i] === '' ? ['code-content', 'code-empty'] : ['code-content'],
+      html: `<div class="code-line"><code>${empty ? '&nbsp;' : codeLines[i]}</code></div>`,
+      flags: empty ? ['code-content', 'code-empty'] : ['code-content'],
     });
   });
   const lastLine = endLine;
-  if (lastLine > startLine + codeLines.length) {
+  if (lastLine > startLine + sourceLines.length) {
     push(ctx, {
       startLine: lastLine,
       endLine: lastLine,
