@@ -44,26 +44,29 @@ export type Akapen = {
  *
  * A 200 alone is not enough. The port comes from a counter every run starts at 4400, and
  * every run uses the same token, so a port held by another e2e run on the same host answers
- * just as well — usually before the process started here has even reached its bind and
- * exited on it. The test would then measure the other run's document (#277). The path is
- * what tells them apart. The exit, with what the process wrote to stderr, is what says why
- * the right one never will, instead of a deadline twenty seconds later.
+ * just as well, while the process started here fails on the port. The test would then
+ * measure the other run's document (#277). The path is what tells them apart: a 200 for
+ * another file keeps this polling. The exit, with what the process wrote to stderr, is what
+ * says why the right one never will, instead of a deadline twenty seconds later.
  *
- * Called straight after `spawn`, before anything awaits, so no exit or output is missed.
+ * Called straight after `spawn`, before anything awaits: a `close` that fired before the
+ * listener was attached would be missed, and the failure would wait for the deadline.
  * stderr stays drained for the life of the process, so a chatty server never blocks on it.
  */
 async function waitUntilServing(url: string, file: string, proc: ChildProcess): Promise<void> {
   const want = resolve(file);
   const deadline = Date.now() + 20_000;
+  // The head, not the tail: the CLI prints the reason first and its usage after it.
   let stderr = '';
-  proc.stderr?.on('data', (chunk: Buffer) => {
-    stderr = (stderr + chunk.toString()).slice(-4_000);
+  proc.stderr?.setEncoding('utf8');
+  proc.stderr?.on('data', (chunk: string) => {
+    stderr = (stderr + chunk).slice(0, 4_000);
   });
-  // `close`, not `exit`: it comes after stderr has been read to the end. Either a code or a
-  // signal, so a process killed from outside fails here too rather than at the deadline.
+  // `close`, not `exit`: it comes after stderr has been read to the end. Any end counts, a
+  // signal included, so a process killed from outside fails here rather than at the deadline.
   let ended: string | null = null;
   proc.once('close', (code, signal) => {
-    ended = signal ? `signal ${signal}` : `code ${code}`;
+    ended = `code ${code}, signal ${signal}`;
   });
 
   let answered = '';
