@@ -46,6 +46,11 @@ updates:
     groups:
       minor-and-patch:
         patterns: ['*']
+        # The MCP SDK is pinned exactly and comes on its own pull request: a release that
+        # moves the protocol negotiation switches every Claude Code channel off without an
+        # error. See the NOTE on runChannel in packages/cli/src/channel.ts for why and for
+        # when the pin can go; the handshake tests in channel.test.ts are the gate.
+        exclude-patterns: ['@modelcontextprotocol/sdk']
         update-types: [minor, patch]
     commit-message:
       prefix: deps
