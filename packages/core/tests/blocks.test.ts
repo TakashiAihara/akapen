@@ -273,6 +273,9 @@ describe('block-end', () => {
   it('marks a list in a quote on its last item, not on the blank quote line after it', () => {
     expect(endsOf('> - a\n>\n> After.\n')).toEqual([1]);
     expect(endsOf('> > - a\n> >\n> > After.\n')).toEqual([1]);
+    expect(endsOf('> - a\n>\n>\n> After.\n')).toEqual([1]);
+    // Nor on an item's: a fence that ends one is followed by the next item tightly.
+    expect(endsOf('> - a\n>   ```\n>   x\n>   ```\n>\n> - b\n\nAfter.\n')).toEqual([6]);
     expect(endsOf('> Before.\n>\n> - a\n> - b\n>\n> After.\n')).toEqual([4]);
   });
 
@@ -299,6 +302,7 @@ describe('block-end', () => {
     expect(endsOf('- item\n\n  ```sh\n  make\n  ```\n- next\n\nAfter.\n')).toEqual([6]);
     expect(endsOf('- item\n\n  | a |\n  |---|\n- next\n\nAfter.\n')).toEqual([5]);
     expect(endsOf('- item\n\n      make\n- next\n\nAfter.\n')).toEqual([4]);
+    expect(endsOf('- a\n-\n- c\n\nAfter.\n')).toEqual([3]);
   });
 
   it('marks nothing on the last row of the document, nor outside these blocks', () => {

@@ -178,11 +178,13 @@ function endAt(ctx: Ctx, token: Token, mark: boolean): void {
 }
 
 /**
- * The last row the page shows that starts at or before `line`: a table's delimiter row is
- * hidden, and a quote's blank line (`>`) shows no text. A list's lines run on over one
- * blank line after it, which in a quote is such a row (#242). The row found is inside the
- * block that ends there, as no lower bound checks, because the first line of every block
- * and item recorded holds a row of its own (its marker, fence, header or code).
+ * The last row the page shows that starts at or before `line`, skipping a table's hidden
+ * delimiter row and a quote's blank line (`>`). A list's and an item's lines run on over
+ * every blank line after them, and in a quote each is a gap row: a paragraph of its own,
+ * whose own margin already spaces it, so marking it left the block before it tight
+ * against it (#242). The row found is inside the block that ends there, as no lower bound
+ * checks, because the first line of every block and item recorded holds a row of its own
+ * (its marker, fence, header or code).
  */
 function lastShownBy(rows: Block[], line: number): Block | undefined {
   let lo = 0;
