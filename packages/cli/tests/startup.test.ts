@@ -79,6 +79,13 @@ async function start(
   return { lines: out.split('\n'), stop, home, file };
 }
 
+/** Whether this host can bind an IPv6 socket, found by binding one rather than by guessing from the platform. */
+const ipv6Bindable = await new Promise<boolean>((resolve) => {
+  const probe = createServer();
+  probe.once('error', () => resolve(false));
+  probe.listen(0, '::1', () => probe.close(() => resolve(true)));
+});
+
 const urlsIn = (lines: string[]): string[] =>
   lines.flatMap((line) => /^\s+(?:url|also)\s+(\S+)$/.exec(line)?.slice(1) ?? []);
 
@@ -245,13 +252,21 @@ describe('--advertise', () => {
   );
 
   // The other direction: a check that refused everything would pass the one above.
-  it.each(['0.0.0.0', '::', '[::]', '127.0.0.1', '::1', '[::1]', 'localhost'])(
+  const startsOn = async (value: string) => {
+    const { lines } = await start(['--host', value, '--no-auth']);
+    // Answering, not only printing: a bind the Host check then refuses would print fine.
+    const [url] = urlsIn(lines);
+    expect((await fetch(`${url}/api/doc`)).ok).toBe(true);
+  };
+
+  it.each(['0.0.0.0', '127.0.0.1', 'localhost'])('still starts on --host %s', startsOn, 30_000);
+
+  // Skipped only off CI: a CI runner that lost IPv6 has to fail here, not drop the check.
+  it.skipIf(!ipv6Bindable && !process.env['CI']).each(['::', '[::]', '::1', '[::1]'])(
     'still starts on --host %s',
     async (value) => {
-      const { lines } = await start(['--host', value, '--no-auth']);
-      // Answering, not only printing: a bind the Host check then refuses would print fine.
-      const [url] = urlsIn(lines);
-      expect((await fetch(`${url}/api/doc`)).ok).toBe(true);
+      expect(ipv6Bindable, 'this host cannot bind ::1').toBe(true);
+      await startsOn(value);
     },
     30_000,
   );
