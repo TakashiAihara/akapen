@@ -5,10 +5,10 @@
  * while building the history view, loadAllComments trusted review.json and missed
  * rounds that were on disk.
  */
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   addReply,
   carriedOver,
@@ -20,6 +20,7 @@ import {
   openRound,
   pendingComments,
   roundContent,
+  roundDir,
   roundNumbersOnDisk,
   saveComments,
   storeDir,
@@ -309,5 +310,106 @@ describe('replies', () => {
     openRound(work, EDITED);
     const carried = carriedOver(work).find((c) => c.id === first!.id);
     expect(carried?.replies?.[0]?.body).toBe('why it is still open');
+  });
+});
+
+describe('validating stored JSON', () => {
+  const commentsFile = () => join(roundDir(work, 1), 'comments.json');
+  const raw = (entries: unknown[]) => writeFileSync(commentsFile(), JSON.stringify(entries));
+  const legacyComment = {
+    id: 'c_old111',
+    startLine: 6,
+    endLine: 7,
+    body: 'written before replies existed',
+    author: 'someone',
+    createdAt: '2026-01-02T03:04:05.000Z',
+    resolved: false,
+    anchor: '## Heading\nline',
+  };
+
+  it('loads a comment from before replies existed with body and anchor intact', () => {
+    ensureRound(work, SOURCE);
+    raw([legacyComment]);
+    const [c] = loadComments(work, 1);
+    expect(c?.body).toBe('written before replies existed');
+    expect(c?.anchor).toBe('## Heading\nline');
+    expect(c?.replies).toEqual([]);
+  });
+
+  it('loads a reply written before sessionId existed', () => {
+    ensureRound(work, SOURCE);
+    const reply = {
+      id: 'r_aa',
+      body: 'old reply',
+      author: 'a',
+      authorKind: 'agent',
+      createdAt: '2026-01-02T00:00:00.000Z',
+    };
+    raw([{ ...legacyComment, replies: [reply] }]);
+    expect(loadComments(work, 1)[0]?.replies?.[0]?.body).toBe('old reply');
+  });
+
+  it('skips only the invalid entry and says so on stderr with the file and count', () => {
+    ensureRound(work, SOURCE);
+    raw([legacyComment, { id: 'c_bad', startLine: 'x' }, { ...legacyComment, id: 'c_old222' }]);
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      expect(loadComments(work, 1).map((c) => c.id)).toEqual(['c_old111', 'c_old222']);
+      const msg = String(spy.mock.calls[0]?.[0]);
+      expect(msg).toContain(commentsFile());
+      expect(msg).toContain('skipped 1 comment(s)');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('keeps a rejected entry in the file across a write', () => {
+    ensureRound(work, SOURCE);
+    const bad = { id: 'c_bad', startLine: 'x', body: 'hand-edited, must not vanish' };
+    raw([legacyComment, bad]);
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      expect(updateComment(work, 'c_old111', (c) => (c.resolved = true))?.resolved).toBe(true);
+      addReply(work, 'c_old111', 'hello', 't');
+    } finally {
+      spy.mockRestore();
+    }
+    const onDisk = JSON.parse(readFileSync(commentsFile(), 'utf8')) as { id: string }[];
+    expect(onDisk.filter((e) => e.id === 'c_bad')).toEqual([bad]);
+    expect(onDisk).toHaveLength(2);
+  });
+
+  it('keeps the bytes of a comments.json that is not an array when it is written over', () => {
+    ensureRound(work, SOURCE);
+    writeFileSync(commentsFile(), '{"not":"an array"');
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      expect(loadComments(work, 1)).toEqual([]);
+      saveComments(work, 1, [makeComment(SOURCE, 3, 3, 'new', 't')]);
+    } finally {
+      spy.mockRestore();
+    }
+    const backups = readdirSync(roundDir(work, 1)).filter((n) => n.startsWith('comments.json.unreadable-'));
+    expect(backups).toHaveLength(1);
+    expect(readFileSync(join(roundDir(work, 1), backups[0]!), 'utf8')).toBe('{"not":"an array"');
+  });
+
+  it('recovers from a review.json whose fields have the wrong types', () => {
+    openRound(work, SOURCE);
+    writeFileSync(join(storeDir(work), 'review.json'), JSON.stringify({ currentRound: '1', rounds: 'x' }));
+    const r = loadReview(work);
+    expect(r.currentRound).toBe(1);
+    expect(r.rounds.map((x) => x.n)).toEqual([1]);
+  });
+
+  it('drops a malformed round entry from review.json and rebuilds it from disk', () => {
+    openRound(work, SOURCE);
+    writeFileSync(
+      join(storeDir(work), 'review.json'),
+      JSON.stringify({ currentRound: 1, rounds: [{ n: 1, createdAt: 5, closedAt: null }] }),
+    );
+    const r = loadReview(work);
+    expect(r.rounds).toHaveLength(1);
+    expect(typeof r.rounds[0]?.createdAt).toBe('string');
   });
 });
