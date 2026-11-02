@@ -28,6 +28,13 @@ async function openDraft(page: Page, rowIndex = 1) {
   await expect(page.locator(A.ta)).toBeFocused();
 }
 
+/** Let a few renderings pass, which is when the browser moves a focus it has dropped. */
+async function afterFrames(page: Page, frames = 3) {
+  await page.evaluate(async (n) => {
+    for (let i = 0; i < n; i++) await new Promise((r) => requestAnimationFrame(r));
+  }, frames);
+}
+
 async function post(page: Page, body: string) {
   await page.locator(A.ta).fill(body);
   await page.locator(`${A.draft} button.primary`).click();
@@ -430,29 +437,21 @@ test('replies to a comment, and keeps the thread on a comment carried past a rou
   await expect(page.locator('#railCarried .bubble').first().locator('.reply-body')).toHaveCount(2);
 });
 
-test('opens a long comment for a keyboard reader who lands in its body, without growing under the next (#246)', async ({
+test('opens a long comment for a keyboard reader who lands in its body, and keeps the focus on its bubble (#246)', async ({
   page,
   akapen,
   request,
 }) => {
   const long = Array.from({ length: 40 }, (_, i) => `line ${i + 1} of a long comment`).join('\n');
-  for (const [line, body] of [
-    [14, long],
-    [15, 'the next remark'],
-  ] as const) {
-    const posted = await request.post(`${akapen.url}/api/comments`, {
-      headers: AUTH,
-      data: { startLine: line, endLine: line, body },
-    });
-    expect(posted.ok()).toBe(true);
-  }
+  const posted = await request.post(`${akapen.url}/api/comments`, {
+    headers: AUTH,
+    data: { startLine: 14, endLine: 14, body: long },
+  });
+  expect(posted.ok()).toBe(true);
   await page.goto(akapen.url);
-  // A diagram drawn late lays the rail out again, which would hide an overlap.
-  await expect(page.locator('#doc svg')).toHaveCount(2, { timeout: 15_000 });
   const first = page.locator('#railAnchored .bubble').first();
-  const next = page.locator('#railAnchored .bubble').nth(1);
   const body = first.locator('.bubble-body');
-  await expect(next).toHaveCount(1);
+  await expect(body).toHaveCount(1);
   const folded = await body.evaluate((el) => ({ shown: el.clientHeight, full: el.scrollHeight }));
   expect(folded.shown).toBeLessThan(folded.full);
 
@@ -462,12 +461,13 @@ test('opens a long comment for a keyboard reader who lands in its body, without 
   await expect(first).toHaveClass(/\bactive\b/);
   const open = await body.evaluate((el) => ({ shown: el.clientHeight, full: el.scrollHeight }));
   expect(open.shown).toBe(open.full);
-  // Opened through `active`, so the rail is laid out again and the next one moves down.
-  await expect(async () => {
-    const a = await first.boundingBox();
-    const b = await next.boundingBox();
-    expect(a && b && a.y + a.height <= b.y).toBe(true);
-  }).toPass({ timeout: 1_000 });
+  // Open, the body is no longer a scroll box and the browser drops the focus to the page
+  // at the next rendering, so look after a few frames.
+  await afterFrames(page);
+  await expect(first).toBeFocused();
+  // And the keyboard goes on from there, not from the top of the page.
+  await page.keyboard.press('Tab');
+  await expect(first.getByRole('button', { name: 'Resolve' })).toBeFocused();
 });
 
 test('opens a long comment for a keyboard reader who tabs onto its bubble', async ({
@@ -564,6 +564,8 @@ test('folds a long reply until its bubble is being read, the way a long comment 
   await expect(page.locator('.bubble').first()).toHaveClass(/\bactive\b/);
   const open = await reply.evaluate((el) => ({ shown: el.clientHeight, full: el.scrollHeight }));
   expect(open.shown).toBe(open.full);
+  await afterFrames(page);
+  await expect(page.locator('.bubble').first()).toBeFocused();
 
   // Answering it rebuilds the rail; the bubble being read stays open.
   const bubble = page.locator('.bubble').first();

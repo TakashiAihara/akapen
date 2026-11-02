@@ -67,11 +67,17 @@ async function waitUntilServing(url: string, token = TOKEN): Promise<void> {
 export async function startPeer(
   home: string,
   name: string,
-  extra: string[] = [],
-  /** A port to take again, for a test of what happens when one is reused. */
-  reuse?: number,
-  /** Another token, for an akapen a tab's cookie does not open. */
-  token = TOKEN,
+  {
+    extra = [],
+    reuse,
+    token = TOKEN,
+  }: {
+    extra?: string[];
+    /** A port to take again, for a test of what happens when one is reused. */
+    reuse?: number;
+    /** Another token, for an akapen a tab's cookie does not open. */
+    token?: string;
+  } = {},
 ): Promise<{ port: number; stop: () => Promise<void> }> {
   const port = reuse ?? nextPort++;
   const sandbox = mkdtempSync(join(tmpdir(), 'akapen-e2e-peer-'));

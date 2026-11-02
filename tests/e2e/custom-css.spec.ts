@@ -17,7 +17,7 @@ async function open(page: Page, css: (dir: string) => string, source: string, ru
   try {
     const file = join(dir, 'note.md');
     writeFileSync(file, source);
-    const peer = await startPeer(join(dir, 'home'), file, ['--css', css(dir)]);
+    const peer = await startPeer(join(dir, 'home'), file, { extra: ['--css', css(dir)] });
     try {
       await page.goto(`http://127.0.0.1:${peer.port}/?token=${TOKEN}`);
       await run();

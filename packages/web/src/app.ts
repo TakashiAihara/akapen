@@ -624,8 +624,6 @@ function repliesFor(c: Comment | RoundComment, past: boolean): HTMLElement {
 
   const sync = () => {
     send.disabled = ta.value.trim() === '';
-    // The bubble just changed height, so everything below it has to move.
-    layoutRail();
   };
   ta.addEventListener('input', sync);
   // Clicking into the box must not count as clicking the bubble, which navigates.
@@ -729,8 +727,12 @@ function bubbleFor(c: Comment | RoundComment, opts: { past?: boolean } = {}): HT
   // `focus` on the bubble never hears of it, so the body stayed at 12em (#246). Not the
   // reply box or the buttons: focusing those is not a request to read the thread.
   box.addEventListener('focusin', (e) => {
-    if (e.target === box || (e.target instanceof Element && e.target.matches('.bubble-body, .reply-body')))
-      setActive(c.id);
+    if (e.target === box) return setActive(c.id);
+    if (!(e.target instanceof Element && e.target.matches('.bubble-body, .reply-body'))) return;
+    // Moved to the bubble, which makes it active through the first check here.
+    // Left on the body, the focus would drop to the page once the open body is no longer
+    // a scroll box, and the next Tab would start from the top.
+    box.focus({ preventScroll: true });
   });
   return box;
 }
@@ -758,7 +760,6 @@ function draftBubble(): HTMLElement {
   ta.value = text;
   ta.addEventListener('input', () => {
     if (draft) draft.text = ta.value;
-    layoutRail(); // typing changes the height, so push the bubbles below back down
   });
 
   const actions = el('div', 'bubble-actions');
@@ -845,6 +846,7 @@ function renderRail() {
     anchoredEl.append(bubbleFor(c));
   }
   // The old bubbles are gone from the page; still watched, they would be kept alive.
+  // Observing calls back once more, one extra layout per render, which is cheap.
   bubbleSizes.disconnect();
   for (const b of anchoredEl.querySelectorAll('.bubble')) bubbleSizes.observe(b);
   renderCarried();
@@ -871,8 +873,12 @@ function renderCarried() {
 /**
  * A bubble also changes height with nothing calling layoutRail: hover and :focus-within
  * show the reply form on a bubble that is not active, and it grew under the next one
- * (#246). Watching the sizes covers those and any other. layoutRail only moves bubbles,
- * never resizes one, so this does not feed itself.
+ * (#246). Watching the sizes covers those, typing in a draft or a reply, and any other.
+ *
+ * layoutRail moves bubbles and sets the rail's height. The height can bring in the page's
+ * scrollbar, which narrows the rail and makes bubbles taller, so it calls back once more;
+ * taller bubbles only keep the scrollbar, so the next pass finds every height unchanged
+ * and it settles there.
  */
 const bubbleSizes = new ResizeObserver(() => layoutRail());
 

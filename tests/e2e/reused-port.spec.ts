@@ -41,7 +41,7 @@ test('says when the port serves another document, stops writing to it, and stops
     await expect(page.locator('#otherDocText')).toContainText('reconnecting', { timeout: 15_000 });
     const other = join(dir, 'second.md');
     writeFileSync(other, '# Second\n\nAnother document.\n');
-    const second = await startPeer(akapen.home, other, [], first.port);
+    const second = await startPeer(akapen.home, other, { reuse: first.port });
     try {
       await expect(page.locator('#otherDocBar')).toBeVisible({ timeout: 25_000 });
       await expect(page.locator('#otherDocText')).toContainText('second.md');
@@ -77,7 +77,7 @@ test('says when the port serves another document, stops writing to it, and stops
     }
 
     // The same document back on the port: the bar goes.
-    const again = await startPeer(akapen.home, mine, [], first.port);
+    const again = await startPeer(akapen.home, mine, { reuse: first.port });
     try {
       await expect(page.locator('#otherDocBar')).toBeHidden({ timeout: 25_000 });
     } finally {
@@ -90,10 +90,11 @@ test('says when the port serves another document, stops writing to it, and stops
   }
 });
 
-test('says the connection is lost when the port answers to another token', async ({
+test('says the connection is lost when the port answers to another token, and stops writing to it', async ({
   page,
   akapen,
   context,
+  request,
 }) => {
   test.setTimeout(90_000);
   const dir = mkdtempSync(join(tmpdir(), 'akapen-e2e-reuse-'));
@@ -104,18 +105,31 @@ test('says the connection is lost when the port answers to another token', async
     first = await startPeer(akapen.home, mine);
     const url = `http://127.0.0.1:${first.port}`;
     await context.addCookies([{ name: 'akapen_token', value: akapen.token, url }]);
+    const posted = await request.post(`${url}/api/comments`, {
+      headers: AUTH,
+      data: { startLine: 3, endLine: 3, body: 'a remark' },
+    });
+    expect(posted.ok()).toBe(true);
     await page.goto(url);
     await expect(page.locator('#filePath')).toContainText('first.md');
+    await expect(page.locator('#railAnchored .bubble')).toHaveCount(1);
     await expect(page.locator('#otherDocBar')).toBeHidden();
 
     await first.stop();
     await expect(page.locator('#otherDocText')).toContainText('reconnecting', { timeout: 15_000 });
     // This tab's cookie does not open it, so the stream gets a 401 and the browser gives
     // up: no reconnect will come to say anything else.
-    const locked = await startPeer(akapen.home, mine, [], first.port, 'a-token-this-tab-does-not-hold');
+    const locked = await startPeer(akapen.home, mine, {
+      reuse: first.port,
+      token: 'a-token-this-tab-does-not-hold',
+    });
     try {
       await expect(page.locator('#otherDocText')).toContainText('lost the connection', { timeout: 25_000 });
       await expect(page.locator('#otherDocBar')).toBeVisible();
+      // Not knowing whose akapen answers, the screen writes nothing to it.
+      const bubble = page.locator('#railAnchored .bubble').first();
+      await bubble.getByRole('button', { name: 'Resolve' }).click();
+      await expect(bubble.locator('.bubble-error')).toContainText('another document');
     } finally {
       await locked.stop();
     }
