@@ -119,6 +119,10 @@ test('leaves a paragraph after a code block or a table the space it leaves after
   const quoted = await gapsOf(page, '> ```sh\n\nAfter.\n', akapen, request);
   expect(quoted).toHaveLength(1);
   expect(quoted[0]).toBeCloseTo(paraToPara, 0);
+  // And a fence that opens right after it is another block.
+  const quotedThenFence = await gapsOf(page, '> ```sh\n```py\nx\n```\n', akapen, request);
+  await expect(page.locator('.row.code-first')).toHaveCount(2);
+  expect(quotedThenFence[0]).toBeCloseTo(paraToPara, 0);
   const indented = await gapsOf(page, 'Before.\n\n    make\n    install\n\nAfter.\n', akapen, request);
   // Before → make, make → install, install → After: the space only on the way out.
   expect(indented).toHaveLength(3);

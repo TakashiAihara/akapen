@@ -29,7 +29,7 @@ async function open(page: Page, css: (dir: string) => string, source: string, ru
   }
 }
 
-test('takes the space above every heading level from examples/dense.css', async ({ page }) => {
+test('takes the space above h1, h2 and h4 to h6 from examples/dense.css', async ({ page }) => {
   await open(
     page,
     () => resolve('examples/dense.css'),

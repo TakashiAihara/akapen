@@ -276,6 +276,8 @@ describe('an empty fence (#262)', () => {
     expect(Math.max(...blocks.map((b) => b.endLine))).toBe(3);
   });
 
+  // Pins the row shape the stylesheet keys on; the missing space itself is caught by the
+  // quoted case in tests/e2e/typography.spec.ts.
   it('is its opening row alone when the end of a quote cuts it off, the next block its own (#280)', () => {
     const blocks = buildDoc('e.md', '> ```sh\n\nAfter.\n').blocks;
     expect(blocks.map((b) => [b.startLine, b.kind, b.flags])).toEqual([
