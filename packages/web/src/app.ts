@@ -469,15 +469,17 @@ function copyButton(first: HTMLElement): HTMLElement {
   btn.addEventListener('click', async (e) => {
     e.stopPropagation();
     const lines: string[] = [];
-    let previous = getLine(first, 'end');
-    for (let row = first.nextElementSibling; row?.classList.contains('code'); row = row.nextElementSibling) {
-      if (row.classList.contains('code-last') || row.classList.contains('code-first')) break;
-      // A fence left open ends at the last line of its content; a code row after a gap in
-      // the line numbers belongs to another block (an indented one).
-      if (getLine(row, 'start') !== previous + 1) break;
-      previous = getLine(row, 'end');
-      // An empty line is drawn as a non-breaking space so the row keeps its height.
-      lines.push((row.querySelector('.code-line')?.textContent ?? '').replace(/^\xa0$/, ''));
+    // The render marks each content row of the fence, and each empty one, because the rows
+    // cannot say it themselves: an empty line is drawn as a non-breaking space so the row
+    // keeps its height, and a fence left open can run straight into another code block.
+    for (
+      let row = first.nextElementSibling;
+      row?.classList.contains('code-content');
+      row = row.nextElementSibling
+    ) {
+      lines.push(
+        row.classList.contains('code-empty') ? '' : (row.querySelector('.code-line')?.textContent ?? ''),
+      );
     }
     const ok = await copyText(lines.join('\n'));
     btn.textContent = ok ? 'copied' : 'copy failed';

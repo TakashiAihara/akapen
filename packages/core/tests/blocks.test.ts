@@ -274,3 +274,28 @@ describe('an empty fence (#262)', () => {
     expect(Math.max(...blocks.map((b) => b.endLine))).toBe(3);
   });
 });
+
+const codeFlags = (markdown: string) =>
+  buildDoc('c.md', markdown)
+    .blocks.filter((b) => b.kind === 'code')
+    .map((b) => [b.startLine, b.flags]);
+
+describe('fence content marks (#243)', () => {
+  it('marks every content row, and the empty ones apart from a line of only a non-breaking space', () => {
+    expect(codeFlags('```\na\n\n\u00a0\n```\n')).toEqual([
+      [1, ['code-first']],
+      [2, ['code-content']],
+      [3, ['code-content', 'code-empty']],
+      [4, ['code-content']],
+      [5, ['code-last']],
+    ]);
+  });
+
+  it('leaves an indented block right after a quoted fence left open unmarked', () => {
+    expect(codeFlags('> ```sh\n> echo q\n    indented\n')).toEqual([
+      [1, ['code-first']],
+      [2, ['code-content']],
+      [3, []],
+    ]);
+  });
+});

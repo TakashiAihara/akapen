@@ -212,6 +212,9 @@ function walkFence(token: Token, ctx: Ctx): void {
     html: `<div class="code-line code-fence">${esc(ctx.lines[startLine - 1] ?? '')}</div>`,
     flags: ['code-first'],
   });
+  // The copy button reads these marks, not the rows (#243): an empty line is drawn the same
+  // as a line holding only a non-breaking space, and a fence left open inside a quote can be
+  // followed on the next line by an indented block.
   codeLines.forEach((h, i) => {
     const ln = startLine + 1 + i;
     push(ctx, {
@@ -219,7 +222,7 @@ function walkFence(token: Token, ctx: Ctx): void {
       endLine: ln,
       kind: 'code',
       html: `<div class="code-line"><code>${h || '&nbsp;'}</code></div>`,
-      flags: [],
+      flags: h ? ['code-content'] : ['code-content', 'code-empty'],
     });
   });
   const lastLine = endLine;
