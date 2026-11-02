@@ -79,6 +79,14 @@ describe('flags that take a value', () => {
     expect(args.author).toBe('someone');
   });
 
+  it('reads the history filters', () => {
+    const args = parseArgs(['history', '--grep', 'naming', '--since=2026-08-01']);
+    expect(args.grep).toBe('naming');
+    expect(args.since).toBe('2026-08-01');
+    expect(() => parseArgs(['history', '--grep'])).toThrow(/--grep needs a value/);
+    expect(() => parseArgs(['history', '--since', '--all'])).toThrow(/--since needs a value/);
+  });
+
   it('reads the value attached with =', () => {
     expect(parseArgs(['note.md', '--host=0.0.0.0']).host).toBe('0.0.0.0');
   });

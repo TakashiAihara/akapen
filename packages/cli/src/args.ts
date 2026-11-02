@@ -28,6 +28,8 @@ const VALUE_FLAGS = [
   'token',
   'advertise',
   'session',
+  'grep',
+  'since',
 ] as const;
 
 /** Flags that are on or off. Given a value, they fail — `--all=false` reads as "off". */

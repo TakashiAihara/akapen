@@ -7,10 +7,11 @@
  */
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   addReply,
+  allReviewComments,
   carriedOver,
   ensureRound,
   loadAllComments,
@@ -206,6 +207,109 @@ describe('reading across rounds', () => {
     const carried = carriedOver(work);
     expect(carried.map((c) => c.body)).toEqual(['about the heading', 'about the paragraph']);
     expect(carried.every((c) => c.round === 1)).toBe(true);
+  });
+});
+
+describe('every review in the store', () => {
+  it('lists nothing when no review has been opened', () => {
+    expect(allReviewComments()).toEqual([]);
+  });
+
+  it('reads each review with its id, path, current round and every round newest first', () => {
+    seed();
+    openRound(work, EDITED);
+    saveComments(work, 2, [makeComment(EDITED, 6, 6, 'raised in R002', 't')]);
+    const other = join(sandbox, 'other.md');
+    writeFileSync(other, SOURCE);
+    ensureRound(other, SOURCE);
+    saveComments(other, 1, [makeComment(SOURCE, 3, 3, 'on the other document', 'u')]);
+
+    const all = allReviewComments();
+    const byPath = new Map(all.map((r) => [r.path, r]));
+    expect(all.length).toBe(2);
+    const mine = byPath.get(work)!;
+    expect(mine.reviewId).toBe(basename(storeDir(work)));
+    expect(mine.currentRound).toBe(2);
+    expect(mine.comments.map((c) => [c.round, c.body])).toEqual([
+      [2, 'raised in R002'],
+      [1, 'about the status line'],
+      [1, 'about the heading'],
+      [1, 'about the paragraph'],
+    ]);
+    expect(byPath.get(other)!.comments.map((c) => c.body)).toEqual(['on the other document']);
+  });
+
+  it('keeps a review whose review.json is gone, with no path', () => {
+    seed();
+    openRound(work, EDITED);
+    rmSync(join(storeDir(work), 'review.json'));
+
+    const [only] = allReviewComments();
+    expect(only?.path).toBeNull();
+    expect(only?.currentRound).toBe(2);
+    expect(only?.comments.length).toBe(3);
+  });
+
+  it('reads rounds that review.json does not list, and counts them as current', () => {
+    seed();
+    openRound(work, EDITED);
+    saveComments(work, 2, [makeComment(EDITED, 6, 6, 'raised in R002', 't')]);
+    writeFileSync(
+      join(storeDir(work), 'review.json'),
+      JSON.stringify({ version: 2, path: work, currentRound: 1, rounds: [] }),
+    );
+
+    const [only] = allReviewComments();
+    expect(only?.currentRound).toBe(2);
+    expect(only?.comments.map((c) => c.round)).toEqual([2, 1, 1, 1]);
+  });
+
+  it('keeps the round review.json names as current when it is past the last one on disk', () => {
+    seed();
+    writeFileSync(
+      join(storeDir(work), 'review.json'),
+      JSON.stringify({ version: 2, path: work, currentRound: 3, rounds: [] }),
+    );
+    expect(allReviewComments()[0]?.currentRound).toBe(loadReview(work).currentRound);
+    expect(allReviewComments()[0]?.currentRound).toBe(3);
+  });
+
+  it('reads a round directory by the name it has, padded or not', () => {
+    seed();
+    mkdirSync(join(storeDir(work), 'rounds', '4'));
+    writeFileSync(
+      join(storeDir(work), 'rounds', '4', 'comments.json'),
+      JSON.stringify([makeComment(SOURCE, 3, 3, 'in an unpadded directory', 't')]),
+    );
+    const [only] = allReviewComments();
+    expect(only?.comments[0]).toMatchObject({ round: 4, body: 'in an unpadded directory' });
+  });
+
+  it('lists a review that has no rounds yet', () => {
+    mkdirSync(storeDir(work), { recursive: true });
+    writeFileSync(join(storeDir(work), 'review.json'), JSON.stringify({ path: work, currentRound: 0 }));
+    expect(allReviewComments()).toEqual([
+      { reviewId: basename(storeDir(work)), path: work, currentRound: 0, comments: [] },
+    ]);
+  });
+
+  it('skips what is not a numbered round or a review directory', () => {
+    seed();
+    mkdirSync(join(storeDir(work), 'rounds', 'notes'));
+    writeFileSync(join(storeDir(work), 'rounds', 'notes', 'comments.json'), '[{"id":"x"}]');
+    mkdirSync(join(storeDir(work), 'rounds', '001.bak'));
+    writeFileSync(join(storeDir(work), 'rounds', '001.bak', 'comments.json'), '[{"id":"z"}]');
+    mkdirSync(join(storeDir(work), 'rounds', '000'));
+    writeFileSync(join(storeDir(work), 'rounds', '000', 'comments.json'), '[{"id":"y"}]');
+    writeFileSync(join(process.env['AKAPEN_HOME']!, 'reviews', 'stray.json'), '{}');
+
+    const all = allReviewComments();
+    expect(all.length).toBe(1);
+    expect(all[0]!.comments.map((c) => c.id).toSorted()).toEqual(
+      loadComments(work, 1)
+        .map((c) => c.id)
+        .toSorted(),
+    );
   });
 });
 
