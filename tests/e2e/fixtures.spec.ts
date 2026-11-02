@@ -12,7 +12,14 @@ test('a peer whose port is already held by another akapen fails instead of measu
 }) => {
   const taken = Number(new URL(akapen.url).port);
 
-  await expect(startPeer(akapen.home, 'mine.md', [], taken)).rejects.toThrow(
-    /exited before serving .*mine\.md/,
+  const started = await startPeer(akapen.home, 'mine.md', [], taken).then(
+    (peer) => peer,
+    (err: Error) => err,
   );
+  // A peer handed back here is the defect. Stopped before failing, because once this test's
+  // own server lets go of the port, a peer still booting would take it and outlive the run.
+  if (!(started instanceof Error)) await started.stop();
+
+  expect(started).toBeInstanceOf(Error);
+  expect((started as Error).message).toMatch(/exited before serving .*mine\.md/);
 });

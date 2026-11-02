@@ -53,10 +53,9 @@ async function waitUntilServing(url: string, file: string, proc: ChildProcess): 
   const deadline = Date.now() + 20_000;
   let answered = '';
   for (;;) {
-    if (proc.exitCode !== null || proc.signalCode !== null) {
-      throw new Error(
-        `akapen exited before serving ${want} at ${url} (code ${proc.exitCode}, signal ${proc.signalCode})`,
-      );
+    if (proc.exitCode !== null) {
+      // Exit code only. One killed by a signal has none, and is left to the deadline below.
+      throw new Error(`akapen exited before serving ${want} at ${url} (code ${proc.exitCode})`);
     }
     try {
       // Each attempt is given its own deadline. A server that accepts the connection and
