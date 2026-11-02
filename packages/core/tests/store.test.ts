@@ -351,13 +351,18 @@ describe('validating stored JSON', () => {
 
   it('skips only the invalid entry and says so on stderr with the file and count', () => {
     ensureRound(work, SOURCE);
-    raw([legacyComment, { id: 'c_bad', startLine: 'x' }, { ...legacyComment, id: 'c_old222' }]);
+    raw([
+      legacyComment,
+      { id: 'c_bad', startLine: 'x' },
+      { id: 'c_bad2' },
+      { ...legacyComment, id: 'c_old222' },
+    ]);
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
     try {
       expect(loadComments(work, 1).map((c) => c.id)).toEqual(['c_old111', 'c_old222']);
       const msg = String(spy.mock.calls[0]?.[0]);
       expect(msg).toContain(commentsFile());
-      expect(msg).toContain('skipped 1 comment(s)');
+      expect(msg).toContain('skipped 2 comment(s)');
     } finally {
       spy.mockRestore();
     }
@@ -371,6 +376,9 @@ describe('validating stored JSON', () => {
     try {
       expect(updateComment(work, 'c_old111', (c) => (c.resolved = true))?.resolved).toBe(true);
       addReply(work, 'c_old111', 'hello', 't');
+      const written = loadComments(work, 1)[0];
+      expect(written?.resolved).toBe(true);
+      expect(written?.replies?.map((r) => r.body)).toEqual(['hello']);
     } finally {
       spy.mockRestore();
     }
@@ -386,6 +394,9 @@ describe('validating stored JSON', () => {
     try {
       expect(loadComments(work, 1)).toEqual([]);
       saveComments(work, 1, [makeComment(SOURCE, 3, 3, 'new', 't')]);
+      const msgs = spy.mock.calls.map((c) => String(c[0]));
+      expect(msgs.some((m) => m.includes('is not a JSON array') && m.includes(commentsFile()))).toBe(true);
+      expect(msgs.some((m) => m.includes('kept at'))).toBe(true);
     } finally {
       spy.mockRestore();
     }
@@ -396,7 +407,7 @@ describe('validating stored JSON', () => {
 
   it('recovers from a review.json whose fields have the wrong types', () => {
     openRound(work, SOURCE);
-    writeFileSync(join(storeDir(work), 'review.json'), JSON.stringify({ currentRound: '1', rounds: 'x' }));
+    writeFileSync(join(storeDir(work), 'review.json'), JSON.stringify({ currentRound: '5', rounds: [] }));
     const r = loadReview(work);
     expect(r.currentRound).toBe(1);
     expect(r.rounds.map((x) => x.n)).toEqual([1]);
@@ -411,5 +422,49 @@ describe('validating stored JSON', () => {
     const r = loadReview(work);
     expect(r.rounds).toHaveLength(1);
     expect(typeof r.rounds[0]?.createdAt).toBe('string');
+  });
+
+  it('keeps keys it does not know on a valid comment and its reply across a write', () => {
+    ensureRound(work, SOURCE);
+    const reply = {
+      id: 'r_aa',
+      body: 'b',
+      author: 'a',
+      authorKind: 'agent',
+      createdAt: '2026-01-02T00:00:00.000Z',
+      extraR: 7,
+    };
+    raw([{ ...legacyComment, futureField: 'x', replies: [reply] }]);
+    updateComment(work, 'c_old111', (c) => (c.resolved = true));
+    const [e] = JSON.parse(readFileSync(commentsFile(), 'utf8')) as Record<string, unknown>[];
+    expect(e?.['futureField']).toBe('x');
+    const replies = e?.['replies'] as Record<string, unknown>[];
+    expect(replies[0]?.['extraR']).toBe(7);
+    expect(e?.['resolved']).toBe(true);
+  });
+
+  it('reports a bad entry once however often the round is read', () => {
+    ensureRound(work, SOURCE);
+    raw([legacyComment, { id: 'c_bad' }]);
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      pendingComments(work);
+      pendingComments(work);
+      expect(spy).toHaveBeenCalledTimes(1);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('stays quiet when every entry is valid, and pendingComments skips only the bad one', () => {
+    ensureRound(work, SOURCE);
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      raw([legacyComment]);
+      expect(pendingComments(work).map((c) => c.id)).toEqual(['c_old111']);
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

@@ -4,6 +4,7 @@ import { basename, join, resolve } from 'node:path';
 import * as v from 'valibot';
 import {
   CommentSchema,
+  ReplySchema,
   ReviewFileSchema,
   RoundMetaSchema,
   type AuthorKind,
@@ -23,6 +24,24 @@ import {
   existsSync,
   copyFileSync,
 } from 'node:fs';
+
+/**
+ * Loose on purpose: a plain object schema strips keys it does not know, and this
+ * output is written back by saveComments. A newer version's extra fields on a valid
+ * comment or reply have to survive an older process's resolve or reply.
+ */
+const StoredCommentSchema = v.looseObject({
+  ...CommentSchema.entries,
+  replies: v.optional(v.array(v.looseObject(ReplySchema.entries)), []),
+});
+
+const warned = new Set<string>();
+function warnOnce(msg: string): void {
+  // Readers run on every payload and every round; one line per distinct problem is enough.
+  if (warned.has(msg)) return;
+  warned.add(msg);
+  console.error(msg);
+}
 
 export type { AuthorKind, Comment, Reply, RoundComment, RoundMeta };
 
@@ -202,22 +221,20 @@ export function loadComments(filePath: string, n: number): Comment[] {
   if (!existsSync(f)) return [];
   const entries = readCommentEntries(f);
   if (!entries) {
-    console.error(
-      `akapen: ${f} is not a JSON array of comments; reading it as empty (the file is left as is)`,
+    warnOnce(
+      `akapen: ${f} is not a JSON array of comments; reading it as empty (a write will first copy it aside)`,
     );
     return [];
   }
   const out: Comment[] = [];
   let rejected = 0;
   for (const e of entries) {
-    const r = v.safeParse(CommentSchema, e);
+    const r = v.safeParse(StoredCommentSchema, e);
     if (r.success) out.push(r.output);
     else rejected++;
   }
   if (rejected > 0) {
-    console.error(
-      `akapen: ${f}: skipped ${rejected} comment(s) that failed validation; they stay in the file`,
-    );
+    warnOnce(`akapen: ${f}: skipped ${rejected} comment(s) that failed validation; they stay in the file`);
   }
   return out;
 }
@@ -296,10 +313,12 @@ export function saveComments(filePath: string, n: number, comments: Comment[]): 
     const existing = readCommentEntries(f);
     if (existing) {
       // Entries loadComments skipped are not in `comments`, so writing only that would delete them.
-      kept = existing.filter((e) => !v.safeParse(CommentSchema, e).success);
+      kept = existing.filter((e) => !v.safeParse(StoredCommentSchema, e).success);
     } else {
       // Unreadable as an array: keep the bytes beside it rather than overwrite them.
-      copyFileSync(f, `${f}.unreadable-${Date.now()}`);
+      const aside = `${f}.unreadable-${Date.now()}-${randomBytes(3).toString('hex')}`;
+      copyFileSync(f, aside);
+      console.error(`akapen: ${f} was not a JSON array of comments; its bytes are kept at ${aside}`);
     }
   }
   writeAtomic(f, JSON.stringify([...comments, ...kept], null, 2));
@@ -334,7 +353,7 @@ export function addReply(
   };
   const comment = updateComment(filePath, commentId, (c) => {
     // `?? []` rather than a plain push: every file written before replies existed has
-    // no such key, and the type says otherwise because stored JSON is not checked (#61).
+    // no such key, and the type says otherwise because a file may predate replies and be written back by an older process.
     c.replies = [...(c.replies ?? []), reply];
   });
   return comment ? { comment, reply } : null;
