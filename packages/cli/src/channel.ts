@@ -314,6 +314,12 @@ export const INSTRUCTIONS = [
  * handshake decides whether this registers at all: Claude Code skips a channel whose
  * connection negotiated the modern protocol revision, and that negotiation is not ours
  * to reimplement. Nothing says so at run time — the events simply stop arriving.
+ *
+ * NOTE: that is why `packages/cli/package.json` pins the SDK to an exact version. A
+ * release that starts answering `server/discover`, or negotiates a newer revision, would
+ * switch every channel off without an error; the handshake test in `channel.test.ts` is
+ * what a bump has to pass. REMOVE WHEN: Claude Code registers a channel on a connection
+ * that negotiated a modern protocol revision.
  */
 export async function runChannel(): Promise<void> {
   const sessionId = process.env['CLAUDE_CODE_SESSION_ID'] ?? '';
