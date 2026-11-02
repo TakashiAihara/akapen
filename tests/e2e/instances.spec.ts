@@ -25,7 +25,7 @@ test('stays out of the way while nothing else is running', async ({ page }) => {
 
 test('lists a peer and links to it through the address this page was opened on', async ({ page, akapen }) => {
   // Bound to 0.0.0.0, as akapen is when it is read from another machine
-  const peer = await startPeer(akapen.home, 'design.md', ['--host', '0.0.0.0']);
+  const peer = await startPeer(akapen.home, 'design.md', { extra: ['--host', '0.0.0.0'] });
   try {
     await page.reload();
     await expect(page.locator(TOGGLE)).toHaveText('⇄ 1 other');
@@ -56,7 +56,7 @@ test('lists a peer and links to it through the address this page was opened on',
 });
 
 test('does not open by itself when the list arrives after Escape', async ({ page, akapen }) => {
-  const peer = await startPeer(akapen.home, 'design.md', ['--host', '0.0.0.0']);
+  const peer = await startPeer(akapen.home, 'design.md', { extra: ['--host', '0.0.0.0'] });
   try {
     await page.reload();
     await expect(page.locator(TOGGLE)).toBeVisible();
@@ -96,7 +96,7 @@ test('shows a peer bound to loopback, but does not link to it', async ({ page, a
 });
 
 test('drops the row when the peer stops, and takes the button with it', async ({ page, akapen }) => {
-  const peer = await startPeer(akapen.home, 'design.md', ['--host', '0.0.0.0']);
+  const peer = await startPeer(akapen.home, 'design.md', { extra: ['--host', '0.0.0.0'] });
   try {
     await page.reload();
     await expect(page.locator(TOGGLE)).toBeVisible();
