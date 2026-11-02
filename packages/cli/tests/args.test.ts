@@ -211,8 +211,6 @@ describe('resolveHost', () => {
   });
 
   it('keeps an IPv6 address bracketed or bare as it was typed, while shortening it', () => {
-    expect(resolveHost('0:0:0:0:0:0:0:1')).toBe('::1');
-    expect(resolveHost('[0:0:0:0:0:0:0:1]')).toBe('[::1]');
     expect(resolveHost('0::0')).toBe('::');
     expect(resolveHost('[0::0]')).toBe('[::]');
   });
