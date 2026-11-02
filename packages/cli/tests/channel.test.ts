@@ -31,14 +31,14 @@ import {
   INSTRUCTIONS,
   instructionsEvent,
   markSent,
-  newEvents as newTimedEvents,
+  newEvents,
   type Loaded,
 } from '../src/channel.ts';
 import type { RoundComment } from '@akapen/shared';
 
 /** `newEvents` with the times dropped: what the order is, not what the sort keys were. */
-const newEvents = (...args: Parameters<typeof newTimedEvents>) => {
-  const { events, known } = newTimedEvents(...args);
+const eventsOf = (...args: Parameters<typeof newEvents>) => {
+  const { events, known } = newEvents(...args);
   return { events: events.map((e) => e.event), known };
 };
 
@@ -95,30 +95,30 @@ describe('idsOf', () => {
 
 describe('newEvents', () => {
   it('says nothing about a document it is seeing for the first time', () => {
-    const { events, known } = newEvents('/n/a.md', [comment('c1'), comment('c2')], undefined);
+    const { events, known } = eventsOf('/n/a.md', [comment('c1'), comment('c2')], undefined);
     expect(events).toEqual([]);
     expect([...known]).toEqual(['c1', 'c2']);
   });
 
   it('seeds the replies that were already on it, not only the comments', () => {
     const before = [comment('c1', { replies: [reply('r1')] })];
-    const first = newEvents('/n/a.md', before, undefined);
+    const first = eventsOf('/n/a.md', before, undefined);
     expect(first.events).toEqual([]);
     // Without the replies in `known`, r1 reads as new on the pass after the first one.
-    expect(newEvents('/n/a.md', before, first.known).events).toEqual([]);
+    expect(eventsOf('/n/a.md', before, first.known).events).toEqual([]);
   });
 
   it('reports a comment that was not there before', () => {
-    const first = newEvents('/n/a.md', [comment('c1')], undefined);
-    const { events } = newEvents('/n/a.md', [comment('c2'), comment('c1')], first.known);
+    const first = eventsOf('/n/a.md', [comment('c1')], undefined);
+    const { events } = eventsOf('/n/a.md', [comment('c2'), comment('c1')], first.known);
     expect(events).toHaveLength(1);
     expect(events[0]?.meta['comment_id']).toBe('c2');
     expect(events[0]?.content).toContain('body of c2');
   });
 
   it('reports a reply on a comment it has already reported', () => {
-    const first = newEvents('/n/a.md', [comment('c1')], undefined);
-    const { events } = newEvents('/n/a.md', [comment('c1', { replies: [reply('r1')] })], first.known);
+    const first = eventsOf('/n/a.md', [comment('c1')], undefined);
+    const { events } = eventsOf('/n/a.md', [comment('c1', { replies: [reply('r1')] })], first.known);
     expect(events).toHaveLength(1);
     expect(events[0]?.meta['reply_id']).toBe('r1');
     expect(events[0]?.content).toContain('reply r1');
@@ -127,46 +127,46 @@ describe('newEvents', () => {
   });
 
   it('carries the author field akapen stored, as akapen comments does', () => {
-    const first = newEvents('/n/a.md', [], undefined);
-    const { events } = newEvents('/n/a.md', [comment('c1', { author: 'takashi' })], first.known);
+    const first = eventsOf('/n/a.md', [], undefined);
+    const { events } = eventsOf('/n/a.md', [comment('c1', { author: 'takashi' })], first.known);
     expect(events[0]?.meta['author']).toBe('takashi');
   });
 
   it('does not push a file again after a read that came back empty', () => {
-    const first = newEvents('/n/a.md', [comment('c1')], undefined);
-    const empty = newEvents('/n/a.md', [], first.known);
+    const first = eventsOf('/n/a.md', [comment('c1')], undefined);
+    const empty = eventsOf('/n/a.md', [], first.known);
     // Resolving everything and opening one again looks the same from here.
-    const back = newEvents('/n/a.md', [comment('c1')], empty.known);
+    const back = eventsOf('/n/a.md', [comment('c1')], empty.known);
     expect(back.events).toEqual([]);
   });
 
   it('does not report the same unresolved comment twice', () => {
-    const first = newEvents('/n/a.md', [comment('c1')], undefined);
-    const second = newEvents('/n/a.md', [comment('c2'), comment('c1')], first.known);
-    const third = newEvents('/n/a.md', [comment('c2'), comment('c1')], second.known);
+    const first = eventsOf('/n/a.md', [comment('c1')], undefined);
+    const second = eventsOf('/n/a.md', [comment('c2'), comment('c1')], first.known);
+    const third = eventsOf('/n/a.md', [comment('c2'), comment('c1')], second.known);
     expect(third.events).toEqual([]);
   });
 
   it('reports a comment that arrived while another was resolved', () => {
     // The set is the same size either side, so anything watching how many are pending
     // sees nothing happen. Resolving one and writing one is an ordinary minute of use.
-    const first = newEvents('/n/a.md', [comment('c1')], undefined);
-    const { events } = newEvents('/n/a.md', [comment('c3')], first.known);
+    const first = eventsOf('/n/a.md', [comment('c1')], undefined);
+    const { events } = eventsOf('/n/a.md', [comment('c3')], first.known);
     expect(events).toHaveLength(1);
     expect(events[0]?.meta['comment_id']).toBe('c3');
   });
 
   it('carries the anchor, because line numbers belong to the round', () => {
-    const first = newEvents('/n/a.md', [], undefined);
-    const { events } = newEvents('/n/a.md', [comment('c1', { anchor: '### Q-04 something' })], first.known);
+    const first = eventsOf('/n/a.md', [], undefined);
+    const { events } = eventsOf('/n/a.md', [comment('c1', { anchor: '### Q-04 something' })], first.known);
     expect(events[0]?.content).toContain('### Q-04 something');
   });
 
   it('keys meta by identifiers, which is all Claude Code keeps', () => {
-    const first = newEvents('/n/a.md', [], undefined);
+    const first = eventsOf('/n/a.md', [], undefined);
     // Both shapes: a hyphen in a key is dropped in silence, and `reply_id` only appears
     // on the reply path, so checking the comment path alone would never see it.
-    const { events } = newEvents('/n/a.md', [comment('c1', { replies: [reply('r1')] })], first.known);
+    const { events } = eventsOf('/n/a.md', [comment('c1', { replies: [reply('r1')] })], first.known);
     expect(events).toHaveLength(2);
     const keys = events.flatMap((e) => Object.keys(e.meta));
     expect(keys).toContain('reply_id');
@@ -180,14 +180,14 @@ describe('newEvents on first sight, seeded from when the akapen started (#185)',
   it('pushes what was written after the start and seeds what was written before it', () => {
     const before = comment('old', { createdAt: '2026-09-18T00:00:04.999Z' });
     const after = comment('new', { createdAt: '2026-09-18T00:00:06.000Z' });
-    const { events, known } = newEvents('/n/a.md', [before, after], undefined, undefined, since);
+    const { events, known } = eventsOf('/n/a.md', [before, after], undefined, undefined, since);
     expect(events.map((e) => e.meta['comment_id'])).toEqual(['new']);
     // Left out of the seed, so it becomes known only once it has been delivered.
     expect([...known]).toEqual(['old']);
   });
 
   it('counts a comment written in the same millisecond the akapen started as new', () => {
-    const { events } = newEvents(
+    const { events } = eventsOf(
       '/n/a.md',
       [comment('c1', { createdAt: STARTED })],
       undefined,
@@ -199,18 +199,18 @@ describe('newEvents on first sight, seeded from when the akapen started (#185)',
 
   it('pushes a reply written after the start on a comment written before it', () => {
     const c = comment('c1', { replies: [reply('r0'), reply('r1', '2026-09-18T00:00:07.000Z')] });
-    const { events, known } = newEvents('/n/a.md', [c], undefined, undefined, since);
+    const { events, known } = eventsOf('/n/a.md', [c], undefined, undefined, since);
     expect(events.map((e) => e.meta['reply_id'])).toEqual(['r1']);
     expect([...known]).toEqual(['c1', 'c1/r0']);
   });
 
   it("does not push this session's own reply on first sight either", () => {
     const mine = { ...reply('mine', '2026-09-18T00:00:07.000Z'), sessionId: 'S1' };
-    const { events } = newEvents('/n/a.md', [comment('c1', { replies: [mine] })], undefined, 'S1', since);
+    const { events } = eventsOf('/n/a.md', [comment('c1', { replies: [mine] })], undefined, 'S1', since);
     expect(events).toEqual([]);
   });
 
-  it("reads the thread up to this session's latest reply on it as seen", () => {
+  it("reads what came before this session's latest reply on a thread as seen", () => {
     const replies = [
       { ...reply('mine-1', '2026-09-18T00:00:07.000Z'), sessionId: 'S1' },
       reply('between', '2026-09-18T00:00:08.000Z'),
@@ -220,8 +220,9 @@ describe('newEvents on first sight, seeded from when the akapen started (#185)',
       { ...reply('mine-0', '2026-09-18T00:00:06.500Z'), sessionId: 'S1' },
     ];
     const c = comment('c1', { createdAt: '2026-09-18T00:00:06.000Z', replies });
-    const { events } = newEvents('/n/a.md', [c], undefined, 'S1', since);
-    expect(events.map((e) => e.meta['reply_id'] ?? e.meta['comment_id'])).toEqual(['after']);
+    const { events } = eventsOf('/n/a.md', [c], undefined, 'S1', since);
+    // A reply stamped in the same millisecond as the answer cannot have been read before it.
+    expect(events.map((e) => e.meta['reply_id'] ?? e.meta['comment_id'])).toEqual(['same-ms', 'after']);
   });
 
   it("does not take a sibling session's reply, or a person's, for this session's answer", () => {
@@ -231,7 +232,7 @@ describe('newEvents on first sight, seeded from when the akapen started (#185)',
     ];
     const c = comment('c1', { createdAt: '2026-09-18T00:00:06.000Z', replies });
     const ids = (self?: string) =>
-      newEvents('/n/a.md', [c], undefined, self, since).events.map(
+      eventsOf('/n/a.md', [c], undefined, self, since).events.map(
         (e) => e.meta['reply_id'] ?? e.meta['comment_id'],
       );
     expect(ids('S1')).toEqual(['c1', 'sibling', 'person']);
@@ -245,12 +246,12 @@ describe('newEvents on first sight, seeded from when the akapen started (#185)',
       reply('person', '2026-09-18T00:00:09.000Z'),
     ];
     const c = comment('c1', { createdAt: '2026-09-18T00:00:06.000Z', replies });
-    const { events } = newEvents('/n/a.md', [c], undefined, 'S1', since);
+    const { events } = eventsOf('/n/a.md', [c], undefined, 'S1', since);
     expect(events.map((e) => e.meta['reply_id'] ?? e.meta['comment_id'])).toEqual(['c1', 'person']);
   });
 
   it('takes a comment whose time does not parse as history', () => {
-    const { events, known } = newEvents(
+    const { events, known } = eventsOf(
       '/n/a.md',
       [comment('c1', { createdAt: 'soon' })],
       undefined,
@@ -263,19 +264,36 @@ describe('newEvents on first sight, seeded from when the akapen started (#185)',
 });
 
 describe('the order a batch is pushed in (#185)', () => {
-  it('is the order the comments were written, not line order', () => {
+  it('carries when each event was written, and sorts a time that does not parse last', () => {
     const first = newEvents('/n/a.md', [], undefined);
+    const comments = [
+      comment('c1', {
+        createdAt: '2026-09-18T00:00:07.000Z',
+        replies: [reply('r1', '2026-09-18T00:00:08.000Z')],
+      }),
+      comment('c2', { createdAt: 'soon' }),
+    ];
+    const { events } = newEvents('/n/a.md', comments, first.known);
+    expect(events.map((e) => [e.event.meta['reply_id'] ?? e.event.meta['comment_id'], e.at])).toEqual([
+      ['c1', 1_789_689_607_000],
+      ['r1', 1_789_689_608_000],
+      ['c2', Number.POSITIVE_INFINITY],
+    ]);
+  });
+
+  it('is the order the comments were written, not line order', () => {
+    const first = eventsOf('/n/a.md', [], undefined);
     const comments = [
       comment('top', { startLine: 1, endLine: 1, createdAt: '2026-09-18T00:02:00.000Z' }),
       comment('middle', { startLine: 5, endLine: 5, createdAt: '2026-09-18T00:00:00.000Z' }),
       comment('bottom', { startLine: 9, endLine: 9, createdAt: '2026-09-18T00:01:00.000Z' }),
     ];
-    const { events } = newEvents('/n/a.md', comments, first.known);
+    const { events } = eventsOf('/n/a.md', comments, first.known);
     expect(events.map((e) => e.meta['comment_id'])).toEqual(['middle', 'bottom', 'top']);
   });
 
   it('puts a reply between the comments written either side of it', () => {
-    const first = newEvents('/n/a.md', [], undefined);
+    const first = eventsOf('/n/a.md', [], undefined);
     const comments = [
       comment('c1', {
         createdAt: '2026-09-18T00:00:00.000Z',
@@ -284,25 +302,25 @@ describe('the order a batch is pushed in (#185)', () => {
       comment('c2', { createdAt: '2026-09-18T00:05:00.000Z' }),
       comment('c3', { createdAt: '2026-09-18T00:01:00.000Z' }),
     ];
-    const { events } = newEvents('/n/a.md', comments, first.known);
+    const { events } = eventsOf('/n/a.md', comments, first.known);
     expect(events.map((e) => e.meta['reply_id'] ?? e.meta['comment_id'])).toEqual(['c1', 'c3', 'r1', 'c2']);
   });
 
   it('keeps line order between comments written at the same time', () => {
-    const first = newEvents('/n/a.md', [], undefined);
+    const first = eventsOf('/n/a.md', [], undefined);
     const comments = [comment('b'), comment('a'), comment('c')];
-    const { events } = newEvents('/n/a.md', comments, first.known);
+    const { events } = eventsOf('/n/a.md', comments, first.known);
     expect(events.map((e) => e.meta['comment_id'])).toEqual(['b', 'a', 'c']);
   });
 
   it('puts a comment whose time does not parse last', () => {
-    const first = newEvents('/n/a.md', [], undefined);
+    const first = eventsOf('/n/a.md', [], undefined);
     const comments = [
       comment('late', { createdAt: '2026-09-18T00:02:00.000Z' }),
       comment('broken', { createdAt: 'soon' }),
       comment('early', { createdAt: '2026-09-18T00:01:00.000Z' }),
     ];
-    const { events } = newEvents('/n/a.md', comments, first.known);
+    const { events } = eventsOf('/n/a.md', comments, first.known);
     expect(events.map((e) => e.meta['comment_id'])).toEqual(['early', 'late', 'broken']);
   });
 });
@@ -776,7 +794,14 @@ describe('asking the akapen on disk for its instructions (#248)', () => {
 
 describe('the instructions handed to the session', () => {
   it("carry #12's rule for a comment whose anchored text has gone: say so, do not guess", () => {
-    expect(INSTRUCTIONS).toContain('If that text is no longer in the file, do not guess');
-    expect(INSTRUCTIONS).toContain('reply on the thread that the passage has already changed');
+    expect(INSTRUCTIONS).toContain(
+      'If that text is no longer in the file, do not guess where the comment belongs or what it would say about the new text: reply on the thread that the passage has already changed.',
+    );
+  });
+
+  it('warn that a comment acted on without a reply can arrive again after a restart', () => {
+    expect(INSTRUCTIONS).toContain(
+      'After this channel restarts, a comment you already acted on without replying to it can arrive again: check the document and the thread before acting on it twice.',
+    );
   });
 });
