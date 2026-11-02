@@ -1,7 +1,18 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
-import type { AuthorKind, Comment, Reply, RoundComment, RoundMeta } from '@akapen/shared';
+import * as v from 'valibot';
+import {
+  CommentSchema,
+  ReplySchema,
+  ReviewFileSchema,
+  RoundMetaSchema,
+  type AuthorKind,
+  type Comment,
+  type Reply,
+  type RoundComment,
+  type RoundMeta,
+} from '@akapen/shared';
 import {
   mkdirSync,
   readFileSync,
@@ -11,7 +22,27 @@ import {
   statSync,
   unlinkSync,
   existsSync,
+  copyFileSync,
 } from 'node:fs';
+
+/**
+ * Loose on purpose: a plain object schema strips keys it does not know, and this
+ * output is written back by saveComments. A newer version's extra fields on a valid
+ * comment or reply have to survive an older process's resolve or reply.
+ */
+const StoredCommentSchema = v.looseObject({
+  ...CommentSchema.entries,
+  replies: v.optional(v.array(v.looseObject(ReplySchema.entries)), []),
+});
+
+// Never cleared: a file that is fixed and then breaks the same way again is not reported twice.
+const warned = new Set<string>();
+function warnOnce(msg: string): void {
+  // Readers run on every payload and every round; one line per distinct problem is enough.
+  if (warned.has(msg)) return;
+  warned.add(msg);
+  console.error(msg);
+}
 
 export type { AuthorKind, Comment, Reply, RoundComment, RoundMeta };
 
@@ -71,17 +102,6 @@ export function writeAtomic(target: string, data: string, opts: { mode?: number 
   }
 }
 
-function isRoundMeta(v: unknown): v is RoundMeta {
-  if (typeof v !== 'object' || v === null) return false;
-  const r = v as RoundMeta;
-  return (
-    Number.isInteger(r.n) &&
-    r.n > 0 &&
-    typeof r.createdAt === 'string' &&
-    (r.closedAt === null || typeof r.closedAt === 'string')
-  );
-}
-
 /**
  * Rebuild round metadata from what is actually on disk (directories holding a
  * content.md). Timestamps come from content.md's mtime. The frozen documents
@@ -107,10 +127,13 @@ export function loadReview(filePath: string): Review {
   const f = reviewFile(filePath);
   if (existsSync(f)) {
     try {
-      const parsed = JSON.parse(readFileSync(f, 'utf8')) as Partial<Review>;
-      const rounds = Array.isArray(parsed.rounds) ? parsed.rounds.filter(isRoundMeta) : null;
-      const currentRound = parsed.currentRound;
-      if (rounds && Number.isInteger(currentRound) && currentRound! >= 0) {
+      const parsed = v.safeParse(ReviewFileSchema, JSON.parse(readFileSync(f, 'utf8')));
+      if (parsed.success) {
+        const rounds = parsed.output.rounds.flatMap((r) => {
+          const meta = v.safeParse(v.looseObject(RoundMetaSchema.entries), r);
+          return meta.success ? [meta.output] : [];
+        });
+        const currentRound = parsed.output.currentRound;
         // Rounds can exist on disk without being listed in review.json (an old
         // review.json was restored, or a write died halfway). Reconciling against
         // the directories is what keeps cross-round reads from silently missing them.
@@ -120,7 +143,7 @@ export function loadReview(filePath: string): Review {
         return {
           version: 2,
           path: resolve(filePath),
-          currentRound: Math.max(currentRound!, merged.at(-1)?.n ?? 0),
+          currentRound: Math.max(currentRound, merged.at(-1)?.n ?? 0),
           rounds: merged,
         };
       }
@@ -180,15 +203,41 @@ export function roundContent(filePath: string, n: number): string {
   return readFileSync(join(roundDir(filePath, n), 'content.md'), 'utf8');
 }
 
+function readCommentEntries(f: string): unknown[] | null {
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(f, 'utf8'));
+    return Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Entries that fail validation are skipped, not repaired, and the file keeps them:
+ * saveComments keeps them, re-serialised and after the valid ones. Dropping them here would turn one bad entry
+ * into a silent deletion on the next write.
+ */
 export function loadComments(filePath: string, n: number): Comment[] {
   const f = join(roundDir(filePath, n), 'comments.json');
   if (!existsSync(f)) return [];
-  try {
-    const parsed = JSON.parse(readFileSync(f, 'utf8'));
-    return Array.isArray(parsed) ? (parsed as Comment[]) : [];
-  } catch {
+  const entries = readCommentEntries(f);
+  if (!entries) {
+    warnOnce(
+      `akapen: ${f} is not a JSON array of comments; reading it as empty (a write will first copy it aside)`,
+    );
     return [];
   }
+  const out: Comment[] = [];
+  let rejected = 0;
+  for (const e of entries) {
+    const r = v.safeParse(StoredCommentSchema, e);
+    if (r.success) out.push(r.output);
+    else rejected++;
+  }
+  if (rejected > 0) {
+    warnOnce(`akapen: ${f}: skipped ${rejected} comment(s) that failed validation; they stay in the file`);
+  }
+  return out;
 }
 
 /**
@@ -259,7 +308,21 @@ export function updateComment(
 export function saveComments(filePath: string, n: number, comments: Comment[]): void {
   const dir = roundDir(filePath, n);
   mkdirSync(dir, { recursive: true });
-  writeAtomic(join(dir, 'comments.json'), JSON.stringify(comments, null, 2));
+  const f = join(dir, 'comments.json');
+  let kept: unknown[] = [];
+  if (existsSync(f)) {
+    const existing = readCommentEntries(f);
+    if (existing) {
+      // Entries loadComments skipped are not in `comments`, so writing only that would delete them.
+      kept = existing.filter((e) => !v.safeParse(StoredCommentSchema, e).success);
+    } else {
+      // Unreadable as an array: keep the bytes beside it rather than overwrite them.
+      const aside = `${f}.unreadable-${Date.now()}-${randomBytes(3).toString('hex')}`;
+      copyFileSync(f, aside);
+      console.error(`akapen: ${f} was not a JSON array of comments; its bytes are kept at ${aside}`);
+    }
+  }
+  writeAtomic(f, JSON.stringify([...comments, ...kept], null, 2));
 }
 
 /**
@@ -290,9 +353,8 @@ export function addReply(
     createdAt: new Date().toISOString(),
   };
   const comment = updateComment(filePath, commentId, (c) => {
-    // `?? []` rather than a plain push: every file written before replies existed has
-    // no such key, and the type says otherwise because stored JSON is not checked (#61).
-    c.replies = [...(c.replies ?? []), reply];
+    // loadComments defaults a missing `replies` to [], so it is always an array here.
+    c.replies = [...c.replies, reply];
   });
   return comment ? { comment, reply } : null;
 }
