@@ -633,9 +633,10 @@ body.rail-overlay .marker { display: inline-flex; align-items: center; justify-c
    space goes on any other code row followed by neither a list item nor a code row that
    is not a fence's opening row (#262). That includes a fence's opening row: an unclosed
    fence with no lines, as one cut off by the end of a quote, is that row alone (#280).
-   A fence that opens right after starts another block, so it gets the space too; an
-   indented block right after an unclosed fence does not, its rows telling nothing apart.
-   The closing fence row is left to the line above, so the two rules never overlap. */
+   A fence that opens right after starts another block, so the row before it gets the
+   space too; an indented block right after an unclosed fence does not, its rows telling
+   nothing apart. The closing fence row is left to the code-last rule, so the two never
+   overlap. */
 .row.code-last:has(+ .row:not(.list-item)) .body > :first-child,
 .row.code:not(.code-last):has(+ .row:not(.code:not(.code-first), .list-item))
   .body > :first-child,

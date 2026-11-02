@@ -119,7 +119,7 @@ test('leaves a paragraph after a code block or a table the space it leaves after
   const quoted = await gapsOf(page, '> ```sh\n\nAfter.\n', akapen, request);
   expect(quoted).toHaveLength(1);
   expect(quoted[0]).toBeCloseTo(paraToPara, 0);
-  // And a fence that opens right after it is another block.
+  // A fence opened right after a quoted empty one is spaced from it.
   const quotedThenFence = await gapsOf(page, '> ```sh\n```py\nx\n```\n', akapen, request);
   await expect(page.locator('.row.code-first')).toHaveCount(2);
   expect(quotedThenFence[0]).toBeCloseTo(paraToPara, 0);
