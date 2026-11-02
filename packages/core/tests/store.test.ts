@@ -384,7 +384,7 @@ describe('validating stored JSON', () => {
     }
     const onDisk = JSON.parse(readFileSync(commentsFile(), 'utf8')) as { id: string }[];
     expect(onDisk.filter((e) => e.id === 'c_bad')).toEqual([bad]);
-    expect(onDisk).toHaveLength(2);
+    expect(onDisk.map((e) => e.id)).toEqual(['c_old111', 'c_bad']);
   });
 
   it('keeps the bytes of a comments.json that is not an array when it is written over', () => {
@@ -456,13 +456,47 @@ describe('validating stored JSON', () => {
     }
   });
 
-  it('stays quiet when every entry is valid, and pendingComments skips only the bad one', () => {
+  it('stays quiet when every entry is valid', () => {
     ensureRound(work, SOURCE);
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
     try {
       raw([legacyComment]);
       expect(pendingComments(work).map((c) => c.id)).toEqual(['c_old111']);
       expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it.each([
+    ['a non-integer currentRound', { currentRound: 1.5, rounds: [] }],
+    ['a negative currentRound', { currentRound: -1, rounds: [] }],
+    ['a rounds that is not an array', { currentRound: 1, rounds: 'x' }],
+  ])('recovers from review.json with %s', (_name, content) => {
+    openRound(work, SOURCE);
+    writeFileSync(join(storeDir(work), 'review.json'), JSON.stringify(content));
+    const r = loadReview(work);
+    expect(r.currentRound).toBe(1);
+    expect(r.rounds.map((x) => x.n)).toEqual([1]);
+  });
+
+  it('keeps unknown keys on a round entry across a save', () => {
+    openRound(work, SOURCE);
+    const f = join(storeDir(work), 'review.json');
+    const j = JSON.parse(readFileSync(f, 'utf8')) as { rounds: Record<string, unknown>[] };
+    j.rounds[0]!['futureField'] = 'kept';
+    writeFileSync(f, JSON.stringify(j));
+    openRound(work, EDITED);
+    const saved = JSON.parse(readFileSync(f, 'utf8')) as { rounds: Record<string, unknown>[] };
+    expect(saved.rounds[0]?.['futureField']).toBe('kept');
+  });
+
+  it('hands the agent only the valid comments when one entry is bad', () => {
+    ensureRound(work, SOURCE);
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      raw([legacyComment, { id: 'c_bad' }]);
+      expect(pendingComments(work).map((c) => c.id)).toEqual(['c_old111']);
     } finally {
       spy.mockRestore();
     }

@@ -35,6 +35,7 @@ const StoredCommentSchema = v.looseObject({
   replies: v.optional(v.array(v.looseObject(ReplySchema.entries)), []),
 });
 
+// Never cleared: a file that is fixed and then breaks the same way again is not reported twice.
 const warned = new Set<string>();
 function warnOnce(msg: string): void {
   // Readers run on every payload and every round; one line per distinct problem is enough.
@@ -129,7 +130,7 @@ export function loadReview(filePath: string): Review {
       const parsed = v.safeParse(ReviewFileSchema, JSON.parse(readFileSync(f, 'utf8')));
       if (parsed.success) {
         const rounds = parsed.output.rounds.flatMap((r) => {
-          const meta = v.safeParse(RoundMetaSchema, r);
+          const meta = v.safeParse(v.looseObject(RoundMetaSchema.entries), r);
           return meta.success ? [meta.output] : [];
         });
         const currentRound = parsed.output.currentRound;
@@ -213,7 +214,7 @@ function readCommentEntries(f: string): unknown[] | null {
 
 /**
  * Entries that fail validation are skipped, not repaired, and the file keeps them:
- * saveComments writes them back untouched. Dropping them here would turn one bad entry
+ * saveComments keeps them, re-serialised and after the valid ones. Dropping them here would turn one bad entry
  * into a silent deletion on the next write.
  */
 export function loadComments(filePath: string, n: number): Comment[] {
@@ -352,9 +353,8 @@ export function addReply(
     createdAt: new Date().toISOString(),
   };
   const comment = updateComment(filePath, commentId, (c) => {
-    // `?? []` rather than a plain push: every file written before replies existed has
-    // no such key, and the type says otherwise because a file may predate replies and be written back by an older process.
-    c.replies = [...(c.replies ?? []), reply];
+    // loadComments defaults a missing `replies` to [], so it is always an array here.
+    c.replies = [...c.replies, reply];
   });
   return comment ? { comment, reply } : null;
 }
