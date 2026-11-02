@@ -44,18 +44,32 @@ export type Akapen = {
  *
  * A 200 alone is not enough. The port comes from a counter every run starts at 4400, and
  * every run uses the same token, so a port held by another e2e run on the same host answers
- * just as well — while the process started here has already exited on EADDRINUSE. The test
- * would then measure the other run's document (#277). The path is what tells them apart,
- * and an exit is what says why it never will.
+ * just as well — usually before the process started here has even reached its bind and
+ * exited on it. The test would then measure the other run's document (#277). The path is
+ * what tells them apart. The exit, with what the process wrote to stderr, is what says why
+ * the right one never will, instead of a deadline twenty seconds later.
+ *
+ * Called straight after `spawn`, before anything awaits, so no exit or output is missed.
+ * stderr stays drained for the life of the process, so a chatty server never blocks on it.
  */
 async function waitUntilServing(url: string, file: string, proc: ChildProcess): Promise<void> {
   const want = resolve(file);
   const deadline = Date.now() + 20_000;
+  let stderr = '';
+  proc.stderr?.on('data', (chunk: Buffer) => {
+    stderr = (stderr + chunk.toString()).slice(-4_000);
+  });
+  // `close`, not `exit`: it comes after stderr has been read to the end. Either a code or a
+  // signal, so a process killed from outside fails here too rather than at the deadline.
+  let ended: string | null = null;
+  proc.once('close', (code, signal) => {
+    ended = signal ? `signal ${signal}` : `code ${code}`;
+  });
+
   let answered = '';
   for (;;) {
-    if (proc.exitCode !== null) {
-      // Exit code only. One killed by a signal has none, and is left to the deadline below.
-      throw new Error(`akapen exited before serving ${want} at ${url} (code ${proc.exitCode})`);
+    if (ended !== null) {
+      throw new Error(`akapen exited before serving ${want} at ${url} (${ended}): ${stderr.trim()}`);
     }
     try {
       // Each attempt is given its own deadline. A server that accepts the connection and
@@ -99,7 +113,7 @@ export async function startPeer(
   const proc: ChildProcess = spawn(
     'bun',
     ['run', 'packages/cli/src/cli.ts', file, '-p', String(port), ...extra],
-    { env: { ...process.env, AKAPEN_HOME: home, AKAPEN_TOKEN: TOKEN }, stdio: 'ignore' },
+    { env: { ...process.env, AKAPEN_HOME: home, AKAPEN_TOKEN: TOKEN }, stdio: ['ignore', 'ignore', 'pipe'] },
   );
 
   /**
@@ -137,7 +151,7 @@ export const test = base.extend<{ akapen: Akapen }>({
     const home = join(sandbox, 'home');
     const proc: ChildProcess = spawn('bun', ['run', 'packages/cli/src/cli.ts', file, '-p', String(port)], {
       env: { ...process.env, AKAPEN_HOME: home, AKAPEN_TOKEN: TOKEN },
-      stdio: 'ignore',
+      stdio: ['ignore', 'ignore', 'pipe'],
     });
 
     const url = `http://127.0.0.1:${port}`;

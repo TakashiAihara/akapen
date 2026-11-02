@@ -22,4 +22,6 @@ test('a peer whose port is already held by another akapen fails instead of measu
 
   expect(started).toBeInstanceOf(Error);
   expect((started as Error).message).toMatch(/exited before serving .*mine\.md/);
+  // The reason is the port, not any other way of failing to start.
+  expect((started as Error).message).toContain(`--port ${taken} is in use`);
 });
