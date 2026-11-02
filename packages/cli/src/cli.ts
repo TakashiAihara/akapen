@@ -19,6 +19,7 @@ const USAGE = `akapen — markdown inline review
   akapen reply <file.md> <id> <text>   reply to a comment (--resolve to close it too;
                                        -- before a text that starts with a dash)
   akapen resolve <file.md> <id>  resolve a comment
+  akapen rounds cut <file.md>    close the current round and open the next one
   akapen list                    print the akapen running on this host
   akapen channel                 push this session's comments to Claude Code (MCP channel)
   akapen token                   print this host's token (--rotate to replace it)
@@ -230,6 +231,85 @@ if (positional[0] === 'list') {
 }
 
 /**
+ * The akapen serving `file`: a `post` to it, and the session to file as. The file is identified as
+ * the store identifies it (the resolved path). `--token` as the server takes it, so an
+ * instance started with one can be reached. With nothing answering, nothing is written
+ * and this exits 1.
+ */
+async function reachInstance(file: string): Promise<{
+  post: (path: string, done: string, check: string, body?: unknown) => Promise<unknown>;
+  session: string;
+}> {
+  const token = args.token !== undefined && args.token !== '' ? args.token : currentToken();
+  const target = resolve(file);
+  const serving = (await liveInstances({ token })).find((e) => e.record.file === target);
+  if (!serving) {
+    // Said as observed: one may be running on another token, and not have answered. Not
+    // written to the store instead (#258): a server that is running or starting holds the
+    // round in memory and writes it back, and two of these at once would race each other.
+    console.error(
+      `akapen: no akapen serving ${target} answered, so nothing was written; ` +
+        `start one (akapen ${JSON.stringify(file)}) and run this again`,
+    );
+    process.exit(1);
+  }
+  const base = `http://${reachableHost(serving.record.host)}:${serving.record.port}`;
+  const session = process.env['CLAUDE_CODE_SESSION_ID'] ?? '';
+  const headers: Record<string, string> = {
+    ...(token === null ? {} : { authorization: `Bearer ${token}` }),
+    ...(session === '' ? {} : { 'x-akapen-session': session }),
+  };
+  const post = async (path: string, done: string, check: string, body?: unknown): Promise<unknown> => {
+    const res = await fetch(`${base}${path}`, {
+      method: 'POST',
+      headers: body === undefined ? headers : { ...headers, 'content-type': 'application/json' },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      signal: AbortSignal.timeout(10_000),
+    }).catch((err: unknown) => {
+      // It may have landed before the answer was lost, so a retry could post it twice.
+      console.error(
+        `akapen: ${done}${path} did not answer (${err instanceof Error ? err.name : String(err)}); ` +
+          `check ${check} before sending it again`,
+      );
+      process.exit(1);
+    });
+    if (!res.ok) {
+      console.error(`akapen: ${done}${path} answered ${res.status}: ${await res.text()}`);
+      process.exit(1);
+    }
+    return res.json();
+  };
+  return { post, session };
+}
+
+/**
+ * Close the current round and open the next from the command line (#178), rather than
+ * with curl. Through the akapen serving the file, as reply and resolve are: the server
+ * holds the round in memory.
+ */
+if (positional[0] === 'rounds') {
+  const [, verb, file, ...extra] = positional;
+  if (verb !== 'cut')
+    fail(
+      `rounds: unknown subcommand ${verb === undefined ? '(missing)' : JSON.stringify(verb)}; try \`akapen rounds cut <file.md>\``,
+    );
+  if (!file || !existsSync(file)) fail(`no such file: ${file ?? '(missing)'}`);
+  if (extra.length > 0) fail(`rounds cut: unexpected ${JSON.stringify(extra.join(' '))}`);
+  const { post } = await reachInstance(file);
+  // A new round has no comments to show whether the cut landed; `akapen list` shows the round.
+  const answer = (await post('/api/rounds', '', '`akapen list`')) as { round?: { n?: number } };
+  const n = answer.round?.n;
+  // A refused or unanswered cut already exited 1 in `post`; this guards an answer of an
+  // unexpected shape, so a line saying it worked is never printed without a round.
+  if (typeof n !== 'number') {
+    console.error('akapen: /api/rounds answered without a round number; check `akapen list`');
+    process.exit(1);
+  }
+  console.log(`round ${n} is now current`);
+  process.exit(0);
+}
+
+/**
  * Reply to and resolve a comment from the command line (#130), rather than with curl.
  *
  * Through the akapen serving the file: the server keeps the current round's comments in
@@ -270,54 +350,18 @@ if (positional[0] === 'reply' || positional[0] === 'resolve') {
   // A reply to a resolved comment still goes; only the resolve is left out.
   const resolving = (verb === 'resolve' || args.resolve) && !alreadyResolved;
 
-  // `--token` as the server takes it, so an instance started with one can be reached.
-  const token = args.token !== undefined && args.token !== '' ? args.token : currentToken();
-  const target = resolve(file);
-  const serving = (await liveInstances({ token })).find((e) => e.record.file === target);
-  if (!serving) {
-    // Said as observed: one may be running on another token, and not have answered. Not
-    // written to the store instead (#258): a server that is running or starting holds the
-    // round in memory and writes it back, and two of these at once would race each other.
-    console.error(
-      `akapen: no akapen serving ${target} answered, so nothing was written; ` +
-        `start one (akapen ${JSON.stringify(file)}) and run this again`,
-    );
-    process.exit(1);
-  }
-  const base = `http://${reachableHost(serving.record.host)}:${serving.record.port}`;
-  const session = process.env['CLAUDE_CODE_SESSION_ID'] ?? '';
-  const headers: Record<string, string> = {
-    ...(token === null ? {} : { authorization: `Bearer ${token}` }),
-    ...(session === '' ? {} : { 'x-akapen-session': session }),
-  };
-  const post = async (path: string, done: string, body?: unknown): Promise<unknown> => {
-    const res = await fetch(`${base}${path}`, {
-      method: 'POST',
-      headers: body === undefined ? headers : { ...headers, 'content-type': 'application/json' },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      signal: AbortSignal.timeout(10_000),
-    }).catch((err: unknown) => {
-      // It may have landed before the answer was lost, so a retry could post it twice.
-      console.error(
-        `akapen: ${done}${path} did not answer (${err instanceof Error ? err.name : String(err)}); ` +
-          'check `akapen comments` before sending it again',
-      );
-      process.exit(1);
-    });
-    if (!res.ok) {
-      console.error(`akapen: ${done}${path} answered ${res.status}: ${await res.text()}`);
-      process.exit(1);
-    }
-    return res.json();
-  };
+  const { post, session } = await reachInstance(file);
   if (verb === 'reply') {
-    await post(`/api/comments/${encodeURIComponent(id)}/replies`, '', { body: text });
+    await post(`/api/comments/${encodeURIComponent(id)}/replies`, '', '`akapen comments`', {
+      body: text,
+    });
     console.log(`replied (filed as ${session === '' ? 'a person, no CLAUDE_CODE_SESSION_ID' : 'the agent'})`);
   }
   if (resolving) {
     const answer = (await post(
       `/api/comments/${encodeURIComponent(id)}/resolve`,
       verb === 'reply' ? 'replied, but ' : '',
+      '`akapen comments`',
     )) as {
       comment?: { resolved?: boolean };
     };
