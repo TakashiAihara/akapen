@@ -321,7 +321,17 @@ export function startServer(opts: ServeOptions) {
     }, 80);
   });
 
-  const app = new Hono();
+  /**
+   * `checkedSecret` is the secret this request was checked against, or null when nothing
+   * is checked. A handler only runs once it has matched, so there it is the secret the
+   * request was let in on. Handlers that hold on to it read it from here rather than
+   * asking `currentSecret()` again, which may have moved on since (#244).
+   *
+   * It is set past the Host and site checks, so a route registered ahead of the
+   * authentication middleware, or an early return added before the `set`, would read
+   * `undefined` here — and a stream comparing that with the current secret closes at once.
+   */
+  const app = new Hono<{ Variables: { checkedSecret: string | null } }>();
 
   const token = opts.token;
 
@@ -332,8 +342,10 @@ export function startServer(opts: ServeOptions) {
    * cookies and scripts holding the old one without waiting for a restart. Cached for a
    * moment because this is on the path of every request, including each asset.
    *
-   * A store that has become unreadable falls back to the startup value rather than
-   * locking everyone out: losing the file should not end a review in progress.
+   * A store that has become unreadable keeps the last value read from it rather than
+   * locking everyone out: a read that fails should not end a review in progress. Not the
+   * startup value: after a rotation it is revoked, and falling back to it would let the
+   * old token in again and close every stream opened since (#244).
    */
   let secretAt = 0;
   let secret = token;
@@ -342,7 +354,7 @@ export function startServer(opts: ServeOptions) {
     const now = Date.now();
     if (now - secretAt >= 1_000) {
       secretAt = now;
-      secret = readToken() ?? token;
+      secret = readToken() ?? secret;
     }
     return secret;
   };
@@ -433,6 +445,7 @@ export function startServer(opts: ServeOptions) {
       }
     }
     const active = currentSecret();
+    c.set('checkedSecret', active);
     if (active === null) return next();
 
     const cookie = getCookie(c, COOKIE);
@@ -721,14 +734,21 @@ export function startServer(opts: ServeOptions) {
     return c.json(payload);
   });
 
-  app.get('/events', () => {
+  app.get('/events', (c) => {
+    // Let in under this token. A rotation revokes it, and with the heartbeat keeping the
+    // stream open nothing else would, so the next frame closes the stream instead. Taken
+    // from the check that let the request in: reading the token again here could see a
+    // rotation that check did not, and a stream let in on the old token would then
+    // outlive it.
+    //
+    // No test pins this choice: telling it apart from a second `currentSecret()` needs
+    // the one-second cache to run out between the middleware and this line, inside one
+    // request, and the suite drives the server as a separate process (#244).
+    const openedUnder = c.get('checkedSecret');
     let send!: (frame: string) => void;
     const stream = new ReadableStream({
       start(controller) {
         const enc = new TextEncoder();
-        // Let in under this token. A rotation revokes it, and with the heartbeat keeping
-        // the stream open nothing else would, so the next frame closes the stream instead.
-        const openedUnder = currentSecret();
         send = (frame: string) => {
           try {
             if (currentSecret() !== openedUnder) {
