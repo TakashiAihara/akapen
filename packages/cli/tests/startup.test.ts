@@ -79,7 +79,7 @@ async function start(
   return { lines: out.split('\n'), stop, home, file };
 }
 
-/** Whether this host can bind an IPv6 socket, found by binding one rather than by guessing from the platform. */
+/** Whether `::1` can be bound here, found by binding it rather than by guessing from the platform. */
 const ipv6Bindable = await new Promise<boolean>((resolve) => {
   const probe = createServer();
   probe.once('error', () => resolve(false));
