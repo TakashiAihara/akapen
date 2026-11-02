@@ -316,10 +316,11 @@ export const INSTRUCTIONS = [
  * to reimplement. Nothing says so at run time — the events simply stop arriving.
  *
  * NOTE: that is why `packages/cli/package.json` pins the SDK to an exact version. A
- * release that starts answering `server/discover`, or negotiates a newer revision, would
- * switch every channel off without an error; the handshake test in `channel.test.ts` is
- * what a bump has to pass. REMOVE WHEN: Claude Code registers a channel on a connection
- * that negotiated a modern protocol revision.
+ * release that starts answering `server/discover`, or negotiates the modern revision
+ * (2026-07-28 or later), would switch every channel off without an error; the handshake
+ * tests in `channel.test.ts` are what a bump has to pass, and Dependabot raises it on its
+ * own pull request. REMOVE WHEN: Claude Code registers a channel on a connection that
+ * negotiated a modern protocol revision.
  */
 export async function runChannel(): Promise<void> {
   const sessionId = process.env['CLAUDE_CODE_SESSION_ID'] ?? '';
