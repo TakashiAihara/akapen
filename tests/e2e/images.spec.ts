@@ -57,12 +57,17 @@ test('shows a clicked image whole without enlarging it, and leaves a linked imag
     join(dir, 'huge.svg'),
     '<svg xmlns="http://www.w3.org/2000/svg" width="4000" height="100"><rect width="4000" height="100" fill="#c33"/></svg>',
   );
-  // Wider than the sheet as well, or the sheet would show it whole and it would not open
+  // Shrunk to the sheet's width and still taller than the window
   writeFileSync(
     join(dir, 'tall.svg'),
     '<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="8000"><rect width="1200" height="8000" fill="#3a3"/></svg>',
   );
-  // Only a viewBox: the browser gives it no size of its own beyond 300px wide at its ratio
+  // At its own size on the sheet, but taller than the window, so it cannot be seen whole
+  writeFileSync(
+    join(dir, 'narrow.svg'),
+    '<svg xmlns="http://www.w3.org/2000/svg" width="300" height="4000"><rect width="300" height="4000" fill="#39a"/></svg>',
+  );
+  // Only a viewBox: Chromium gives it no size of its own beyond 300px wide at its ratio
   writeFileSync(
     join(dir, 'viewbox.svg'),
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 200"><rect width="800" height="200" fill="#c63"/></svg>',
@@ -70,7 +75,7 @@ test('shows a clicked image whole without enlarging it, and leaves a linked imag
   // Four columns keep each cell narrower than 300px, so the images in them are shrunk
   writeFileSync(
     akapen.file,
-    '# Zoom\n\n| a | b | c | d |\n| --- | --- | --- | --- |\n| ![box](box.svg) | ![viewbox](viewbox.svg) | c | d |\n\n![huge](huge.svg)\n\n![tall](tall.svg)\n\n[![linked](huge.svg)](#elsewhere)\n',
+    '# Zoom\n\n| a | b | c | d |\n| --- | --- | --- | --- |\n| ![box](box.svg) | ![viewbox](viewbox.svg) | c | d |\n\n![huge](huge.svg)\n\n![tall](tall.svg)\n\n![narrow](narrow.svg)\n\n[![linked](huge.svg)](#elsewhere)\n',
   );
   expect((await request.post(`${akapen.url}/api/rounds`, { headers: AUTH })).ok()).toBe(true);
 
@@ -79,13 +84,13 @@ test('shows a clicked image whole without enlarging it, and leaves a linked imag
   const zoom = page.locator('#zoom');
 
   // Decoded, and neither shrunk nor blown up to the window: at its own size, which for an
-  // SVG with only a viewBox is what the browser makes of it
+  // SVG with only a viewBox is what Chromium makes of it
   for (const [alt, w, h] of [
     ['box', 300, 200],
     ['viewbox', 300, 75],
   ] as const) {
     const img = page.locator(`.body img[alt="${alt}"]`);
-    await expect(img).toHaveClass(/shrunk/);
+    await expect(img).toHaveClass(/zoomable/);
     expect((await img.boundingBox())!.width).toBeLessThan(w);
     await img.click();
     const copy = zoom.locator('img');
@@ -99,7 +104,12 @@ test('shows a clicked image whole without enlarging it, and leaves a linked imag
   }
 
   // One wider, or taller, than the window is fitted inside its content box, whole
-  for (const alt of ['huge', 'tall']) {
+  expect(
+    await page
+      .locator('.body img[alt="narrow"]')
+      .evaluate((i: HTMLImageElement) => [i.naturalWidth, i.clientWidth]),
+  ).toEqual([300, 300]);
+  for (const alt of ['huge', 'tall', 'narrow']) {
     await page.locator(`.body img[alt="${alt}"]`).click();
     const fit = await zoom.evaluate((d) => {
       const pad = parseFloat(getComputedStyle(d).paddingLeft);
@@ -216,7 +226,7 @@ test('opens the figure on the focused line with z, the same way a click does', a
 
   await page.goto(akapen.url);
   const zoom = page.locator('#zoom');
-  await expect(page.locator('.body img[alt="huge"]')).toHaveClass(/shrunk/);
+  await expect(page.locator('.body img[alt="huge"]')).toHaveClass(/zoomable/);
 
   // On a line with no figure the key does nothing
   await page.keyboard.press('j');
@@ -248,7 +258,7 @@ test('opens the figure on the focused line with z, the same way a click does', a
 /** The pointer the page shows over an element, read without moving the mouse onto it. */
 const cursor = (el: Locator) => el.evaluate((e) => getComputedStyle(e).cursor);
 
-test('leaves an image the sheet shows whole alone, deciding once it loads and again when the sheet narrows', async ({
+test('leaves an image the page shows whole alone, deciding once it loads and again when it or the window is resized', async ({
   page,
   akapen,
   request,
@@ -262,10 +272,17 @@ test('leaves an image the sheet shows whole alone, deciding once it loads and ag
     join(dir, 'huge.svg'),
     '<svg xmlns="http://www.w3.org/2000/svg" width="4000" height="100"><rect width="4000" height="100" fill="#c33"/></svg>',
   );
-  writeFileSync(akapen.file, '# Zoom\n\n![box](box.svg)\n\n![huge](huge.svg)\n');
+  writeFileSync(
+    join(dir, 'fixed.svg'),
+    '<svg xmlns="http://www.w3.org/2000/svg" width="4000" height="100"><rect width="4000" height="100" fill="#93c"/></svg>',
+  );
+  writeFileSync(
+    akapen.file,
+    '# Zoom\n\n![box](box.svg)\n\n![huge](huge.svg)\n\n![fixed](fixed.svg)\n\n![gone](gone.svg)\n',
+  );
   expect((await request.post(`${akapen.url}/api/rounds`, { headers: AUTH })).ok()).toBe(true);
 
-  // Both arrive only after the page has drawn them, so neither is decided on a size of 0
+  // They arrive only after the page has drawn them, so none is decided on a size of 0
   let release!: () => void;
   const held = new Promise<void>((r) => (release = r));
   await page.route('**/*.svg', async (route) => {
@@ -278,30 +295,54 @@ test('leaves an image the sheet shows whole alone, deciding once it loads and ag
   const zoom = page.locator('#zoom');
   const box = page.locator('.body img[alt="box"]');
   const huge = page.locator('.body img[alt="huge"]');
-  await expect(box).toBeAttached();
-  await expect(huge).toBeAttached();
-  expect(await huge.evaluate((i: HTMLImageElement) => i.complete)).toBe(false);
+  const fixed = page.locator('.body img[alt="fixed"]');
+  await expect(fixed).toBeAttached();
+  // A stylesheet that fixes its size: loading changes neither the image's size nor the
+  // page's, so nothing but the load itself can decide it
+  await page.addStyleTag({ content: '.body img[alt="fixed"] { width: 400px; height: 10px; }' });
+  expect(await fixed.evaluate((i: HTMLImageElement) => [i.complete, i.clientWidth, i.clientHeight])).toEqual([
+    false,
+    400,
+    10,
+  ]);
   release();
 
+  await expect.poll(() => cursor(fixed)).toBe('zoom-in');
   await expect.poll(() => cursor(huge)).toBe('zoom-in');
+
+  // One with no size of its own is never a figure, even when it is taller than the window
+  const gone = page.locator('.body img[alt="gone"]');
+  await page.addStyleTag({ content: '.body img[alt="gone"] { display: block; height: 2000px; }' });
+  await expect
+    .poll(() => gone.evaluate((i: HTMLImageElement) => [i.naturalWidth, i.clientHeight]))
+    .toEqual([0, 2000]);
+  // Past the frame in which a resize is reported, so a wrong decision would be in place
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  expect(await cursor(gone)).not.toBe('zoom-in');
   expect(await box.evaluate((i: HTMLImageElement) => [i.naturalWidth, i.clientWidth])).toEqual([300, 300]);
   expect(await cursor(box)).not.toBe('zoom-in');
 
   // Clicking it is clicking the line it is on, as with any text
   await box.click();
   await expect(zoom).toBeHidden();
-  await expect(page.locator('.row:has(img[alt="box"])')).toHaveClass(/focused|in-range/);
+  await expect(page.locator('.row:has(img[alt="box"])')).toHaveClass(/\bfocused\b/);
 
-  // A new round draws the page again with new images, which can be ready before the page
-  // has changed size at all, so they are decided as they load
+  // A new round draws the page again with new images, which are decided the same way
   await huge.evaluate((i) => i.setAttribute('data-old', ''));
-  writeFileSync(akapen.file, '# Zoon\n\n![box](box.svg)\n\n![huge](huge.svg)\n');
+  writeFileSync(akapen.file, '# Zoon\n\n![box](box.svg)\n\n![huge](huge.svg)\n\n![fixed](fixed.svg)\n');
   await page.locator('#nextRound').click();
   await expect(page.locator('.row.heading')).toContainText('Zoon');
   const redrawn = page.locator('.body img[alt="huge"]:not([data-old])');
   await expect(redrawn).toHaveCount(1);
-  await expect(redrawn).toHaveClass(/shrunk/);
-  await expect(box).not.toHaveClass(/shrunk/);
+  await expect(redrawn).toHaveClass(/zoomable/);
+  await expect(fixed).toHaveClass(/zoomable/);
+  await expect(box).not.toHaveClass(/zoomable/);
+
+  // A window lower than the image cannot show it whole, and then it is a figure
+  await page.setViewportSize({ width: 1440, height: 150 });
+  await expect.poll(() => cursor(box)).toBe('zoom-in');
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await expect.poll(() => cursor(box)).not.toBe('zoom-in');
 
   // A sheet narrower than the image shrinks it, and then it is a figure
   await page.setViewportSize({ width: 280, height: 900 });
@@ -312,12 +353,14 @@ test('leaves an image the sheet shows whole alone, deciding once it loads and ag
   await expect(zoom).toBeHidden();
 
   // A sheet that cuts only its height or only its width, as a custom stylesheet can,
-  // shrinks it all the same
+  // shrinks it all the same. The last one changes only the image's width, so the page
+  // stays the same size.
   await page.setViewportSize({ width: 1440, height: 900 });
   await expect.poll(() => cursor(box)).not.toBe('zoom-in');
   for (const [w, h] of [
     [300, 100],
     [100, 250],
+    [100, 200],
   ]) {
     const sheet = await page.addStyleTag({
       content: `.body img[alt="box"] { width: ${w}px; height: ${h}px; object-fit: contain; }`,
@@ -352,7 +395,7 @@ test('opens the icon of an architecture diagram as the whole diagram', async ({ 
   expect(await copy.locator('svg').count()).toBe(await icons.count());
 });
 
-test('closes an open panel when a figure is clicked, as any click on the document does', async ({
+test('closes an open panel when a figure opens over it, by a click or by z', async ({
   page,
   akapen,
   request,
@@ -370,19 +413,26 @@ test('closes an open panel when a figure is clicked, as any click on the documen
     await page.goto(akapen.url);
     const zoom = page.locator('#zoom');
     const huge = page.locator('.body img[alt="huge"]');
-    await expect(huge).toHaveClass(/shrunk/);
+    await expect(huge).toHaveClass(/zoomable/);
+
+    // The image's line, for z
+    await page.keyboard.press('j');
+    await page.keyboard.press('j');
+    await expect(page.locator('.row.focused img[alt="huge"]')).toHaveCount(1);
 
     for (const [toggle, panel] of [
       ['#outlineToggle', '#outline'],
       ['#peersToggle', '#peers'],
     ] as const) {
-      await page.locator(toggle).click();
-      await expect(page.locator(panel)).toBeVisible();
-      await huge.click();
-      await expect(zoom.locator('img')).toBeVisible();
-      await expect(page.locator(panel)).toBeHidden();
-      await page.keyboard.press('Escape');
-      await expect(zoom).toBeHidden();
+      for (const open of [() => huge.click(), () => page.keyboard.press('z')]) {
+        await page.locator(toggle).click();
+        await expect(page.locator(panel)).toBeVisible();
+        await open();
+        await expect(zoom.locator('img')).toBeVisible();
+        await expect(page.locator(panel)).toBeHidden();
+        await page.keyboard.press('Escape');
+        await expect(zoom).toBeHidden();
+      }
     }
   } finally {
     await peer.stop();

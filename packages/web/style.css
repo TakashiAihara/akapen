@@ -702,7 +702,7 @@ body.rail-overlay .marker { display: inline-flex; align-items: center; justify-c
 .row:has(.table-separator) { display: none; }
 
 .mermaid-block { border: 1px solid var(--ak-border); border-radius: 8px; padding: 12px; margin: 6px 0; text-align: center; }
-.body img.shrunk:not(a img), pre.mermaid > svg { cursor: zoom-in; }
+.body img.zoomable:not(a img), pre.mermaid > svg { cursor: zoom-in; }
 
 /* The whole window less a 16px margin each side, so the page behind still shows it is an overlay */
 .zoom { container-type: size; width: calc(100vw - 32px); height: calc(100vh - 32px); max-width: none; max-height: none; padding: 16px; overflow: auto; border: 1px solid var(--ak-border); border-radius: 8px; background: var(--ak-bg); cursor: zoom-out; }
