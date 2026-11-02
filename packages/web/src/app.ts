@@ -174,7 +174,7 @@ nextRoundBtn.addEventListener('click', async () => {
     // being written or is empty right now, and clicking again once it settles works.
     if (!res.ok) throw await failureOf(res);
     const payload = await decode(res, DocPayloadSchema);
-    // A new round means a new document, so swapping it wholesale is fine — a person asked for it
+    // The current round, new or one this screen is behind on, so swapping it wholesale is fine — a person asked for it
     draft = null;
     sel = null;
     focusLine = null;

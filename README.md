@@ -399,7 +399,7 @@ Resolving and replying work on comments from every round as well. Freezing them 
 
 A round is a frozen snapshot of the file contents. What you see is the current round's snapshot, not the live file, and comments attach to lines inside that snapshot.
 
-A live change never swaps the document. It only says "the document changed N times", and moving on happens when a person presses "End this round", or an agent runs `akapen rounds cut`. An agent's intermediate save never cuts a round. A cut on a file that matches the current round's snapshot opens nothing and answers with that round, so two people pressing the button a moment apart end up on one round, not two.
+A live change never swaps the document. It only says "the document changed N times", and moving on happens when a person presses "End this round", or an agent runs `akapen rounds cut`. An agent's intermediate save never cuts a round. A cut on a file that matches the current round's snapshot opens nothing and answers with that round, so two people pressing the button a moment apart end up on one round, not two. A press that lands while another cut is still in progress is refused instead, and its screen learns of the new round as any other screen does.
 
 The same rule applies to the whole screen: **SSE (`/events`) is a notification channel, not a rendering channel.** All it carries is that the document changed. The document DOM is rebuilt only when a person cuts a round or opens history. A round cut by an agent with `akapen rounds cut` does not swap a screen that is already open: it shows that the round moved on, and the new round appears when the person clicks it or reloads. Adding or resolving a comment updates the rail and the per-row marks alone.
 

@@ -730,9 +730,9 @@ describe('cutting a round while the file is being written', () => {
 
   it('opens one round when two screens cut at the same moment, not one each', async () => {
     // Both screens show the banner, so both people press the button. Waiting for the file
-    // to settle hands control back mid-request, and without a guard each request opened a
-    // round: two identical documents, the first closed before anything could be written
-    // on it, and the screen that opened it already behind.
+    // to settle hands control back mid-request, and the second press lands inside it. The
+    // check for an unchanged file would fold it into one round on its own, so the status
+    // is what pins the guard: the second press is refused while the first is in progress.
     writeFileSync(work, `${SOURCE}\nsomething the agent added\n`);
     const [a, b] = await Promise.all([post('/api/rounds'), post('/api/rounds')]);
     const results = [a.status, b.status].toSorted();
@@ -755,6 +755,9 @@ describe('cutting a round while the file is being written', () => {
       const first = await post('/api/rounds');
       expect(first.status).toBe(200);
       expect(v.parse(DocPayloadSchema, await first.json()).round.n).toBe(2);
+      // Written on the round between the two, so a fold that emptied it would show.
+      const written = await post('/api/comments', { startLine: 5, endLine: 5, body: 'on round 2' });
+      const { comment } = v.parse(CommentsPayloadSchema, await written.json());
       // Awaited one after the other, so the second starts only once the first is over.
       const second = await post('/api/rounds');
       expect(second.status).toBe(200);
@@ -762,6 +765,7 @@ describe('cutting a round while the file is being written', () => {
       const answer = v.parse(DocPayloadSchema, await second.json());
       expect(answer.round.n).toBe(2);
       expect(answer.round.total).toBe(2);
+      expect(answer.comments.map((c) => c.id)).toEqual([comment.id]);
 
       expect(frozen(join(sandbox, 'home'))).toHaveLength(2); // the first round, and one new one
       const rounds = (await (await fetch(`${base}/api/rounds`)).json()) as { rounds: unknown[] };

@@ -297,7 +297,7 @@ if (positional[0] === 'rounds') {
   if (!file || !existsSync(file)) fail(`no such file: ${file ?? '(missing)'}`);
   if (extra.length > 0) fail(`rounds cut: unexpected ${JSON.stringify(extra.join(' '))}`);
   const { post } = await reachInstance(file);
-  // A new round has no comments to show whether the cut landed; `akapen list` shows the round.
+  // The round's comments cannot show whether the cut landed; `akapen list` shows the round.
   const answer = (await post('/api/rounds', '', '`akapen list`')) as { round?: { n?: number } };
   const n = answer.round?.n;
   // A refused or unanswered cut already exited 1 in `post`; this guards an answer of an
