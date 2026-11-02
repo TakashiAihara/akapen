@@ -150,15 +150,24 @@ test('spaces a list, a code block or a table from a list that follows it (#242)'
   expect(kinds[1]).toBeCloseTo(paraToPara, 0);
   expect(kinds[0]).toBeLessThan(paraToPara - 3);
   expect(kinds[2]).toBeLessThan(paraToPara - 3);
-  const same = await gapsOf(page, '- a\n\n1. b\n', akapen, request);
+  // Another bullet character starts another list of the same kind.
+  const same = await gapsOf(page, '- a\n\n* b\n', akapen, request);
+  expect(same).toHaveLength(1);
   expect(same[0]).toBeCloseTo(paraToPara, 0);
+  // A list that ends in an empty item ends after that item, not before it.
+  const empty = await gapsOf(page, '- a\n-\n\n1. x\n', akapen, request);
+  expect(empty).toHaveLength(2);
+  expect(empty[0]).toBeLessThan(paraToPara - 3);
+  expect(empty[1]).toBeCloseTo(paraToPara, 0);
   // A nested list followed by its outer list's next item is still one list.
   const nested = await gapsOf(page, '- a\n  - b\n- c\n', akapen, request);
+  expect(nested).toHaveLength(2);
   expect(Math.max(...nested)).toBeLessThan(paraToPara - 3);
   // At the top level a block followed by a list: a table, one with only its header, a fence
   // and an indented code block.
   for (const block of ['| a |\n|---|\n| 1 |\n', '| a |\n|---|\n', '```sh\nmake\n```\n', '    make\n']) {
     const gaps = await gapsOf(page, `${block}\n- b\n`, akapen, request);
+    expect(gaps, block).toHaveLength(block.split('\n').length - 1);
     // The hidden delimiter row adds its zero box between the header and what follows.
     const out = block === '| a |\n|---|\n' ? gaps[0]! + gaps[1]! : gaps.at(-1)!;
     expect(out, block).toBeCloseTo(paraToPara, 0);

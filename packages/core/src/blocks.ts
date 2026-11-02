@@ -142,7 +142,21 @@ function highlight(code: string, lang: string): string {
  */
 type Container = { start: number; end: number; depth: number; quoted: boolean };
 
-type Ctx = { lines: string[]; out: Block[]; depth: number; quoted: boolean; containers: Container[] };
+/**
+ * The last line (1-based) of a code block, a table or a list (`mark`), or of a list item,
+ * which its list may go on after (`mark` false). Placed on rows once every row, the gap
+ * rows included, is in (placeEnds).
+ */
+type End = { line: number; mark: boolean };
+
+type Ctx = {
+  lines: string[];
+  out: Block[];
+  depth: number;
+  quoted: boolean;
+  containers: Container[];
+  ends: End[];
+};
 
 function rawRange(lines: string[], startLine: number, endLine: number): string {
   return lines.slice(startLine - 1, endLine).join('\n');
@@ -157,28 +171,49 @@ function push(ctx: Ctx, b: Omit<Block, 'text' | 'depth' | 'quoted'> & Partial<Pi
   } as Block);
 }
 
-/** The row of `rows` that ends last on the page. A table's delimiter row is never shown. */
-function lastShown(rows: Block[]): Block | undefined {
-  return rows
-    .filter((b) => !b.flags.includes('table-separator'))
-    .reduce<Block | undefined>(
-      (end, b) => (end === undefined || b.endLine > end.endLine ? b : end),
-      undefined,
-    );
+function endAt(ctx: Ctx, token: Token, mark: boolean): void {
+  const [, e] = token.map ?? [0, 0];
+  ctx.ends.push({ line: e, mark });
 }
 
 /**
- * Mark where a code block, a table or a list ends, on the last row the page shows, so the
- * page can leave a paragraph's space after it (#92, #227). The parser decides it rather
- * than the page reading row kinds: the kinds cannot tell a list's next item from a new
- * list, and the last row of a table can be its hidden delimiter row (#242). The mark is
- * taken off again where the block ends an item that its list continues after (walkList),
- * and on the last row of the document (buildDoc), where nothing follows to space from.
+ * The last row the page shows that starts at or before `line`: a table's delimiter row is
+ * hidden. It is inside the block that ends there, as no lower bound checks, because the
+ * first line of every block and item recorded holds a row of its own (its marker, fence,
+ * header or code).
  */
-function markEnd(ctx: Ctx, from: number): void {
-  const last = lastShown(ctx.out.slice(from));
-  // A nested list that ends the outer one has marked this row already.
-  if (last && !last.flags.includes('block-end')) last.flags.push('block-end');
+function lastShownBy(rows: Block[], line: number): Block | undefined {
+  let lo = 0;
+  let hi = rows.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (rows[mid]!.startLine <= line) lo = mid + 1;
+    else hi = mid;
+  }
+  for (let i = lo - 1; i >= 0; i--) {
+    if (!rows[i]!.flags.includes('table-separator')) return rows[i];
+  }
+  return undefined;
+}
+
+/**
+ * Mark the row a code block, a table or a list ends on with `block-end`, so the page can
+ * leave a paragraph's space after it (#92, #227). The parser decides it rather than the
+ * page reading row kinds: the kinds cannot tell a list's next item from a new list, and
+ * the last row of a table can be its hidden delimiter row (#242). The mark goes on the last
+ * row shown, which for a list ending in an empty item is that item's gap row.
+ *
+ * In recorded order, so what is inside comes first: every item takes the mark off the end
+ * of what it holds, as the next item follows tightly, and the list then puts it back on
+ * its own end. The document's last row has nothing after it to space from.
+ */
+function placeEnds(rows: Block[], ends: End[], lineCount: number): void {
+  for (const { line, mark } of [...ends, { line: lineCount, mark: false }]) {
+    const row = lastShownBy(rows, line);
+    if (!row) continue;
+    row.flags = row.flags.filter((f) => f !== 'block-end');
+    if (mark) row.flags.push('block-end');
+  }
 }
 
 function findClose(tokens: Token[], openIdx: number): number {
@@ -223,7 +258,6 @@ function walkFence(token: Token, ctx: Ctx): void {
     return;
   }
 
-  const first = ctx.out.length;
   // An empty fence has no lines. Splitting '' gives one, which took the closing fence's
   // line as content and left the block without its last row (#262) — or, unclosed at the
   // end of the file, made a row for a line that does not exist.
@@ -257,13 +291,13 @@ function walkFence(token: Token, ctx: Ctx): void {
       flags: ['code-last'],
     });
   }
-  markEnd(ctx, first);
+  // Not a mermaid block, returned above: it keeps a margin of its own.
+  endAt(ctx, token, true);
 }
 
 /** Split a table into one block per row. `table-layout: fixed` keeps columns aligned across rows. */
 function walkTable(tokens: Token[], openIdx: number, ctx: Ctx): number {
   const closeIdx = findClose(tokens, openIdx);
-  const first = ctx.out.length;
   let colCount = 0;
   for (let i = openIdx; i <= closeIdx; i++) {
     const t = tokens[i]!;
@@ -311,7 +345,7 @@ function walkTable(tokens: Token[], openIdx: number, ctx: Ctx): number {
       i = trClose;
     }
   }
-  markEnd(ctx, first);
+  endAt(ctx, tokens[openIdx]!, true);
   return closeIdx;
 }
 
@@ -320,13 +354,11 @@ function walkList(tokens: Token[], openIdx: number, ctx: Ctx): number {
   const closeIdx = findClose(tokens, openIdx);
   const ordered = open.type === 'ordered_list_open';
   let index = Number(open.attrGet('start') ?? 1);
-  const first = ctx.out.length;
 
   for (let i = openIdx + 1; i < closeIdx; i++) {
     const t = tokens[i]!;
     if (t.type !== 'list_item_open') continue;
     const itemClose = findClose(tokens, i);
-    const itemFirst = ctx.out.length;
 
     // The item's own first line (the inline of its first paragraph) becomes a block
     let restStart = i + 1;
@@ -368,8 +400,7 @@ function walkList(tokens: Token[], openIdx: number, ctx: Ctx): number {
 
     // A block that ends an item ends the item, not the list: the next item follows as
     // tightly as one item follows another. The last item's end is the list's, marked below.
-    const itemEnd = lastShown(ctx.out.slice(itemFirst));
-    if (itemEnd) itemEnd.flags = itemEnd.flags.filter((f) => f !== 'block-end');
+    endAt(ctx, t, false);
 
     index++;
     i = itemClose;
@@ -378,7 +409,7 @@ function walkList(tokens: Token[], openIdx: number, ctx: Ctx): number {
   // Whatever kind the list's last row is (an item, or code or a table inside one), so the
   // page spaces the way out of the list as it spaces the way in (#92). A list that follows
   // it is another list, not more of this one, and is spaced from it too (#242).
-  markEnd(ctx, first);
+  endAt(ctx, open, true);
   return closeIdx;
 }
 
@@ -445,7 +476,6 @@ function walk(tokens: Token[], ctx: Ctx): void {
         break;
       case 'code_block': {
         const [s, e] = t.map ?? [0, 0];
-        const first = ctx.out.length;
         for (let ln = s + 1; ln <= e; ln++) {
           push(ctx, {
             startLine: ln,
@@ -455,7 +485,7 @@ function walk(tokens: Token[], ctx: Ctx): void {
             flags: [],
           });
         }
-        markEnd(ctx, first);
+        endAt(ctx, t, true);
         break;
       }
       case 'hr': {
@@ -483,7 +513,7 @@ export function buildDoc(path: string, source: string): Doc {
     body = blanked.join('\n');
   }
 
-  const ctx: Ctx = { lines, out, depth: 0, quoted: false, containers: [] };
+  const ctx: Ctx = { lines, out, depth: 0, quoted: false, containers: [], ends: [] };
   walk(md.parse(body, {}), ctx);
 
   // Pick up lines that produce no token (a bare "> " inside a quote, for example).
@@ -518,7 +548,6 @@ export function buildDoc(path: string, source: string): Doc {
   }
 
   out.sort((a, b) => a.startLine - b.startLine || a.endLine - b.endLine);
-  const end = lastShown(out);
-  if (end) end.flags = end.flags.filter((f) => f !== 'block-end');
+  placeEnds(out, ctx.ends, lines.length);
   return { path, blocks: out, lineCount: lines.length };
 }

@@ -261,6 +261,13 @@ describe('block-end', () => {
     expect(endsOf('- a\n\n1. b\n')).toEqual([1]);
     expect(endsOf('- a\n- b\n\n1. c\n2. d\n')).toEqual([2]);
     expect(endsOf('1. a\n\n- b\n')).toEqual([1]);
+    // Another bullet character starts another list of the same kind.
+    expect(endsOf('- a\n\n* b\n')).toEqual([1]);
+  });
+
+  it('marks a list that ends in an empty item on that item, its gap row', () => {
+    expect(endsOf('- a\n-\n\n1. x\n')).toEqual([2]);
+    expect(endsOf('- a\n-\n- c\n\nAfter.\n')).toEqual([3]);
   });
 
   it('marks the last row of a code block or a table, whatever list follows (#227, #242)', () => {
