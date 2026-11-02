@@ -9,7 +9,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { isAbsolute, join } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 import { test as base } from '@playwright/test';
 
 const FIXTURE_MD = join(import.meta.dirname, 'fixture.md');
@@ -39,18 +39,40 @@ export type Akapen = {
   append: (text: string) => void;
 };
 
-async function waitUntilServing(url: string): Promise<void> {
+/**
+ * Until the akapen this test started answers for the file it was started on.
+ *
+ * A 200 alone is not enough. The port comes from a counter every run starts at 4400, and
+ * every run uses the same token, so a port held by another e2e run on the same host answers
+ * just as well — while the process started here has already exited on EADDRINUSE. The test
+ * would then measure the other run's document (#277). The path is what tells them apart,
+ * and an exit is what says why it never will.
+ */
+async function waitUntilServing(url: string, file: string, proc: ChildProcess): Promise<void> {
+  const want = resolve(file);
   const deadline = Date.now() + 20_000;
+  let answered = '';
   for (;;) {
+    if (proc.exitCode !== null || proc.signalCode !== null) {
+      throw new Error(
+        `akapen exited before serving ${want} at ${url} (code ${proc.exitCode}, signal ${proc.signalCode})`,
+      );
+    }
     try {
       // Each attempt is given its own deadline. A server that accepts the connection and
       // then never answers would otherwise hold this open past the loop's deadline, and
       // "did not start" would arrive as a test timeout with nothing said about why.
-      if ((await fetch(`${url}/api/doc`, { headers: AUTH, signal: AbortSignal.timeout(2_000) })).ok) return;
+      const res = await fetch(`${url}/api/doc`, { headers: AUTH, signal: AbortSignal.timeout(2_000) });
+      if (res.ok) {
+        answered = ((await res.json()) as { doc: { path: string } }).doc.path;
+        if (answered === want) return;
+      }
     } catch {
       /* not up yet */
     }
-    if (Date.now() > deadline) throw new Error(`akapen did not start: ${url}`);
+    if (Date.now() > deadline) {
+      throw new Error(`akapen did not start: ${url}${answered ? ` (serving ${answered}, not ${want})` : ''}`);
+    }
     await new Promise((r) => setTimeout(r, 150));
   }
 }
@@ -96,7 +118,7 @@ export async function startPeer(
   };
 
   try {
-    await waitUntilServing(`http://127.0.0.1:${port}`);
+    await waitUntilServing(`http://127.0.0.1:${port}`, file, proc);
   } catch (err) {
     // The caller never receives a handle when this throws, so nothing else can stop it
     await stop();
@@ -125,7 +147,7 @@ export const test = base.extend<{ akapen: Akapen }>({
     // A server that never comes up, or a cookie that will not seed, would otherwise leave
     // a bun process holding the port and a sandbox on disk for the rest of the run.
     try {
-      await waitUntilServing(url);
+      await waitUntilServing(url, file, proc);
 
       // What a browser holds after one visit to the printed URL. Seeding it here rather
       // than navigating to `?token=` first keeps every test's opening navigation the real
