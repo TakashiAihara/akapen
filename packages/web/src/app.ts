@@ -1090,10 +1090,28 @@ const zoomEl = must<HTMLDialogElement>('zoom');
 // to the window instead is not enough: a 20-node LR chart only grows from 0.2x to 0.3x.
 // So a diagram's copy is shown at its own size and scrolls. An image is fitted to the
 // window instead and never enlarged: at its own size a photo or a retina screenshot opens
-// on its top-left corner.
+// on its top-left corner. So an image the sheet already shows whole has nothing to gain
+// and is not a figure at all.
 
-/** What can be enlarged: an image not inside a link, and a diagram's own svg (not an icon svg some diagram types nest inside it). */
-const FIGURE = '.body img:not(a img), pre.mermaid > svg';
+/** What can be enlarged: a shrunk image not inside a link, and a diagram's own svg (not an icon svg some diagram types nest inside it). */
+const FIGURE = '.body img.shrunk:not(a img), pre.mermaid > svg';
+
+/**
+ * Whether the sheet shows an image smaller than its own size. Decided once it has loaded
+ * (before that its own size is 0) and again whenever the sheet changes size, so the
+ * cursor and what a click does always agree.
+ */
+function markShrunk(img: HTMLImageElement) {
+  img.classList.toggle('shrunk', img.naturalWidth > img.clientWidth || img.naturalHeight > img.clientHeight);
+}
+// load does not bubble, so it is caught on the way down
+docEl.addEventListener(
+  'load',
+  (e) => {
+    if (e.target instanceof HTMLImageElement) markShrunk(e.target);
+  },
+  true,
+);
 
 /** The mouse and the `figure.zoom` key both come here, so the two cannot diverge. */
 function openZoom(fig: Element) {
@@ -1105,6 +1123,13 @@ function openZoom(fig: Element) {
   if (box?.width) {
     copy.setAttribute('width', String(box.width));
     copy.setAttribute('height', String(box.height));
+  }
+  // An SVG with only a viewBox has no size of its own, so the copy would stretch to the
+  // window. Its own size is what the browser makes of it (300px wide at the viewBox's
+  // ratio), and the stylesheet caps the copy there as it caps any other image.
+  if (fig instanceof HTMLImageElement && copy instanceof HTMLImageElement) {
+    copy.style.setProperty('--own-w', `${fig.naturalWidth}px`);
+    copy.style.setProperty('--own-ratio', String(fig.naturalWidth / fig.naturalHeight));
   }
   zoomEl.replaceChildren(copy);
   zoomEl.showModal();
@@ -1128,6 +1153,10 @@ docEl.addEventListener(
     const fig = at?.closest(FIGURE);
     if (!fig || at?.closest('a')) return;
     e.stopPropagation();
+    // Stopping the click also keeps it from the document-wide handlers that close a panel
+    // on a click outside it, and this is one
+    closeOutline();
+    closePeers();
     openZoom(fig);
   },
   true,
@@ -1140,8 +1169,12 @@ zoomEl.addEventListener('click', () => zoomEl.close());
 zoomEl.addEventListener('keydown', (e) => e.stopPropagation());
 zoomEl.addEventListener('close', () => zoomEl.replaceChildren());
 
-// Realign whenever the document height changes (images, fonts, wrapping width)
-new ResizeObserver(() => layoutRail()).observe(docEl);
+// Realign whenever the document height changes (images, fonts, wrapping width). A change
+// of width is also what turns an image shrunk or whole.
+new ResizeObserver(() => {
+  layoutRail();
+  for (const img of docEl.querySelectorAll<HTMLImageElement>('.body img')) markShrunk(img);
+}).observe(docEl);
 railOverlayQuery.addEventListener('change', () => {
   syncRailMode();
   layoutRail();
