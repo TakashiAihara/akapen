@@ -237,7 +237,7 @@ if (positional[0] === 'list') {
  * and this exits 1.
  */
 async function reachInstance(file: string): Promise<{
-  post: (path: string, done: string, body?: unknown) => Promise<unknown>;
+  post: (path: string, done: string, check: string, body?: unknown) => Promise<unknown>;
   session: string;
 }> {
   const token = args.token !== undefined && args.token !== '' ? args.token : currentToken();
@@ -259,7 +259,7 @@ async function reachInstance(file: string): Promise<{
     ...(token === null ? {} : { authorization: `Bearer ${token}` }),
     ...(session === '' ? {} : { 'x-akapen-session': session }),
   };
-  const post = async (path: string, done: string, body?: unknown): Promise<unknown> => {
+  const post = async (path: string, done: string, check: string, body?: unknown): Promise<unknown> => {
     const res = await fetch(`${base}${path}`, {
       method: 'POST',
       headers: body === undefined ? headers : { ...headers, 'content-type': 'application/json' },
@@ -269,7 +269,7 @@ async function reachInstance(file: string): Promise<{
       // It may have landed before the answer was lost, so a retry could post it twice.
       console.error(
         `akapen: ${done}${path} did not answer (${err instanceof Error ? err.name : String(err)}); ` +
-          'check `akapen comments` before sending it again',
+          `check ${check} before sending it again`,
       );
       process.exit(1);
     });
@@ -285,8 +285,7 @@ async function reachInstance(file: string): Promise<{
 /**
  * Close the current round and open the next from the command line (#178), rather than
  * with curl. Through the akapen serving the file, as reply and resolve are: the server
- * holds the round in memory. The answer is the new document, and its round is what is
- * printed, so a refused or unanswered cut is an exit 1 and never a line saying it worked.
+ * holds the round in memory.
  */
 if (positional[0] === 'rounds') {
   const [, verb, file, ...extra] = positional;
@@ -297,8 +296,11 @@ if (positional[0] === 'rounds') {
   if (!file || !existsSync(file)) fail(`no such file: ${file ?? '(missing)'}`);
   if (extra.length > 0) fail(`rounds cut: unexpected ${JSON.stringify(extra.join(' '))}`);
   const { post } = await reachInstance(file);
-  const answer = (await post('/api/rounds', '')) as { round?: { n?: number } };
+  // A new round has no comments to show whether the cut landed; `akapen list` shows the round.
+  const answer = (await post('/api/rounds', '', '`akapen list`')) as { round?: { n?: number } };
   const n = answer.round?.n;
+  // The answer is the new document, and its round is what is printed, so a refused or
+  // unanswered cut is an exit 1 and never a line saying it worked.
   if (typeof n !== 'number') {
     console.error('akapen: /api/rounds answered without a round number; check `akapen list`');
     process.exit(1);
@@ -350,13 +352,16 @@ if (positional[0] === 'reply' || positional[0] === 'resolve') {
 
   const { post, session } = await reachInstance(file);
   if (verb === 'reply') {
-    await post(`/api/comments/${encodeURIComponent(id)}/replies`, '', { body: text });
+    await post(`/api/comments/${encodeURIComponent(id)}/replies`, '', '`akapen comments`', {
+      body: text,
+    });
     console.log(`replied (filed as ${session === '' ? 'a person, no CLAUDE_CODE_SESSION_ID' : 'the agent'})`);
   }
   if (resolving) {
     const answer = (await post(
       `/api/comments/${encodeURIComponent(id)}/resolve`,
       verb === 'reply' ? 'replied, but ' : '',
+      '`akapen comments`',
     )) as {
       comment?: { resolved?: boolean };
     };

@@ -453,12 +453,22 @@ describe('akapen reply and resolve', () => {
     expect(cut.status).toBe(0);
     expect(cut.stdout.trim()).toBe('round 2 is now current');
     expect(await current()).toBe(2);
-    expect(cli(home, ['rounds', 'cut', file]).stdout.trim()).toBe('round 3 is now current');
+    const second = cli(home, ['rounds', 'cut', file]);
+    expect(second.status).toBe(0);
+    expect(second.stdout.trim()).toBe('round 3 is now current');
     expect(await current()).toBe(3);
 
     const misspelt = cli(home, ['rounds', 'cutt', file]);
     expect(misspelt.status).toBe(1);
     expect(misspelt.stderr).toContain('unknown subcommand "cutt"');
+    expect(await current()).toBe(3);
+
+    const missing = cli(home, ['rounds', 'cut', `${file}.absent`]);
+    expect(missing.status).toBe(1);
+    expect(missing.stderr).toContain('no such file');
+    const noFile = cli(home, ['rounds', 'cut']);
+    expect(noFile.status).toBe(1);
+    expect(noFile.stderr).toContain('no such file: (missing)');
     expect(await current()).toBe(3);
 
     const extra = cli(home, ['rounds', 'cut', file, 'again']);
@@ -478,6 +488,30 @@ describe('akapen reply and resolve', () => {
     const nobody = cli(home, ['rounds', 'cut', file]);
     expect(nobody.status).toBe(1);
     expect(nobody.stderr).toContain('answered, so nothing was written; start one (akapen');
+  }, 60_000);
+
+  it('cuts a round on an akapen that requires a token (#178)', async () => {
+    const pinned = 'pinned-for-the-cut-test';
+    const { lines, home, file } = await start(['--token', pinned]);
+    const url = new URL(urlsIn(lines)[0]!).origin;
+    const current = async () =>
+      (
+        (await (
+          await fetch(`${url}/api/rounds`, { headers: { authorization: `Bearer ${pinned}` } })
+        ).json()) as {
+          current: number;
+        }
+      ).current;
+    expect(await current()).toBe(1);
+
+    const without = cli(home, ['rounds', 'cut', file]);
+    expect(without.status).toBe(1);
+    expect(await current()).toBe(1);
+
+    const given = cli(home, ['rounds', 'cut', file, '--token', pinned]);
+    expect(given.status).toBe(0);
+    expect(given.stdout.trim()).toBe('round 2 is now current');
+    expect(await current()).toBe(2);
   }, 60_000);
 
   it('says who spoke last on the thread (#249)', async () => {
