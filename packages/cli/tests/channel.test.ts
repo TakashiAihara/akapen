@@ -50,13 +50,17 @@ const comment = (id: string, over: Partial<RoundComment> = {}): RoundComment => 
   ...over,
 });
 
-const reply = (id: string) => ({
+const reply = (id: string, createdAt = '2026-09-18T00:00:00.000Z') => ({
   id,
   body: `reply ${id}`,
   author: 'root',
   authorKind: 'human' as const,
-  createdAt: '2026-09-18T00:00:00.000Z',
+  createdAt,
 });
+
+/** When the fixtures' akapen started: after everything `comment` and `reply` write by default. */
+const STARTED = '2026-09-18T00:00:05.000Z';
+const at = (iso: string): number => Date.parse(iso);
 
 describe('filesForSession', () => {
   it("takes the documents this session started, and nobody else's", () => {
@@ -164,9 +168,104 @@ describe('newEvents', () => {
   });
 });
 
+describe('newEvents on first sight, seeded from when the akapen started (#185)', () => {
+  const since = at(STARTED);
+
+  it('pushes what was written after the start and seeds what was written before it', () => {
+    const before = comment('old', { createdAt: '2026-09-18T00:00:04.999Z' });
+    const after = comment('new', { createdAt: '2026-09-18T00:00:06.000Z' });
+    const { events, known } = newEvents('/n/a.md', [before, after], undefined, undefined, since);
+    expect(events.map((e) => e.meta['comment_id'])).toEqual(['new']);
+    // Left out of the seed, so it becomes known only once it has been delivered.
+    expect([...known]).toEqual(['old']);
+  });
+
+  it('counts a comment written in the same millisecond the akapen started as new', () => {
+    const { events } = newEvents(
+      '/n/a.md',
+      [comment('c1', { createdAt: STARTED })],
+      undefined,
+      undefined,
+      since,
+    );
+    expect(events.map((e) => e.meta['comment_id'])).toEqual(['c1']);
+  });
+
+  it('pushes a reply written after the start on a comment written before it', () => {
+    const c = comment('c1', { replies: [reply('r0'), reply('r1', '2026-09-18T00:00:07.000Z')] });
+    const { events, known } = newEvents('/n/a.md', [c], undefined, undefined, since);
+    expect(events.map((e) => e.meta['reply_id'])).toEqual(['r1']);
+    expect([...known]).toEqual(['c1', 'c1/r0']);
+  });
+
+  it("does not push this session's own reply on first sight either", () => {
+    const mine = { ...reply('mine', '2026-09-18T00:00:07.000Z'), sessionId: 'S1' };
+    const { events } = newEvents('/n/a.md', [comment('c1', { replies: [mine] })], undefined, 'S1', since);
+    expect(events).toEqual([]);
+  });
+
+  it('takes a comment whose time does not parse as history', () => {
+    const { events, known } = newEvents(
+      '/n/a.md',
+      [comment('c1', { createdAt: 'soon' })],
+      undefined,
+      undefined,
+      since,
+    );
+    expect(events).toEqual([]);
+    expect([...known]).toEqual(['c1']);
+  });
+});
+
+describe('the order a batch is pushed in (#185)', () => {
+  it('is the order the comments were written, not line order', () => {
+    const first = newEvents('/n/a.md', [], undefined);
+    const comments = [
+      comment('top', { startLine: 1, endLine: 1, createdAt: '2026-09-18T00:02:00.000Z' }),
+      comment('middle', { startLine: 5, endLine: 5, createdAt: '2026-09-18T00:00:00.000Z' }),
+      comment('bottom', { startLine: 9, endLine: 9, createdAt: '2026-09-18T00:01:00.000Z' }),
+    ];
+    const { events } = newEvents('/n/a.md', comments, first.known);
+    expect(events.map((e) => e.meta['comment_id'])).toEqual(['middle', 'bottom', 'top']);
+  });
+
+  it('puts a reply between the comments written either side of it', () => {
+    const first = newEvents('/n/a.md', [], undefined);
+    const comments = [
+      comment('c1', {
+        createdAt: '2026-09-18T00:00:00.000Z',
+        replies: [reply('r1', '2026-09-18T00:03:00.000Z')],
+      }),
+      comment('c2', { createdAt: '2026-09-18T00:05:00.000Z' }),
+      comment('c3', { createdAt: '2026-09-18T00:01:00.000Z' }),
+    ];
+    const { events } = newEvents('/n/a.md', comments, first.known);
+    expect(events.map((e) => e.meta['reply_id'] ?? e.meta['comment_id'])).toEqual(['c1', 'c3', 'r1', 'c2']);
+  });
+
+  it('keeps line order between comments written at the same time', () => {
+    const first = newEvents('/n/a.md', [], undefined);
+    const comments = [comment('b'), comment('a'), comment('c')];
+    const { events } = newEvents('/n/a.md', comments, first.known);
+    expect(events.map((e) => e.meta['comment_id'])).toEqual(['b', 'a', 'c']);
+  });
+
+  it('puts a comment whose time does not parse last', () => {
+    const first = newEvents('/n/a.md', [], undefined);
+    const comments = [
+      comment('late', { createdAt: '2026-09-18T00:02:00.000Z' }),
+      comment('broken', { createdAt: 'soon' }),
+      comment('early', { createdAt: '2026-09-18T00:01:00.000Z' }),
+    ];
+    const { events } = newEvents('/n/a.md', comments, first.known);
+    expect(events.map((e) => e.meta['comment_id'])).toEqual(['early', 'late', 'broken']);
+  });
+});
+
 /** A store on no disk: what each pass sees is whatever the case hands it. */
-const store = (files: string[], comments: Record<string, RoundComment[] | Error>) => ({
-  instances: () => files.map((file) => ({ file, host: '0.0.0.0', port: 4314, origin: { id: 'S1' } })),
+const store = (files: string[], comments: Record<string, RoundComment[] | Error>, startedAt = STARTED) => ({
+  instances: () =>
+    files.map((file) => ({ file, host: '0.0.0.0', port: 4314, startedAt, origin: { id: 'S1' } })),
   comments: (file: string) => {
     const c = comments[file];
     if (c instanceof Error) throw c;
@@ -213,6 +312,108 @@ describe('collect', () => {
     // Never marked sent, so the filter is what holds it back on every later pass too.
     for (const e of events) markSent(seen, e);
     expect(collect('S1', seen, store(['/n/a.md'], { '/n/a.md': [comment('c1', { replies })] }))).toEqual([]);
+  });
+
+  it('pushes on first sight what was written after the akapen started, until it is delivered', () => {
+    const seen = new Map<string, Set<string>>();
+    const files = { '/n/a.md': [comment('old'), comment('new', { createdAt: '2026-09-18T00:00:06.000Z' })] };
+    const first = collect('S1', seen, store(['/n/a.md'], files));
+    expect(first.map((e) => e.meta['comment_id'])).toEqual(['new']);
+    // Not delivered yet, so the next pass sends it again.
+    expect(collect('S1', seen, store(['/n/a.md'], files)).map((e) => e.meta['comment_id'])).toEqual(['new']);
+    for (const e of first) markSent(seen, e);
+    expect(collect('S1', seen, store(['/n/a.md'], files))).toEqual([]);
+  });
+
+  it('seeds from the earliest of its instances on a document', () => {
+    const records = [
+      {
+        file: '/n/a.md',
+        host: '127.0.0.1',
+        port: 4314,
+        startedAt: '2026-09-18T00:00:10.000Z',
+        origin: { id: 'S1' },
+      },
+      {
+        file: '/n/a.md',
+        host: '127.0.0.1',
+        port: 4315,
+        startedAt: '2026-09-18T00:00:02.000Z',
+        origin: { id: 'S1' },
+      },
+      {
+        file: '/n/a.md',
+        host: '127.0.0.1',
+        port: 4316,
+        startedAt: '2026-09-18T00:00:20.000Z',
+        origin: { id: 'S1' },
+      },
+    ];
+    const written = comment('c1', { createdAt: '2026-09-18T00:00:05.000Z' });
+    const events = collect('S1', new Map(), { instances: () => records, comments: () => [written] });
+    expect(events.map((e) => e.meta['comment_id'])).toEqual(['c1']);
+  });
+
+  it("does not seed from a sibling session's instance on the same document", () => {
+    const records = [
+      {
+        file: '/n/a.md',
+        host: '127.0.0.1',
+        port: 4314,
+        startedAt: '2026-09-18T00:00:01.000Z',
+        origin: { id: 'S2' },
+      },
+      {
+        file: '/n/a.md',
+        host: '127.0.0.1',
+        port: 4315,
+        startedAt: '2026-09-18T00:00:10.000Z',
+        origin: { id: 'S1' },
+      },
+    ];
+    const written = comment('c1', { createdAt: '2026-09-18T00:00:05.000Z' });
+    expect(collect('S1', new Map(), { instances: () => records, comments: () => [written] })).toEqual([]);
+  });
+
+  it('seeds from the instance whose start time parses when another one does not', () => {
+    const records = [
+      { file: '/n/a.md', host: '127.0.0.1', port: 4314, startedAt: 'not a time', origin: { id: 'S1' } },
+      {
+        file: '/n/a.md',
+        host: '127.0.0.1',
+        port: 4315,
+        startedAt: '2026-09-18T00:00:02.000Z',
+        origin: { id: 'S1' },
+      },
+    ];
+    const written = comment('c1', { createdAt: '2026-09-18T00:00:05.000Z' });
+    const events = collect('S1', new Map(), { instances: () => records, comments: () => [written] });
+    expect(events.map((e) => e.meta['comment_id'])).toEqual(['c1']);
+  });
+
+  it('seeds everything when the start time does not parse', () => {
+    const files = { '/n/a.md': [comment('c1', { createdAt: '2026-09-18T00:00:06.000Z' })] };
+    expect(collect('S1', new Map(), store(['/n/a.md'], files, 'not a time'))).toEqual([]);
+  });
+
+  it('pushes the events of several documents in the order they were written', () => {
+    const seen = new Map<string, Set<string>>();
+    collect('S1', seen, store(['/n/a.md', '/n/b.md'], {}));
+    const events = collect(
+      'S1',
+      seen,
+      store(['/n/a.md', '/n/b.md'], {
+        '/n/a.md': [
+          comment('a1', { createdAt: '2026-09-18T00:01:00.000Z' }),
+          comment('a2', { createdAt: '2026-09-18T00:04:00.000Z' }),
+        ],
+        '/n/b.md': [
+          comment('b1', { createdAt: '2026-09-18T00:02:00.000Z' }),
+          comment('b2', { createdAt: '2026-09-18T00:03:00.000Z' }),
+        ],
+      }),
+    );
+    expect(events.map((e) => e.meta['comment_id'])).toEqual(['a1', 'b1', 'b2', 'a2']);
   });
 
   it('forgets a document whose akapen has stopped', () => {
@@ -501,5 +702,13 @@ describe('asking the akapen on disk for its instructions (#248)', () => {
       chmodSync(empty, 0o755);
       expect(askInstructions([empty])).toBeNull();
     });
+  });
+});
+
+describe('the instructions handed to the session', () => {
+  it("carry #12's rule for a comment whose anchored text has gone: say so, do not guess", () => {
+    expect(INSTRUCTIONS).toContain(
+      'If that text is no longer in the file, do not guess where the comment belongs or what it would say about the new text: reply on the thread that the passage has already changed.',
+    );
   });
 });

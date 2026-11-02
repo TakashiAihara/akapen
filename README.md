@@ -131,7 +131,9 @@ Register it, and start the session with the flag that admits it. Channels are a 
 claude --dangerously-load-development-channels server:akapen
 ```
 
-It reports only the documents that session started — `CLAUDE_CODE_SESSION_ID` is stamped on an instance when it starts, and the same id reaches the channel — so a host running several sessions does not tell all of them about each comment. What is on a document when it is first seen is not reported: that backlog is what `akapen comments` already hands over, and pushing it would bury whatever is new.
+It reports only the documents that session started — `CLAUDE_CODE_SESSION_ID` is stamped on an instance when it starts, and the same id reaches the channel — so a host running several sessions does not tell all of them about each comment. When the channel first sees a document, what was written on it before its akapen started is not reported: that backlog is what `akapen comments` already hands over, and pushing it would bury whatever is new. What was written after the start is pushed, so a comment typed in the first seconds, or while the session was restarting, still arrives. A batch arrives in the order it was written, not in line order.
+
+For a session that loads the channel, it replaces anything that waits on `akapen comments` and wakes the session, such as `akapen-wait-comment`. Run one or the other: with both, every comment arrives twice.
 
 A channel lives as long as its session, and its instructions are handed over once, at startup. When akapen is replaced on disk while it runs, it asks the new binary for its instructions and, if they changed, sends them to the session as an event (`event="instructions"`) that replaces the old ones. An update that leaves them as they were says nothing.
 
