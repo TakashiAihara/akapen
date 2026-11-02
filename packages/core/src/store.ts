@@ -97,8 +97,10 @@ function roundsIn(store: string): RoundMeta[] {
   const dir = join(store, 'rounds');
   if (!existsSync(dir)) return [];
   const at = (n: number) => join(dir, String(n).padStart(3, '0'));
-  // A Set because `001` and `0001` both parse to 1 and name the same round; listing it
-  // twice would hand every comment in it over twice.
+  // Only the padded name openRound writes is read (`at`). A Set because `001` and `0001`
+  // both parse to 1: without it round 1 would be listed, and `001` read, twice. Whatever
+  // sits in a directory under another name (`0001`, `2`) is not a round akapen made and
+  // is not read.
   const ns = [...new Set(readdirSync(dir).map((name) => Number.parseInt(name, 10)))]
     .filter((n) => Number.isInteger(n) && n > 0 && existsSync(join(at(n), 'content.md')))
     .toSorted((a, b) => a - b);
@@ -223,7 +225,8 @@ export type ReviewComments = {
   reviewId: string;
   /**
    * The document as review.json records it: where it was when it was reviewed, which may
-   * have moved since. Null when review.json is missing or unreadable.
+   * have moved since. Null when review.json is missing or unreadable, or names a
+   * document whose store is not this directory — its line numbers belong to another file.
    */
   path: string | null;
   currentRound: number;
@@ -242,7 +245,7 @@ export type ReviewComments = {
  * Otherwise review.json is gone, corrupt, or names a document whose store is elsewhere,
  * and the rounds on disk are all there is: they are read the way loadReview recovers from
  * a lost review.json. Dropping such a review would hide its feedback, so it is listed,
- * with the path review.json records if any.
+ * with no path: a path whose hash is not this directory is not this review's document.
  */
 export function allReviewComments(): ReviewComments[] {
   const reviews = join(akapenHome(), 'reviews');
@@ -281,7 +284,7 @@ export function allReviewComments(): ReviewComments[] {
       const f = join(dir, 'rounds', String(n).padStart(3, '0'), 'comments.json');
       for (const c of readCommentsFile(f)) comments.push({ ...c, round: n });
     }
-    out.push({ reviewId, path, currentRound: rounds[0]?.n ?? 0, comments });
+    out.push({ reviewId, path: null, currentRound: rounds[0]?.n ?? 0, comments });
   }
   return out;
 }

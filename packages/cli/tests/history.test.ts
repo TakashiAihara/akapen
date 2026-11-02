@@ -196,7 +196,15 @@ describe('parseSince', () => {
     ['what is not a date', 'last week'],
     ['a bare number Date.parse reads as a year', '1'],
     ['a time with no offset, which Date.parse reads as local time', '2026-08-01T09:00'],
-    ['a date that does not exist', '2026-13-01'],
+    ['a month that does not exist', '2026-13-01'],
+    ['a date with words before it', 'Sat 2026-08-01'],
+    ['a five-digit year', '12026-08-01'],
+    ['a day the month does not have, which Date.parse rolls over', '2026-02-30'],
+    ['an hour past the day, which Date.parse rolls over', '2026-08-01T24:00Z'],
+    ['a minute past the hour', '2026-08-01T09:60Z'],
+    ['a second past the minute', '2026-08-01T09:00:60Z'],
+    ['an offset past a day', '2026-08-01T09:00+24:00'],
+    ['offset minutes past the hour', '2026-08-01T09:00+09:60'],
   ])('refuses %s rather than guessing', (_label, raw) => {
     expect(() => parseSince(raw)).toThrow(UsageError);
     expect(() => parseSince(raw)).toThrow(/--since must be a date/);
@@ -205,6 +213,23 @@ describe('parseSince', () => {
 
 describe('readable', () => {
   const good = { ...comment('c_good', {}), round: 1 };
+
+  it('sets aside an entry that is not an object, saying so rather than naming a field', () => {
+    for (const bad of [null, 'text', ['c_x']]) {
+      const { reviews, skipped } = readable([
+        { reviewId: 'r', path: null, currentRound: 1, comments: [bad as unknown as RoundComment, good] },
+      ]);
+      expect(reviews[0]!.comments.map((c) => c.id)).toEqual(['c_good']);
+      expect(skipped).toEqual([{ review_id: 'r', id: null, reason: 'not an object' }]);
+    }
+  });
+
+  it('keeps a comment stored before replies existed', () => {
+    const { replies: _gone, ...old } = good;
+    expect(
+      readable([{ reviewId: 'r', path: null, currentRound: 1, comments: [old as RoundComment] }]).skipped,
+    ).toEqual([]);
+  });
   it.each([
     ['no id', { id: 1 }],
     ['no body', { body: undefined }],
@@ -212,8 +237,10 @@ describe('readable', () => {
     ['no resolved state', { resolved: 'no' }],
     ['no creation time', { createdAt: undefined }],
     ['no creation time', { createdAt: 'whenever' }],
-    // Date.parse reads the number 5 as the year 2005; a time that is not text is not one.
+    // Date.parse reads the number 5 as May 2001; a time that is not text is not one.
     ['no creation time', { createdAt: 5 }],
+    ['replies are not a list of replies', { replies: 'oops' }],
+    ['replies are not a list of replies', { replies: [null] }],
   ])('sets aside a comment with %s and says which', (reason, broken) => {
     const bad = { ...good, id: 'c_bad', ...broken } as unknown as RoundComment;
     const { reviews, skipped } = readable([
@@ -271,6 +298,13 @@ describe('akapen history, from a real process', () => {
       expect(rest).toEqual(fromComments);
 
       expect(history()).toEqual(['c_cli', 'c_early', 'c_other']);
+      // The order as printed, not sorted here: oldest first.
+      const raw = spawnSync('bun', ['run', CLI, 'history'], { env, encoding: 'utf8' });
+      expect((JSON.parse(raw.stdout) as { id: string }[]).map((c) => c.id)).toEqual([
+        'c_early',
+        'c_cli',
+        'c_other',
+      ]);
       expect(history('--all')).toEqual(['c_cli', 'c_done', 'c_early', 'c_other']);
       expect(history('--all', '--author', 'bob')).toEqual(['c_done']);
       expect(history('--since', '2026-08-01')).toEqual(['c_cli', 'c_other']);
@@ -278,6 +312,7 @@ describe('akapen history, from a real process', () => {
       const extra = spawnSync('bun', ['run', CLI, 'history', file], { env, encoding: 'utf8' });
       expect(extra.status).toBe(1);
       expect(extra.stderr).toContain('history: unexpected');
+      expect(extra.stderr).toContain('for one document: akapen comments <file.md>');
 
       // One unreadable entry is named and left out; the rest still print.
       const f = join(store, 'rounds', '001', 'comments.json');

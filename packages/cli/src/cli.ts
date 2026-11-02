@@ -363,7 +363,11 @@ if (positional[0] === 'comments') {
  */
 if (positional[0] === 'history') {
   // It takes no file: a word here is most likely a document meant for `akapen comments`.
-  if (positional.length > 1) fail(`history: unexpected ${JSON.stringify(positional.slice(1).join(' '))}`);
+  if (positional.length > 1) {
+    fail(
+      `history: unexpected ${JSON.stringify(positional.slice(1).join(' '))}; it takes no file (for one document: akapen comments <file.md>)`,
+    );
+  }
   let since: number | undefined;
   try {
     since = args.since === undefined ? undefined : parseSince(args.since);

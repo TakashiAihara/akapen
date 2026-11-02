@@ -314,17 +314,24 @@ describe('every review in the store', () => {
     agrees();
   });
 
-  it('agrees with akapen comments with no review.json, and lists a round written two ways once', () => {
-    seed();
-    mkdirSync(join(storeDir(work), 'rounds', '0001'));
-    writeFileSync(join(storeDir(work), 'rounds', '0001', 'content.md'), SOURCE);
+  it('reads only the padded round name akapen writes, once, with no review.json', () => {
+    const comments = seed();
+    for (const name of ['0001', '2']) {
+      mkdirSync(join(storeDir(work), 'rounds', name));
+      writeFileSync(join(storeDir(work), 'rounds', name, 'content.md'), SOURCE);
+      writeFileSync(
+        join(storeDir(work), 'rounds', name, 'comments.json'),
+        JSON.stringify([makeComment(SOURCE, 3, 3, `in ${name}`, 't')]),
+      );
+    }
     rmSync(join(storeDir(work), 'review.json'));
 
     agrees();
-    expect(allReviewComments()[0]?.comments.length).toBe(3);
+    // `001` once, and nothing from `0001` or `2`: akapen never writes those names.
+    expect(allReviewComments()[0]?.comments.map((c) => c.id)).toEqual(comments.map((c) => c.id));
   });
 
-  it('reads a review.json that names another store from the disk, keeping the path it names', () => {
+  it('reads a review.json that names another store from the disk, with no path', () => {
     seed();
     openRound(work, EDITED);
     const elsewhere = join(sandbox, 'elsewhere.md');
@@ -334,7 +341,8 @@ describe('every review in the store', () => {
     );
 
     const [only] = allReviewComments();
-    expect(only?.path).toBe(elsewhere);
+    // That path's line numbers would be another document's; this store is not its review.
+    expect(only?.path).toBeNull();
     expect(only?.currentRound).toBe(2);
     expect(only?.comments.length).toBe(3);
   });
