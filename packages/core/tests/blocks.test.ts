@@ -270,7 +270,17 @@ describe('an empty fence (#262)', () => {
 
   it('is its opening row alone when it is never closed, with no row past the end', () => {
     const blocks = buildDoc('e.md', 'Before.\n\n```sh').blocks;
-    expect(blocks.filter((b) => b.kind === 'code').map((b) => b.startLine)).toEqual([3]);
+    expect(blocks.filter((b) => b.kind === 'code').map((b) => [b.startLine, b.flags])).toEqual([
+      [3, ['code-first']],
+    ]);
     expect(Math.max(...blocks.map((b) => b.endLine))).toBe(3);
+  });
+
+  it('is its opening row alone when the end of a quote cuts it off, the next block its own (#280)', () => {
+    const blocks = buildDoc('e.md', '> ```sh\n\nAfter.\n').blocks;
+    expect(blocks.map((b) => [b.startLine, b.kind, b.flags])).toEqual([
+      [1, 'code', ['code-first']],
+      [3, 'paragraph', []],
+    ]);
   });
 });
