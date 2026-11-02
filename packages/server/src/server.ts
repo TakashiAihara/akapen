@@ -631,7 +631,7 @@ export function startServer(opts: ServeOptions) {
    */
   let cutting = false;
 
-  // Only a person cuts a round. An agent's intermediate save never does.
+  // A round is cut on request: by a person, or by an agent running `akapen rounds cut`. An agent's intermediate save never cuts one.
   app.post('/api/rounds', async (c) => {
     if (cutting) return c.text('a round is already being opened; it will arrive on its own', 409);
     cutting = true;

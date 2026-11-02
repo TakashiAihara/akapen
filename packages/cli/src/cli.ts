@@ -231,7 +231,7 @@ if (positional[0] === 'list') {
 }
 
 /**
- * The akapen serving `file`, as a function that posts to it. The file is identified as
+ * The akapen serving `file`: a `post` to it, and the session to file as. The file is identified as
  * the store identifies it (the resolved path). `--token` as the server takes it, so an
  * instance started with one can be reached. With nothing answering, nothing is written
  * and this exits 1.
@@ -291,7 +291,7 @@ if (positional[0] === 'rounds') {
   const [, verb, file, ...extra] = positional;
   if (verb !== 'cut')
     fail(
-      `rounds: unknown subcommand ${JSON.stringify(verb ?? '(missing)')}; try \`akapen rounds cut <file.md>\``,
+      `rounds: unknown subcommand ${verb === undefined ? '(missing)' : JSON.stringify(verb)}; try \`akapen rounds cut <file.md>\``,
     );
   if (!file || !existsSync(file)) fail(`no such file: ${file ?? '(missing)'}`);
   if (extra.length > 0) fail(`rounds cut: unexpected ${JSON.stringify(extra.join(' '))}`);
@@ -299,8 +299,8 @@ if (positional[0] === 'rounds') {
   // A new round has no comments to show whether the cut landed; `akapen list` shows the round.
   const answer = (await post('/api/rounds', '', '`akapen list`')) as { round?: { n?: number } };
   const n = answer.round?.n;
-  // The answer is the new document, and its round is what is printed, so a refused or
-  // unanswered cut is an exit 1 and never a line saying it worked.
+  // A refused or unanswered cut already exited 1 in `post`; this guards an answer of an
+  // unexpected shape, so a line saying it worked is never printed without a round.
   if (typeof n !== 'number') {
     console.error('akapen: /api/rounds answered without a round number; check `akapen list`');
     process.exit(1);

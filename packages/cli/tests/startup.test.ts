@@ -490,7 +490,7 @@ describe('akapen reply and resolve', () => {
     expect(nobody.stderr).toContain('answered, so nothing was written; start one (akapen');
   }, 60_000);
 
-  it('cuts a round on an akapen that requires a token (#178)', async () => {
+  it('cuts a round on an akapen that requires a token, given the same --token (#178)', async () => {
     const pinned = 'pinned-for-the-cut-test';
     const { lines, home, file } = await start(['--token', pinned]);
     const url = new URL(urlsIn(lines)[0]!).origin;
