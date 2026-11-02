@@ -202,8 +202,9 @@ function walkFence(token: Token, ctx: Ctx): void {
   // An empty fence has no lines. Splitting '' gives one, which took the closing fence's
   // line as content and left the block without its last row (#262) — or, unclosed at the
   // end of the file, made a row for a line that does not exist.
-  const codeLines =
-    token.content === '' ? [] : splitHighlighted(highlight(token.content.replace(/\n$/, ''), info));
+  const source = token.content.replace(/\n$/, '');
+  const sourceLines = token.content === '' ? [] : source.split('\n');
+  const codeLines = token.content === '' ? [] : splitHighlighted(highlight(source, info));
   // opening fence line
   push(ctx, {
     startLine,
@@ -212,9 +213,11 @@ function walkFence(token: Token, ctx: Ctx): void {
     html: `<div class="code-line code-fence">${esc(ctx.lines[startLine - 1] ?? '')}</div>`,
     flags: ['code-first'],
   });
-  // The copy button reads these marks, not the rows (#243): an empty line is drawn the same
-  // as a line holding only a non-breaking space, and a fence left open inside a quote can be
-  // followed on the next line by an indented block.
+  // The copy button reads these marks, not the rows (#243). A fence left open inside a quote
+  // can be followed on the very next line by an indented block, and an empty line is drawn
+  // as a non-breaking space, the same as a line holding only that. Empty is read from the
+  // source line: inside a multi-line token an empty line is drawn as the token's empty span.
+  // The two arrays line up one for one because highlighting keeps every newline.
   codeLines.forEach((h, i) => {
     const ln = startLine + 1 + i;
     push(ctx, {
@@ -222,7 +225,7 @@ function walkFence(token: Token, ctx: Ctx): void {
       endLine: ln,
       kind: 'code',
       html: `<div class="code-line"><code>${h || '&nbsp;'}</code></div>`,
-      flags: h ? ['code-content'] : ['code-content', 'code-empty'],
+      flags: sourceLines[i] === '' ? ['code-content', 'code-empty'] : ['code-content'],
     });
   });
   const lastLine = endLine;

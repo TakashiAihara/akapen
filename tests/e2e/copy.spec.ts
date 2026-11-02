@@ -110,6 +110,22 @@ test('copies a line holding only a non-breaking space as it is, and an empty lin
   expect(await copied(page)).toBe('a\n\n\u00a0\nb');
 });
 
+test('copies an empty line inside a multi-line highlighted string as empty', async ({
+  page,
+  akapen,
+  request,
+}) => {
+  writeFileSync(akapen.file, '```js\nconst s = `a\n\nb`;\n```\n');
+  expect((await request.post(`${akapen.url}/api/rounds`, { headers: AUTH })).ok()).toBe(true);
+  await page.goto(akapen.url);
+  const first = page.locator('.row.code-first');
+  await expect(first).toHaveCount(1);
+  await first.hover();
+  await first.locator('.copy-code').click();
+  await expect(first.locator('.copy-code')).toHaveText('copied');
+  expect(await copied(page)).toBe('const s = `a\n\nb`;');
+});
+
 test('stops a fence left open where an indented block follows on the very next line', async ({
   page,
   akapen,

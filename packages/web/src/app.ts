@@ -469,9 +469,7 @@ function copyButton(first: HTMLElement): HTMLElement {
   btn.addEventListener('click', async (e) => {
     e.stopPropagation();
     const lines: string[] = [];
-    // The render marks each content row of the fence, and each empty one, because the rows
-    // cannot say it themselves: an empty line is drawn as a non-breaking space so the row
-    // keeps its height, and a fence left open can run straight into another code block.
+    // Read the marks the render puts on the fence's content and empty rows (#243).
     for (
       let row = first.nextElementSibling;
       row?.classList.contains('code-content');

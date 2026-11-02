@@ -291,6 +291,16 @@ describe('fence content marks (#243)', () => {
     ]);
   });
 
+  it('marks an empty line inside a multi-line highlighted string as empty', () => {
+    expect(codeFlags('```js\nconst s = `a\n\nb`;\n```\n')).toEqual([
+      [1, ['code-first']],
+      [2, ['code-content']],
+      [3, ['code-content', 'code-empty']],
+      [4, ['code-content']],
+      [5, ['code-last']],
+    ]);
+  });
+
   it('leaves an indented block right after a quoted fence left open unmarked', () => {
     expect(codeFlags('> ```sh\n> echo q\n    indented\n')).toEqual([
       [1, ['code-first']],
