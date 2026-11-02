@@ -98,7 +98,7 @@ function describe(file: string, c: RoundComment, replyId?: string): ChannelEvent
 }
 
 /** An event with the time what it reports was written, so a batch can be put in order. */
-type Timed = { at: number; event: ChannelEvent };
+export type Timed = { at: number; event: ChannelEvent };
 
 /**
  * When something was written, as a number that sorts. A time that does not parse sorts
@@ -112,26 +112,69 @@ const writtenAt = (iso: string): number => {
 /**
  * Oldest first, by when each was written (#185). In line order a comment typed last can
  * arrive first, and the agent reads the person's thinking out of sequence: a remark that
- * refers to an earlier one comes before it. Ties keep the order they came in, which is
- * line order.
+ * refers to an earlier one comes before it. Ties keep the order they came in.
  */
 const byWritten = (a: Timed, b: Timed): number => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0);
 
-function timedEvents(
+/** The id `idsOf` gives what an event reports. */
+const idOf = (e: ChannelEvent): string | undefined =>
+  e.meta['reply_id'] === undefined ? e.meta['comment_id'] : `${e.meta['comment_id']}/${e.meta['reply_id']}`;
+
+/**
+ * When this session last replied on a thread, or undefined when it has not.
+ *
+ * On first sight it stands in for what an earlier channel process of the same session
+ * delivered: an agent that answered a thread has read everything on it up to its answer.
+ */
+function lastOwnReply(c: RoundComment, self: string | undefined): number | undefined {
+  if (self === undefined) return undefined;
+  let last: number | undefined;
+  for (const r of c.replies ?? []) {
+    const at = Date.parse(r.createdAt);
+    if (r.sessionId === self && !Number.isNaN(at) && (last === undefined || at > last)) last = at;
+  }
+  return last;
+}
+
+/**
+ * What is new since the last pass, and what is now known.
+ *
+ * A file seen for the first time is seeded from `since`, when its akapen started (#185),
+ * so a comment written in the first pass interval of an akapen, or while the channel was
+ * not running, still arrives. What was written before the start predates the review
+ * this session started, is what `akapen comments` hands over, and pushing it would bury
+ * the one comment that is new. On a thread this session has replied on, only what was
+ * written after its last reply is pushed: a channel that restarts (a resumed session, an
+ * MCP reconnect) has no record of what its predecessor delivered, and the thread the
+ * agent answered is the part it has certainly seen. What an earlier channel delivered
+ * and the agent has not answered yet is pushed again. Without `since` everything on the
+ * file is seeded.
+ *
+ * Known ids only grow. Replacing them with the current set would forget everything on a
+ * read that came back empty, and the next pass would push the whole file again; it would
+ * also push a comment a second time when somebody resolves it and opens it again.
+ *
+ * The events come oldest first, by when each was written.
+ */
+export function newEvents(
   file: string,
   comments: RoundComment[],
   known: Set<string> | undefined,
-  self: string | undefined,
-  since: number | undefined,
+  self?: string,
+  since?: number,
 ): { events: Timed[]; known: Set<string> } {
   const ids = idsOf(comments);
   const seeding = known === undefined;
-  // On first sight, new means written at or after the start. A time that does not parse
-  // is NaN, which compares false, so it is history: it cannot be shown to be after.
-  const isNew = (id: string, written: string): boolean =>
-    seeding ? since !== undefined && Date.parse(written) >= since : !known.has(id);
   const events: Timed[] = [];
   for (const c of comments) {
+    const answered = lastOwnReply(c, self);
+    // A time that does not parse is NaN, which compares false: it cannot be shown to be
+    // after the start, so it is history.
+    const isNew = (id: string, written: string): boolean => {
+      if (!seeding) return !known.has(id);
+      const at = Date.parse(written);
+      return since !== undefined && at >= since && (answered === undefined || at > answered);
+    };
     if (isNew(c.id, c.createdAt)) events.push({ at: writtenAt(c.createdAt), event: describe(file, c) });
     for (const r of c.replies ?? []) {
       // A reply this session posted (#193 stamps it from `X-Akapen-Session`) would come
@@ -149,38 +192,6 @@ function timedEvents(
   // way as anything later: when `markSent` records that it arrived.
   const pushed = new Set(sorted.map((e) => idOf(e.event)));
   return { events: sorted, known: new Set(ids.filter((id) => !pushed.has(id))) };
-}
-
-/** The id `idsOf` gives what an event reports. */
-const idOf = (e: ChannelEvent): string | undefined =>
-  e.meta['reply_id'] === undefined ? e.meta['comment_id'] : `${e.meta['comment_id']}/${e.meta['reply_id']}`;
-
-/**
- * What is new since the last pass, and what is now known.
- *
- * A file seen for the first time is seeded from `since`, when its akapen started (#185).
- * What was written before that predates the review this session started, has been
- * handed over by `akapen comments` if it matters, and pushing it would bury the one
- * comment that is new. What was written after it is pushed: seeding from the moment this
- * process first looked dropped every comment written in the first pass interval of an
- * akapen, and every one written while the session was restarting. Without `since`
- * everything on the file is seeded.
- *
- * Known ids only grow. Replacing them with the current set would forget everything on a
- * read that came back empty, and the next pass would push the whole file again; it would
- * also push a comment a second time when somebody resolves it and opens it again.
- *
- * The events come oldest first, by when each was written.
- */
-export function newEvents(
-  file: string,
-  comments: RoundComment[],
-  known: Set<string> | undefined,
-  self?: string,
-  since?: number,
-): { events: ChannelEvent[]; known: Set<string> } {
-  const { events, known: next } = timedEvents(file, comments, known, self, since);
-  return { events: events.map((e) => e.event), known: next };
 }
 
 /** What a pass reads. Passed in so the walking can be tested without a store on disk. */
@@ -222,8 +233,8 @@ export function collect(
       if (r.origin?.id !== sessionId) continue;
       // Loopback is enough: whoever reads this runs on the host that serves the file.
       urls.set(r.file, `http://${reachableHost(r.host)}:${r.port}`);
-      // The earliest of this session's instances on a file: nothing written after any of
-      // them started can be assumed to have reached the session already.
+      // The earliest of this session's instances on a file, so a comment written on an
+      // older one is not taken for history because a newer one started later.
       const at = Date.parse(r.startedAt);
       const prev = started.get(r.file);
       if (!Number.isNaN(at) && (prev === undefined || at < prev)) started.set(r.file, at);
@@ -245,7 +256,7 @@ export function collect(
       continue;
     }
     const prev = seen.get(file);
-    const { events, known } = timedEvents(file, comments, prev, sessionId, started.get(file));
+    const { events, known } = newEvents(file, comments, prev, sessionId, started.get(file));
     // A file seen for the first time is seeded here. After that, ids become known only
     // when their event has been delivered (`markSent`): committing them now would lose any
     // event whose notification fails, since nothing would ever send it again.

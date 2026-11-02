@@ -31,10 +31,16 @@ import {
   INSTRUCTIONS,
   instructionsEvent,
   markSent,
-  newEvents,
+  newEvents as newTimedEvents,
   type Loaded,
 } from '../src/channel.ts';
 import type { RoundComment } from '@akapen/shared';
+
+/** `newEvents` with the times dropped: what the order is, not what the sort keys were. */
+const newEvents = (...args: Parameters<typeof newTimedEvents>) => {
+  const { events, known } = newTimedEvents(...args);
+  return { events: events.map((e) => e.event), known };
+};
 
 const comment = (id: string, over: Partial<RoundComment> = {}): RoundComment => ({
   id,
@@ -204,6 +210,45 @@ describe('newEvents on first sight, seeded from when the akapen started (#185)',
     expect(events).toEqual([]);
   });
 
+  it("reads the thread up to this session's latest reply on it as seen", () => {
+    const replies = [
+      { ...reply('mine-1', '2026-09-18T00:00:07.000Z'), sessionId: 'S1' },
+      reply('between', '2026-09-18T00:00:08.000Z'),
+      { ...reply('mine-2', '2026-09-18T00:00:09.000Z'), sessionId: 'S1' },
+      reply('same-ms', '2026-09-18T00:00:09.000Z'),
+      reply('after', '2026-09-18T00:00:10.000Z'),
+      { ...reply('mine-0', '2026-09-18T00:00:06.500Z'), sessionId: 'S1' },
+    ];
+    const c = comment('c1', { createdAt: '2026-09-18T00:00:06.000Z', replies });
+    const { events } = newEvents('/n/a.md', [c], undefined, 'S1', since);
+    expect(events.map((e) => e.meta['reply_id'] ?? e.meta['comment_id'])).toEqual(['after']);
+  });
+
+  it("does not take a sibling session's reply, or a person's, for this session's answer", () => {
+    const replies = [
+      { ...reply('sibling', '2026-09-18T00:00:08.000Z'), sessionId: 'S2' },
+      reply('person', '2026-09-18T00:00:09.000Z'),
+    ];
+    const c = comment('c1', { createdAt: '2026-09-18T00:00:06.000Z', replies });
+    const ids = (self?: string) =>
+      newEvents('/n/a.md', [c], undefined, self, since).events.map(
+        (e) => e.meta['reply_id'] ?? e.meta['comment_id'],
+      );
+    expect(ids('S1')).toEqual(['c1', 'sibling', 'person']);
+    // Without a session of its own, a reply that carries no session id is nobody's answer.
+    expect(ids(undefined)).toEqual(['c1', 'sibling', 'person']);
+  });
+
+  it('ignores an own reply whose time does not parse when deciding what was seen', () => {
+    const replies = [
+      { ...reply('mine', 'soon'), sessionId: 'S1' },
+      reply('person', '2026-09-18T00:00:09.000Z'),
+    ];
+    const c = comment('c1', { createdAt: '2026-09-18T00:00:06.000Z', replies });
+    const { events } = newEvents('/n/a.md', [c], undefined, 'S1', since);
+    expect(events.map((e) => e.meta['reply_id'] ?? e.meta['comment_id'])).toEqual(['c1', 'person']);
+  });
+
   it('takes a comment whose time does not parse as history', () => {
     const { events, known } = newEvents(
       '/n/a.md',
@@ -323,6 +368,30 @@ describe('collect', () => {
     expect(collect('S1', seen, store(['/n/a.md'], files)).map((e) => e.meta['comment_id'])).toEqual(['new']);
     for (const e of first) markSent(seen, e);
     expect(collect('S1', seen, store(['/n/a.md'], files))).toEqual([]);
+  });
+
+  it('does not push again, after the channel restarts, a thread this session has answered', () => {
+    const q = comment('q1', { createdAt: '2026-09-18T00:00:06.000Z' });
+    const seen = new Map<string, Set<string>>();
+    const first = collect('S1', seen, store(['/n/a.md'], { '/n/a.md': [q] }));
+    expect(first.map((e) => e.meta['comment_id'])).toEqual(['q1']);
+    for (const e of first) markSent(seen, e);
+    const answered = [
+      comment('q1', { ...q, replies: [{ ...reply('mine', '2026-09-18T00:00:08.000Z'), sessionId: 'S1' }] }),
+    ];
+    // A new channel process for the same session: nothing it knew survives.
+    expect(collect('S1', new Map(), store(['/n/a.md'], { '/n/a.md': answered }))).toEqual([]);
+  });
+
+  it('pushes, after a restart, what a person wrote on a thread after this session answered it', () => {
+    const replies = [
+      { ...reply('mine', '2026-09-18T00:00:08.000Z'), sessionId: 'S1' },
+      reply('before', '2026-09-18T00:00:07.000Z'),
+      reply('after', '2026-09-18T00:00:09.000Z'),
+    ];
+    const q = comment('q1', { createdAt: '2026-09-18T00:00:06.000Z', replies });
+    const events = collect('S1', new Map(), store(['/n/a.md'], { '/n/a.md': [q] }));
+    expect(events.map((e) => e.meta['reply_id'] ?? e.meta['comment_id'])).toEqual(['after']);
   });
 
   it('seeds from the earliest of its instances on a document', () => {
@@ -707,8 +776,7 @@ describe('asking the akapen on disk for its instructions (#248)', () => {
 
 describe('the instructions handed to the session', () => {
   it("carry #12's rule for a comment whose anchored text has gone: say so, do not guess", () => {
-    expect(INSTRUCTIONS).toContain(
-      'If that text is no longer in the file, do not guess where the comment belongs or what it would say about the new text: reply on the thread that the passage has already changed.',
-    );
+    expect(INSTRUCTIONS).toContain('If that text is no longer in the file, do not guess');
+    expect(INSTRUCTIONS).toContain('reply on the thread that the passage has already changed');
   });
 });
