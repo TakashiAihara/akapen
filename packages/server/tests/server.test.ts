@@ -490,7 +490,9 @@ describe('what a comment may point at', () => {
     );
     expect(created.comment.anchor).toBe('');
 
-    await fetch(`${probeUrl}/api/rounds`, { method: 'POST' });
+    // A cut on an unchanged file opens no round (#110), so there has to be something to cut.
+    writeFileSync(join(sandbox, 'probe.md'), `${PROBE}\nan edit\n`);
+    expect((await fetch(`${probeUrl}/api/rounds`, { method: 'POST' })).ok).toBe(true);
     const carried = v.parse(DocPayloadSchema, await (await fetch(`${probeUrl}/api/doc`)).json()).carried;
     const kept = carried.find((c) => c.id === created.comment.id);
     expect(kept).toBeDefined();
@@ -566,6 +568,7 @@ describe('a round moving under another screen', () => {
 
   it('still accepts a comment from a screen that is on the current round', async () => {
     // Refusing every request that names a round would pass the test above.
+    writeFileSync(work, `${SOURCE}\nan edit\n`);
     expect((await post('/api/rounds')).ok).toBe(true);
     expect((await post('/api/comments', { startLine: 5, endLine: 5, body: 'x', round: 2 })).ok).toBe(true);
   });
@@ -579,6 +582,7 @@ describe('a round moving under another screen', () => {
     const other = listen(base);
     try {
       await until(() => other.seen.length > 0); // the greeting, so the stream is attached
+      writeFileSync(work, `${SOURCE}\nan edit\n`);
       expect((await post('/api/rounds')).ok).toBe(true);
       await until(() =>
         other.seen.some(
@@ -601,6 +605,9 @@ function frozen(home: string): string[] {
     .filter((e) => e.isFile() && e.name === 'content.md')
     .map((e) => readFileSync(join(e.parentPath, e.name), 'utf8'));
 }
+
+/** A stream event saying the file now differs from the round on screen. */
+const dirty = (e: unknown) => (e as { type: string }).type === 'changed' && (e as { dirty: boolean }).dirty;
 
 /**
  * Rewrite a file, through a rename, every 10ms, from a process that does nothing else.
@@ -715,7 +722,10 @@ describe('cutting a round while the file is being written', () => {
     expect(frozen(join(sandbox, 'home')).filter((c) => c === '')).toEqual([]);
 
     // And the round can be cut normally once the write is over.
-    expect((await post('/api/rounds')).ok).toBe(true);
+    writeFileSync(work, `${SOURCE}\nwhat the agent wrote\n`);
+    const cut = await post('/api/rounds');
+    expect(cut.ok).toBe(true);
+    expect(v.parse(DocPayloadSchema, await cut.json()).round.n).toBe(2);
   }, 30_000);
 
   it('opens one round when two screens cut at the same moment, not one each', async () => {
@@ -731,6 +741,44 @@ describe('cutting a round while the file is being written', () => {
     expect(v.parse(DocPayloadSchema, await (await fetch(`${base}/api/doc`)).json()).round.n).toBe(2);
   }, 30_000);
 
+  it('folds two cuts half a second apart into one round', async () => {
+    // Past the guard above: the first cut has finished before the second arrives, so the
+    // second is not refused, and it used to open a round of its own on the same content.
+    const other = listen(base);
+    try {
+      await until(() => other.seen.length > 0); // the greeting, so the stream is attached
+      writeFileSync(work, `${SOURCE}\nsomething the agent added\n`);
+      // Seen before cutting, so the only dirty one that can arrive after the cuts is the
+      // edit made below to mark the end.
+      await until(() => other.seen.some(dirty));
+
+      const first = await post('/api/rounds');
+      expect(first.status).toBe(200);
+      expect(v.parse(DocPayloadSchema, await first.json()).round.n).toBe(2);
+      await new Promise((r) => setTimeout(r, 500));
+      const second = await post('/api/rounds');
+      expect(second.status).toBe(200);
+      // The round the first one opened, which is the one every screen is now on.
+      const answer = v.parse(DocPayloadSchema, await second.json());
+      expect(answer.round.n).toBe(2);
+      expect(answer.round.total).toBe(2);
+
+      expect(frozen(join(sandbox, 'home'))).toHaveLength(2); // the first round, and one new one
+      const rounds = (await (await fetch(`${base}/api/rounds`)).json()) as { current: number };
+      expect(rounds.current).toBe(2);
+
+      // One stream carries frames in order, so once a change made after the second cut is
+      // seen, a round event that cut sent would have been seen before it.
+      const mark = other.seen.length;
+      writeFileSync(work, `${SOURCE}\nsomething the agent added\nand more\n`);
+      await until(() => other.seen.slice(mark).some(dirty));
+      const moved = other.seen.filter((e) => (e as { type: string }).type === 'round');
+      expect(moved).toEqual([{ type: 'round', n: 2 }]);
+    } finally {
+      await other.stop();
+    }
+  }, 30_000);
+
   it('still cuts a second round when the two are not at the same moment', async () => {
     // Refusing every second request would pass the test above and make the button work
     // once per process.
@@ -741,16 +789,17 @@ describe('cutting a round while the file is being written', () => {
     expect(v.parse(DocPayloadSchema, await (await fetch(`${base}/api/doc`)).json()).round.n).toBe(3);
   }, 30_000);
 
-  it('opens a round on a document that was empty to begin with', async () => {
+  it('does not refuse a document that was empty to begin with', async () => {
     // The other direction. A guard that refuses whenever the file is empty would pass
     // the test above and leave a blank note — a legitimate thing to review — unusable.
+    // Still empty, so the round it already has is the answer (#110), not a refusal.
     const file = join(sandbox, 'empty.md');
     writeFileSync(file, '');
     const other = await start(file, join(sandbox, 'empty-home'));
     try {
       const res = await fetch(`${other.url}/api/rounds`, { method: 'POST' });
-      expect(res.ok).toBe(true);
-      expect(v.parse(DocPayloadSchema, await res.json()).round.n).toBe(2);
+      expect(res.status).toBe(200);
+      expect(v.parse(DocPayloadSchema, await res.json()).round.n).toBe(1);
     } finally {
       other.stop();
     }
@@ -812,8 +861,10 @@ describe('cutting a round while the file is being written', () => {
       } finally {
         await writer.stop();
       }
-      writeFileSync(file, SOURCE);
-      expect((await fetch(`${other.url}/api/rounds`, { method: 'POST' })).ok).toBe(true);
+      writeFileSync(file, `${SOURCE}\nsettled\n`);
+      const cut = await fetch(`${other.url}/api/rounds`, { method: 'POST' });
+      expect(cut.ok).toBe(true);
+      expect(v.parse(DocPayloadSchema, await cut.json()).round.n).toBe(2);
     } finally {
       other.stop();
     }
@@ -1092,7 +1143,8 @@ describe('the other instances on this host', () => {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ startLine: 5, endLine: 5, body: 'about the heading' }),
       });
-      await fetch(`${peer.url}/api/rounds`, { method: 'POST' });
+      writeFileSync(join(sandbox, 'design.md'), `${SOURCE}\nan edit\n`);
+      expect((await fetch(`${peer.url}/api/rounds`, { method: 'POST' })).ok).toBe(true);
 
       // Round 2, and the unresolved comment from round 1 still counts: closing a round
       // hands it over rather than settling it.
