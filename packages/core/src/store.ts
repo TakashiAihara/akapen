@@ -89,13 +89,20 @@ function isRoundMeta(v: unknown): v is RoundMeta {
  * review.json and resetting the round number to 0.
  */
 function roundsOnDisk(filePath: string): RoundMeta[] {
-  const dir = join(storeDir(filePath), 'rounds');
+  return roundsIn(storeDir(filePath));
+}
+
+/** roundsOnDisk for a store directory, for a reader that has no document path to start from. */
+function roundsIn(store: string): RoundMeta[] {
+  const dir = join(store, 'rounds');
   if (!existsSync(dir)) return [];
-  const ns = readdirSync(dir)
-    .map((name) => Number.parseInt(name, 10))
-    .filter((n) => Number.isInteger(n) && n > 0 && existsSync(join(roundDir(filePath, n), 'content.md')))
+  const at = (n: number) => join(dir, String(n).padStart(3, '0'));
+  // A Set because `001` and `0001` both parse to 1 and name the same round; listing it
+  // twice would hand every comment in it over twice.
+  const ns = [...new Set(readdirSync(dir).map((name) => Number.parseInt(name, 10)))]
+    .filter((n) => Number.isInteger(n) && n > 0 && existsSync(join(at(n), 'content.md')))
     .toSorted((a, b) => a - b);
-  const createdAt = (n: number) => statSync(join(roundDir(filePath, n), 'content.md')).mtime.toISOString();
+  const createdAt = (n: number) => statSync(join(at(n), 'content.md')).mtime.toISOString();
   return ns.map((n, i) => ({
     n,
     createdAt: createdAt(n),
@@ -214,7 +221,10 @@ export function loadAllComments(filePath: string): RoundComment[] {
 export type ReviewComments = {
   /** The store directory's name, which is what tells two documents with the same basename apart. */
   reviewId: string;
-  /** The document as review.json records it. Null when review.json is missing or unreadable. */
+  /**
+   * The document as review.json records it: where it was when it was reviewed, which may
+   * have moved since. Null when review.json is missing or unreadable.
+   */
   path: string | null;
   currentRound: number;
   /** Newest round first, in stored order within a round. */
@@ -225,11 +235,14 @@ export type ReviewComments = {
  * Every review in the store, read from its directory rather than from a document path.
  *
  * The directory name is a hash of the path, so it cannot be turned back into one; the
- * path comes from review.json. A review whose review.json is gone still has its comments
- * on disk, and dropping them would hide feedback, so it is listed with a null path.
+ * path comes from review.json. When review.json names the document this directory
+ * belongs to, the review is read exactly as `akapen comments` reads it, so the two agree
+ * on which rounds exist and which one is current.
  *
- * Every numbered round directory is read, for the reason loadReview reconciles against
- * the directories: review.json can be missing rounds that are on disk.
+ * Otherwise review.json is gone, corrupt, or names a document whose store is elsewhere,
+ * and the rounds on disk are all there is: they are read the way loadReview recovers from
+ * a lost review.json. Dropping such a review would hide its feedback, so it is listed,
+ * with the path review.json records if any.
  */
 export function allReviewComments(): ReviewComments[] {
   const reviews = join(akapenHome(), 'reviews');
@@ -237,32 +250,38 @@ export function allReviewComments(): ReviewComments[] {
   const out: ReviewComments[] = [];
   for (const reviewId of readdirSync(reviews).toSorted()) {
     const dir = join(reviews, reviewId);
-    if (!statSync(dir).isDirectory()) continue;
+    try {
+      if (!statSync(dir).isDirectory()) continue;
+    } catch {
+      // A dangling symlink, or an entry removed since the listing. Not a review either way.
+      continue;
+    }
 
     let path: string | null = null;
-    let recorded = 0;
     try {
       const parsed = JSON.parse(readFileSync(join(dir, 'review.json'), 'utf8')) as Partial<Review>;
       if (typeof parsed.path === 'string') path = parsed.path;
-      if (Number.isInteger(parsed.currentRound)) recorded = parsed.currentRound!;
     } catch {
       /* Missing or corrupt: the rounds on disk are still read below. */
     }
 
-    const roundsDir = join(dir, 'rounds');
-    const rounds = existsSync(roundsDir)
-      ? readdirSync(roundsDir)
-          .filter((name) => /^\d+$/.test(name))
-          .map((name) => ({ name, n: Number.parseInt(name, 10) }))
-          .filter((r) => r.n > 0)
-          .toSorted((a, b) => b.n - a.n)
-      : [];
-    const comments: RoundComment[] = [];
-    for (const { name, n } of rounds) {
-      for (const c of readCommentsFile(join(roundsDir, name, 'comments.json')))
-        comments.push({ ...c, round: n });
+    if (path !== null && basename(storeDir(path)) === reviewId) {
+      out.push({
+        reviewId,
+        path,
+        currentRound: loadReview(path).currentRound,
+        comments: loadAllComments(path),
+      });
+      continue;
     }
-    out.push({ reviewId, path, currentRound: Math.max(recorded, rounds[0]?.n ?? 0), comments });
+
+    const rounds = roundsIn(dir).toSorted((a, b) => b.n - a.n);
+    const comments: RoundComment[] = [];
+    for (const { n } of rounds) {
+      const f = join(dir, 'rounds', String(n).padStart(3, '0'), 'comments.json');
+      for (const c of readCommentsFile(f)) comments.push({ ...c, round: n });
+    }
+    out.push({ reviewId, path, currentRound: rounds[0]?.n ?? 0, comments });
   }
   return out;
 }

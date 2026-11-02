@@ -6,15 +6,22 @@
  * comments it has to keep and comments it has to drop.
  */
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-import { ensureRound, saveComments, type Comment, type ReviewComments } from '@akapen/core/store';
+import {
+  ensureRound,
+  saveComments,
+  storeDir,
+  type Comment,
+  type ReviewComments,
+  type RoundComment,
+} from '@akapen/core/store';
 
 import { UsageError } from '../src/args.ts';
-import { historyJson, parseSince } from '../src/history.ts';
+import { historyJson, parseSince, readable } from '../src/history.ts';
 
 function comment(id: string, over: Partial<Comment>): Comment {
   return {
@@ -180,29 +187,69 @@ describe('parseSince', () => {
     expect(parseSince('2026-08-01')).toBe(Date.UTC(2026, 7, 1));
   });
 
-  it('refuses what is not a date rather than matching nothing', () => {
-    expect(() => parseSince('last week')).toThrow(UsageError);
-    expect(() => parseSince('last week')).toThrow(/--since must be a date/);
+  it('reads a timestamp in the offset it gives', () => {
+    expect(parseSince('2026-08-01T09:00+09:00')).toBe(Date.UTC(2026, 7, 1));
+    expect(parseSince('2026-08-01T00:00:00.000Z')).toBe(Date.UTC(2026, 7, 1));
+  });
+
+  it.each([
+    ['what is not a date', 'last week'],
+    ['a bare number Date.parse reads as a year', '1'],
+    ['a time with no offset, which Date.parse reads as local time', '2026-08-01T09:00'],
+    ['a date that does not exist', '2026-13-01'],
+  ])('refuses %s rather than guessing', (_label, raw) => {
+    expect(() => parseSince(raw)).toThrow(UsageError);
+    expect(() => parseSince(raw)).toThrow(/--since must be a date/);
+  });
+});
+
+describe('readable', () => {
+  const good = { ...comment('c_good', {}), round: 1 };
+  it.each([
+    ['no id', { id: 1 }],
+    ['no body', { body: undefined }],
+    ['no author', { author: null }],
+    ['no resolved state', { resolved: 'no' }],
+    ['no creation time', { createdAt: undefined }],
+    ['no creation time', { createdAt: 'whenever' }],
+    // Date.parse reads the number 5 as the year 2005; a time that is not text is not one.
+    ['no creation time', { createdAt: 5 }],
+  ])('sets aside a comment with %s and says which', (reason, broken) => {
+    const bad = { ...good, id: 'c_bad', ...broken } as unknown as RoundComment;
+    const { reviews, skipped } = readable([
+      { reviewId: 'r', path: null, currentRound: 1, comments: [bad, good] },
+    ]);
+    expect(reviews[0]!.comments.map((c) => c.id)).toEqual(['c_good']);
+    expect(skipped).toEqual([{ review_id: 'r', id: typeof bad.id === 'string' ? 'c_bad' : null, reason }]);
   });
 });
 
 describe('akapen history, from a real process', () => {
   const CLI = join(import.meta.dirname, '..', 'src', 'cli.ts');
 
-  it('prints the store as JSON and refuses a --since it cannot read', () => {
+  it('prints the store as JSON through each filter, and refuses what it cannot take', () => {
     const sandbox = mkdtempSync(join(tmpdir(), 'akapen-history-'));
     try {
       const home = join(sandbox, 'home');
       const file = join(sandbox, 'note.md');
       writeFileSync(file, '# Heading\n\nA paragraph.\n');
       const env = { ...process.env, AKAPEN_HOME: home };
+      let store = '';
+      const history = (...extra: string[]) => {
+        const out = spawnSync('bun', ['run', CLI, 'history', ...extra], { env, encoding: 'utf8' });
+        expect(out.status).toBe(0);
+        return (JSON.parse(out.stdout) as { id: string }[]).map((c) => c.id).toSorted();
+      };
       process.env['AKAPEN_HOME'] = home;
       try {
         ensureRound(file, '# Heading\n\nA paragraph.\n');
         saveComments(file, 1, [
           comment('c_cli', { body: 'seen from the command' }),
           comment('c_other', { body: 'left out by the filter' }),
+          comment('c_done', { body: 'resolved', resolved: true, author: 'bob' }),
+          comment('c_early', { body: 'before the cut', createdAt: '2026-07-01T00:00:00.000Z' }),
         ]);
+        store = storeDir(file);
       } finally {
         delete process.env['AKAPEN_HOME'];
       }
@@ -222,6 +269,27 @@ describe('akapen history, from a real process', () => {
       const [fromHistory] = JSON.parse(ok.stdout) as Record<string, unknown>[];
       const { review_id: _r, created_at: _c, ...rest } = fromHistory!;
       expect(rest).toEqual(fromComments);
+
+      expect(history()).toEqual(['c_cli', 'c_early', 'c_other']);
+      expect(history('--all')).toEqual(['c_cli', 'c_done', 'c_early', 'c_other']);
+      expect(history('--all', '--author', 'bob')).toEqual(['c_done']);
+      expect(history('--since', '2026-08-01')).toEqual(['c_cli', 'c_other']);
+
+      const extra = spawnSync('bun', ['run', CLI, 'history', file], { env, encoding: 'utf8' });
+      expect(extra.status).toBe(1);
+      expect(extra.stderr).toContain('history: unexpected');
+
+      // One unreadable entry is named and left out; the rest still print.
+      const f = join(store, 'rounds', '001', 'comments.json');
+      writeFileSync(
+        f,
+        JSON.stringify([...(JSON.parse(readFileSync(f, 'utf8')) as unknown[]), { id: 'c_broken' }]),
+      );
+      const mixed = spawnSync('bun', ['run', CLI, 'history', '--grep', 'command'], { env, encoding: 'utf8' });
+      expect(mixed.status).toBe(0);
+      expect((JSON.parse(mixed.stdout) as { id: string }[]).map((c) => c.id)).toEqual(['c_cli']);
+      expect(mixed.stderr).toContain('skipped c_broken in');
+      expect(mixed.stderr).toContain(': no body');
 
       const bad = spawnSync('bun', ['run', CLI, 'history', '--since', 'yesterday'], {
         env,

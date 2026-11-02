@@ -87,6 +87,14 @@ describe('flags that take a value', () => {
     expect(() => parseArgs(['history', '--since', '--all'])).toThrow(/--since needs a value/);
   });
 
+  it('refuses the history filters on any other command', () => {
+    expect(() => parseArgs(['comments', 'note.md', '--grep', 'x'])).toThrow(
+      /--grep is only for akapen history/,
+    );
+    expect(() => parseArgs(['note.md', '--since=2026-08-01'])).toThrow(/--since is only for akapen history/);
+    expect(parseArgs(['history', '--grep', 'x', '--since', '2026-08-01']).positional).toEqual(['history']);
+  });
+
   it('reads the value attached with =', () => {
     expect(parseArgs(['note.md', '--host=0.0.0.0']).host).toBe('0.0.0.0');
   });

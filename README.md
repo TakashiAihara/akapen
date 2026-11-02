@@ -274,10 +274,10 @@ akapen history                          # unresolved comments of every review, a
 akapen history --all                    # include resolved ones
 akapen history --grep naming            # body contains the text, in any case (plain text, not a pattern)
 akapen history --author alice           # comments by that author, exactly
-akapen history --since 2026-08-01       # made at or after it (a date is midnight UTC)
+akapen history --since 2026-08-01       # made at or after it: a date is midnight UTC, or give a time with its offset (2026-08-01T09:00+09:00)
 ```
 
-The filters combine. Each entry is what `akapen comments` prints, plus `review_id` (the store directory's name, `<basename>-<hash>`, which tells apart two documents with the same name) and `created_at`. Entries are oldest first across all reviews. It reads the store directories rather than the documents, so a review whose file has since moved or gone is still listed; when its `review.json` is gone too, `path` is `null`. Replies are printed with their comment but are not searched by `--grep` or `--author`.
+The filters combine. Each entry is what `akapen comments` prints, plus `review_id` (the store directory's name, `<basename>-<hash>`, which tells apart two documents with the same name) and `created_at`. Entries are oldest first across all reviews. It reads the store directories rather than the documents, so a review whose file has since moved or gone is still listed; `path` is where the document was when it was reviewed, and may no longer be where it is; when its `review.json` is gone too, `path` is `null`. A stored comment missing a field history reads (body, author, resolved state, a readable creation time) is left out and named on stderr. `akapen history` takes no file, and `--grep` and `--since` are refused on any other command. Replies are printed with their comment but are not searched by `--grep` or `--author`.
 
 ### Extra CSS and the sample document
 

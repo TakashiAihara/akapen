@@ -150,6 +150,14 @@ export function parseArgs(argv: string[]): Args {
     i++;
   }
 
+  // Filters only history reads. Anywhere else they would be accepted and do nothing,
+  // which is the failure this file exists to remove.
+  for (const name of ['grep', 'since'] as const) {
+    if (args[name] !== undefined && args.positional[0] !== 'history') {
+      throw new UsageError(`--${name} is only for akapen history`);
+    }
+  }
+
   return args;
 }
 

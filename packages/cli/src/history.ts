@@ -10,8 +10,8 @@ import type { ReviewComments, RoundComment } from '@akapen/core/store';
 import { UsageError } from './args.ts';
 
 /**
- * One comment as an agent reads it. Shared, so the two commands cannot drift apart: a
- * reader that handles one handles the other.
+ * One comment as an agent reads it. Shared, so the two commands cannot drift apart in
+ * the shape of an entry: a reader that parses one parses the other.
  */
 export function commentJson(c: RoundComment, path: string | null, currentRound: number) {
   return {
@@ -56,16 +56,57 @@ export type HistoryFilter = {
 };
 
 /**
- * `--since`, as anything Date reads: `2026-08-01` (midnight UTC) or a full timestamp.
+ * `--since`: a date (`2026-08-01`, midnight UTC) or a timestamp that says its offset
+ * (`2026-08-01T09:00:00+09:00`, `...Z`).
  *
- * A value Date cannot read fails here. Letting it through as NaN would compare false
- * against every comment and print `[]`, which reads as "nothing since then".
+ * Only these two shapes. Date.parse reads far more, and reads some of it in ways nobody
+ * typing it means: `1` is the year 2001, and a time with no offset is local time while a
+ * bare date is UTC. A value it cannot read would compare false against every comment and
+ * print `[]`, which reads as "nothing since then", so anything else fails here.
  */
+const SINCE = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2}))?$/;
+
 export function parseSince(raw: string): number {
-  const t = Date.parse(raw);
-  if (Number.isNaN(t))
-    throw new UsageError(`--since must be a date, such as 2026-08-01, got ${JSON.stringify(raw)}`);
+  const t = SINCE.test(raw) ? Date.parse(raw) : NaN;
+  if (Number.isNaN(t)) {
+    throw new UsageError(
+      `--since must be a date (2026-08-01, UTC) or a timestamp with its offset (2026-08-01T09:00+09:00), got ${JSON.stringify(raw)}`,
+    );
+  }
   return t;
+}
+
+/** A stored comment history cannot read, where it is, and why. */
+export type Skipped = { review_id: string; id: string | null; reason: string };
+
+/**
+ * Split off the comments history cannot read: stored JSON is not checked on the way in
+ * (#61), and one entry without a body would otherwise end the whole listing with a
+ * TypeError. They are reported rather than dropped without a word.
+ */
+export function readable(reviews: ReviewComments[]): { reviews: ReviewComments[]; skipped: Skipped[] } {
+  const skipped: Skipped[] = [];
+  const kept = reviews.map((r) => ({
+    ...r,
+    comments: r.comments.filter((c) => {
+      const reason = unreadable(c);
+      if (reason === null) return true;
+      const id = typeof c.id === 'string' ? c.id : null;
+      skipped.push({ review_id: r.reviewId, id, reason });
+      return false;
+    }),
+  }));
+  return { reviews: kept, skipped };
+}
+
+function unreadable(c: RoundComment): string | null {
+  const raw = c as Partial<Record<keyof RoundComment, unknown>>;
+  if (typeof raw.id !== 'string') return 'no id';
+  if (typeof raw.body !== 'string') return 'no body';
+  if (typeof raw.author !== 'string') return 'no author';
+  if (typeof raw.resolved !== 'boolean') return 'no resolved state';
+  if (typeof raw.createdAt !== 'string' || Number.isNaN(Date.parse(raw.createdAt))) return 'no creation time';
+  return null;
 }
 
 /**

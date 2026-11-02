@@ -5,7 +5,7 @@
  * while building the history view, loadAllComments trusted review.json and missed
  * rounds that were on disk.
  */
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -274,15 +274,75 @@ describe('every review in the store', () => {
     expect(allReviewComments()[0]?.currentRound).toBe(3);
   });
 
-  it('reads a round directory by the name it has, padded or not', () => {
-    seed();
-    mkdirSync(join(storeDir(work), 'rounds', '4'));
-    writeFileSync(
-      join(storeDir(work), 'rounds', '4', 'comments.json'),
-      JSON.stringify([makeComment(SOURCE, 3, 3, 'in an unpadded directory', 't')]),
-    );
+  // What `akapen comments` reads, side by side with what history reads for the same store.
+  const agrees = () => {
     const [only] = allReviewComments();
-    expect(only?.comments[0]).toMatchObject({ round: 4, body: 'in an unpadded directory' });
+    expect(only?.currentRound).toBe(loadReview(work).currentRound);
+    expect(only?.comments).toEqual(loadAllComments(work));
+  };
+
+  it.each([
+    [
+      'review.json has a current round but no list of rounds',
+      () =>
+        writeFileSync(join(storeDir(work), 'review.json'), JSON.stringify({ path: work, currentRound: 3 })),
+    ],
+    [
+      'a round directory holds comments but no snapshot',
+      () => {
+        mkdirSync(join(storeDir(work), 'rounds', '002'));
+        writeFileSync(
+          join(storeDir(work), 'rounds', '002', 'comments.json'),
+          JSON.stringify([makeComment(SOURCE, 3, 3, 'no snapshot beside it', 't')]),
+        );
+      },
+    ],
+    [
+      'a round directory is not padded',
+      () => {
+        mkdirSync(join(storeDir(work), 'rounds', '4'));
+        writeFileSync(join(storeDir(work), 'rounds', '4', 'content.md'), SOURCE);
+        writeFileSync(
+          join(storeDir(work), 'rounds', '4', 'comments.json'),
+          JSON.stringify([makeComment(SOURCE, 3, 3, 'in an unpadded directory', 't')]),
+        );
+      },
+    ],
+  ])('agrees with akapen comments when %s', (_label, shape) => {
+    seed();
+    shape();
+    agrees();
+  });
+
+  it('agrees with akapen comments with no review.json, and lists a round written two ways once', () => {
+    seed();
+    mkdirSync(join(storeDir(work), 'rounds', '0001'));
+    writeFileSync(join(storeDir(work), 'rounds', '0001', 'content.md'), SOURCE);
+    rmSync(join(storeDir(work), 'review.json'));
+
+    agrees();
+    expect(allReviewComments()[0]?.comments.length).toBe(3);
+  });
+
+  it('reads a review.json that names another store from the disk, keeping the path it names', () => {
+    seed();
+    openRound(work, EDITED);
+    const elsewhere = join(sandbox, 'elsewhere.md');
+    writeFileSync(
+      join(storeDir(work), 'review.json'),
+      JSON.stringify({ version: 2, path: elsewhere, currentRound: 1, rounds: [] }),
+    );
+
+    const [only] = allReviewComments();
+    expect(only?.path).toBe(elsewhere);
+    expect(only?.currentRound).toBe(2);
+    expect(only?.comments.length).toBe(3);
+  });
+
+  it('skips a dangling link in the store rather than failing', () => {
+    seed();
+    symlinkSync(join(sandbox, 'gone'), join(process.env['AKAPEN_HOME']!, 'reviews', 'dangling'));
+    expect(allReviewComments().map((r) => r.path)).toEqual([work]);
   });
 
   it('lists a review that has no rounds yet', () => {

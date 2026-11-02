@@ -11,7 +11,7 @@ import { liveInstances, reachableHost, readInstances } from '@akapen/core/instan
 import { liveEntries, sweep as sweepSessions } from '@akapen/core/sessions';
 import { currentToken, resolveToken, rotateToken, secureHome, tokenIsPinned } from '@akapen/core/token';
 import { parseArgs, resolveHost, resolvePort, resolveSession, UsageError, type Args } from './args.ts';
-import { commentJson, historyJson, parseSince } from './history.ts';
+import { commentJson, historyJson, parseSince, readable } from './history.ts';
 
 const USAGE = `akapen — markdown inline review
 
@@ -35,12 +35,13 @@ options:
   --keymap <file>          JSON overriding the keymap ({ "action": ["key"] })
   --root <dir>             file root: serve images the document refers to from anywhere
                            under this directory (default: the document's own directory)
-  --author <name>          comment author (default $USER); history: only that author's
+  --author <name>          comment author (default $USER); history: only comments by that author
   --token <s>              use this token instead of the stored one
   --no-auth                serve with no token at all (only behind something that authenticates)
   --all                    comments, history: include resolved ones
   --grep <text>            history: only comments whose body contains it (any case)
-  --since <date>           history: only comments made at or after it (2026-08-01)
+  --since <date>           history: only comments made at or after it
+                           (2026-08-01 is midnight UTC; or 2026-08-01T09:00+09:00)
   --json                   list: print as JSON (for agents)
   --session <id>           list: only what that session started (a unique prefix works)
   --rotate                 token: replace the stored token
@@ -361,6 +362,8 @@ if (positional[0] === 'comments') {
  * moved or deleted still shows up.
  */
 if (positional[0] === 'history') {
+  // It takes no file: a word here is most likely a document meant for `akapen comments`.
+  if (positional.length > 1) fail(`history: unexpected ${JSON.stringify(positional.slice(1).join(' '))}`);
   let since: number | undefined;
   try {
     since = args.since === undefined ? undefined : parseSince(args.since);
@@ -369,7 +372,11 @@ if (positional[0] === 'history') {
     fail(err.message);
   }
   const filter = { all: args.all, grep: args.grep, author: args.author, since };
-  console.log(JSON.stringify(historyJson(allReviewComments(), filter), null, 2));
+  const { reviews, skipped } = readable(allReviewComments());
+  for (const s of skipped) {
+    console.error(`akapen: history: skipped ${s.id ?? 'a comment'} in ${s.review_id}: ${s.reason}`);
+  }
+  console.log(JSON.stringify(historyJson(reviews, filter), null, 2));
   process.exit(0);
 }
 
