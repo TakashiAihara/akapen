@@ -265,6 +265,20 @@ Current-round comments come first, ordered by line. Entries with `current_round:
 
 An agent resolves with `POST /api/comments/<id>/resolve` and the `Authorization` header. The call flips the state, so a second one reopens the comment; check `resolved` in the response. Which comments an agent should resolve is the caller's policy; the channel's instructions say: ones it changed the document for or did what they asked, or when the person says so, and not a reply that only answers a question.
 
+### Looking back across reviews
+
+`akapen comments` answers for one document. To see what has been raised across every review in the store — material for a style guide, or a check on what keeps coming up — there is `akapen history`.
+
+```bash
+akapen history                          # unresolved comments of every review, as JSON
+akapen history --all                    # include resolved ones
+akapen history --grep naming            # body contains the text, in any case (plain text, not a pattern)
+akapen history --author alice           # comments by that author, exactly
+akapen history --since 2026-08-01       # made at or after it: a date is midnight UTC, or give a time with its offset (2026-08-01T09:00+09:00)
+```
+
+The filters combine. Each entry is what `akapen comments` prints, plus `review_id` (the store directory's name, `<basename>-<hash>`, which tells apart two documents with the same name) and `created_at`. Entries are oldest first across all reviews. It reads the store directories rather than the documents, so a review whose file has since moved or gone is still listed; `path` is where the document was when it was reviewed, and may no longer be where it is; when its `review.json` is gone too, or names a document whose store is not this one, `path` is `null`. A stored comment missing a field history reads (body, author, resolved state, a readable creation time, a list of replies if it has any) is left out and named on stderr; `akapen comments` still prints it as stored. `akapen history` takes no file, and `--grep` and `--since` are refused on any other command. Replies are printed with their comment but are not searched by `--grep` or `--author`.
+
 ### Extra CSS and the sample document
 
 There is an example stylesheet in `examples/dense.css`. The space above a heading is the variable `--ak-heading-above`, set per heading row (`.row.heading { --ak-heading-above: 12px; }`), not the heading's `margin-top`: the line number and the + are placed with it, so a sheet that sets the margin leaves them behind.
