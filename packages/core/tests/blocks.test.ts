@@ -267,7 +267,13 @@ describe('block-end', () => {
 
   it('marks a list that ends in an empty item on that item, its gap row', () => {
     expect(endsOf('- a\n-\n\n1. x\n')).toEqual([2]);
-    expect(endsOf('- a\n-\n- c\n\nAfter.\n')).toEqual([3]);
+    expect(endsOf('> - a\n> -\n>\n> 1. x\n')).toEqual([2]);
+  });
+
+  it('marks a list in a quote on its last item, not on the blank quote line after it', () => {
+    expect(endsOf('> - a\n>\n> After.\n')).toEqual([1]);
+    expect(endsOf('> > - a\n> >\n> > After.\n')).toEqual([1]);
+    expect(endsOf('> Before.\n>\n> - a\n> - b\n>\n> After.\n')).toEqual([4]);
   });
 
   it('marks the last row of a code block or a table, whatever list follows (#227, #242)', () => {

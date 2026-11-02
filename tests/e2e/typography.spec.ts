@@ -83,6 +83,20 @@ test('leaves the same space on the way out of a list as on the way in (#92)', as
   expect(between).toBeLessThan(into - 3);
 });
 
+test('leaves the same space on the way out of a list in a quote as on the way in', async ({
+  page,
+  akapen,
+  request,
+}) => {
+  const source = '> Before.\n>\n> - a\n> - b\n>\n> After.\n';
+  const gaps = await gapsOf(page, source, akapen, request);
+  // Before → >, > → a, a → b, b → >, > → After: the blank quote line is a row of its own.
+  expect(gaps).toHaveLength(5);
+  const [toBlank, intoList, between, toBlankAgain, out] = gaps as [number, number, number, number, number];
+  expect(toBlankAgain + out).toBeCloseTo(toBlank + intoList, 0);
+  expect(between).toBeLessThan(intoList - 3);
+});
+
 test('keeps the margin of an hr that ends a list, as one outside a list has (#240)', async ({
   page,
   akapen,

@@ -171,6 +171,7 @@ function push(ctx: Ctx, b: Omit<Block, 'text' | 'depth' | 'quoted'> & Partial<Pi
   } as Block);
 }
 
+/** Record where `token` ends: a block to mark (`mark`), or an item to clear (see End). */
 function endAt(ctx: Ctx, token: Token, mark: boolean): void {
   const [, e] = token.map ?? [0, 0];
   ctx.ends.push({ line: e, mark });
@@ -178,9 +179,10 @@ function endAt(ctx: Ctx, token: Token, mark: boolean): void {
 
 /**
  * The last row the page shows that starts at or before `line`: a table's delimiter row is
- * hidden. It is inside the block that ends there, as no lower bound checks, because the
- * first line of every block and item recorded holds a row of its own (its marker, fence,
- * header or code).
+ * hidden, and a quote's blank line (`>`) shows no text. A list's lines run on over one
+ * blank line after it, which in a quote is such a row (#242). The row found is inside the
+ * block that ends there, as no lower bound checks, because the first line of every block
+ * and item recorded holds a row of its own (its marker, fence, header or code).
  */
 function lastShownBy(rows: Block[], line: number): Block | undefined {
   let lo = 0;
@@ -191,7 +193,9 @@ function lastShownBy(rows: Block[], line: number): Block | undefined {
     else hi = mid;
   }
   for (let i = lo - 1; i >= 0; i--) {
-    if (!rows[i]!.flags.includes('table-separator')) return rows[i];
+    const row = rows[i]!;
+    const blankQuote = row.flags.includes('gap') && /^[\s>]*$/.test(row.text);
+    if (!row.flags.includes('table-separator') && !blankQuote) return row;
   }
   return undefined;
 }
@@ -201,7 +205,8 @@ function lastShownBy(rows: Block[], line: number): Block | undefined {
  * leave a paragraph's space after it (#92, #227). The parser decides it rather than the
  * page reading row kinds: the kinds cannot tell a list's next item from a new list, and
  * the last row of a table can be its hidden delimiter row (#242). The mark goes on the last
- * row shown, which for a list ending in an empty item is that item's gap row.
+ * row shown: for a list ending in an empty item that is the item's gap row, not the item
+ * before it, which would leave the space inside the list.
  *
  * In recorded order, so what is inside comes first: every item takes the mark off the end
  * of what it holds, as the next item follows tightly, and the list then puts it back on
@@ -291,7 +296,7 @@ function walkFence(token: Token, ctx: Ctx): void {
       flags: ['code-last'],
     });
   }
-  // Not a mermaid block, returned above: it keeps a margin of its own.
+  // A mermaid block, returned above, is not marked as a block: it keeps a margin of its own.
   endAt(ctx, token, true);
 }
 
@@ -398,8 +403,8 @@ function walkList(tokens: Token[], openIdx: number, ctx: Ctx): number {
     walk(tokens.slice(restStart, itemClose), ctx);
     ctx.depth--;
 
-    // A block that ends an item ends the item, not the list: the next item follows as
-    // tightly as one item follows another. The last item's end is the list's, marked below.
+    // A block that ends an item ends the item, not the list: no space is asked for before
+    // the next item. The last item's end is the list's, marked below.
     endAt(ctx, t, false);
 
     index++;
