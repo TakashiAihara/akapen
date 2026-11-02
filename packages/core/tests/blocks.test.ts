@@ -274,3 +274,55 @@ describe('an empty fence (#262)', () => {
     expect(Math.max(...blocks.map((b) => b.endLine))).toBe(3);
   });
 });
+
+const codeFlags = (markdown: string) =>
+  buildDoc('c.md', markdown)
+    .blocks.filter((b) => b.kind === 'code')
+    .map((b) => [b.startLine, b.flags]);
+
+describe('fence content marks (#243)', () => {
+  it('marks every content row, and the empty ones apart from a line of only a non-breaking space', () => {
+    expect(codeFlags('```\na\n\n\u00a0\n```\n')).toEqual([
+      [1, ['code-first']],
+      [2, ['code-content']],
+      [3, ['code-content', 'code-empty']],
+      [4, ['code-content']],
+      [5, ['code-last']],
+    ]);
+  });
+
+  it('marks an empty line inside a multi-line highlighted string as empty, and draws it as one', () => {
+    const markdown = '```js\nconst s = `a\n\nb`;\n```\n';
+    expect(codeFlags(markdown)).toEqual([
+      [1, ['code-first']],
+      [2, ['code-content']],
+      [3, ['code-content', 'code-empty']],
+      [4, ['code-content']],
+      [5, ['code-last']],
+    ]);
+    const row = buildDoc('c.md', markdown).blocks.find((b) => b.startLine === 3)!;
+    expect(row.html).toBe('<div class="code-line"><code>&nbsp;</code></div>');
+  });
+
+  it.each([
+    ['CRLF line endings', '```\r\na\r\n\r\nb\r\n```\r\n', [3]],
+    ['a fence in a quote, emptied by a bare >', '> ```\n> a\n>\n> b\n> ```\n', [3]],
+    [
+      'a fence in a list, with a line indented short of the item',
+      '- item\n\n  ```\n  a\n \n  b\n  ```\n',
+      [5],
+    ],
+    ['a fence left open, ending in empty lines', '```\na\n\n\n', [3, 4]],
+  ])('marks the empty lines of %s', (_, markdown, empty) => {
+    const rows = buildDoc('c.md', markdown).blocks.filter((b) => b.flags.includes('code-empty'));
+    expect(rows.map((b) => b.startLine)).toEqual(empty);
+  });
+
+  it('leaves an indented block right after a quoted fence left open unmarked', () => {
+    expect(codeFlags('> ```sh\n> echo q\n    indented\n')).toEqual([
+      [1, ['code-first']],
+      [2, ['code-content']],
+      [3, []],
+    ]);
+  });
+});
