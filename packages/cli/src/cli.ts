@@ -20,6 +20,7 @@ const USAGE = `akapen — markdown inline review
                                        -- before a text that starts with a dash)
   akapen resolve <file.md> <id>  resolve a comment
   akapen rounds cut <file.md>    close the current round and open the next one
+                                 (none when the file matches the current round)
   akapen list                    print the akapen running on this host
   akapen channel                 push this session's comments to Claude Code (MCP channel)
   akapen token                   print this host's token (--rotate to replace it)

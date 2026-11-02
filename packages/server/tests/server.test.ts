@@ -741,7 +741,7 @@ describe('cutting a round while the file is being written', () => {
     expect(v.parse(DocPayloadSchema, await (await fetch(`${base}/api/doc`)).json()).round.n).toBe(2);
   }, 30_000);
 
-  it('folds two cuts half a second apart into one round', async () => {
+  it('folds two cuts one after the other into one round', async () => {
     // Past the guard above: the first cut has finished before the second arrives, so the
     // second is not refused, and it used to open a round of its own on the same content.
     const other = listen(base);
@@ -755,7 +755,7 @@ describe('cutting a round while the file is being written', () => {
       const first = await post('/api/rounds');
       expect(first.status).toBe(200);
       expect(v.parse(DocPayloadSchema, await first.json()).round.n).toBe(2);
-      await new Promise((r) => setTimeout(r, 500));
+      // Awaited one after the other, so the second starts only once the first is over.
       const second = await post('/api/rounds');
       expect(second.status).toBe(200);
       // The round the first one opened, which is the one every screen is now on.
@@ -764,8 +764,8 @@ describe('cutting a round while the file is being written', () => {
       expect(answer.round.total).toBe(2);
 
       expect(frozen(join(sandbox, 'home'))).toHaveLength(2); // the first round, and one new one
-      const rounds = (await (await fetch(`${base}/api/rounds`)).json()) as { current: number };
-      expect(rounds.current).toBe(2);
+      const rounds = (await (await fetch(`${base}/api/rounds`)).json()) as { rounds: unknown[] };
+      expect(rounds.rounds).toHaveLength(2);
 
       // One stream carries frames in order, so once a change made after the second cut is
       // seen, a round event that cut sent would have been seen before it.
@@ -800,6 +800,11 @@ describe('cutting a round while the file is being written', () => {
       const res = await fetch(`${other.url}/api/rounds`, { method: 'POST' });
       expect(res.status).toBe(200);
       expect(v.parse(DocPayloadSchema, await res.json()).round.n).toBe(1);
+      // Blank still, but no longer the same as the round: that is a round to open.
+      writeFileSync(file, '\n');
+      const cut = await fetch(`${other.url}/api/rounds`, { method: 'POST' });
+      expect(cut.status).toBe(200);
+      expect(v.parse(DocPayloadSchema, await cut.json()).round.n).toBe(2);
     } finally {
       other.stop();
     }

@@ -659,10 +659,10 @@ export function startServer(opts: ServeOptions) {
     // Two people pressing the button half a second apart, outside the guard above: the
     // second reads what the first just froze. Opening a round for it would close the
     // first one before anything could be written on it, and leave that screen behind.
-    // The round it asked for exists already, so it gets that one. Nothing is lost by
-    // this: the button is only on screen while the file differs from the snapshot.
-    // It holds only because cuts run one at a time: two in flight together would both
-    // compare against the snapshot from before either of them.
+    // The round it asked for exists already, holding the content it would have frozen,
+    // so it gets that one. This compares against what the first froze only because
+    // nothing awaits between here and `snapshot = live` below; an await in between
+    // would let a second cut compare against the snapshot from before either of them.
     if (live === snapshot) return c.json(docPayload());
     review = openRound(file, live);
     snapshot = live;
