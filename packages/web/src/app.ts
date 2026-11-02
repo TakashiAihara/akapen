@@ -725,7 +725,13 @@ function bubbleFor(c: Comment | RoundComment, opts: { past?: boolean } = {}): HT
     if (opts.past) void showRound((c as RoundComment).round, c.id);
     else setActive(c.id, 'doc');
   });
-  box.addEventListener('focus', () => setActive(c.id));
+  // `focusin`, not `focus`: a keyboard also lands in a folded body's scroll box, and
+  // `focus` on the bubble never hears of it, so the body stayed at 12em (#246). Not the
+  // reply box or the buttons: focusing those is not a request to read the thread.
+  box.addEventListener('focusin', (e) => {
+    if (e.target === box || (e.target instanceof Element && e.target.matches('.bubble-body, .reply-body')))
+      setActive(c.id);
+  });
   return box;
 }
 
@@ -838,6 +844,9 @@ function renderRail() {
   for (const c of state.comments.toSorted((a, b) => a.startLine - b.startLine)) {
     anchoredEl.append(bubbleFor(c));
   }
+  // The old bubbles are gone from the page; still watched, they would be kept alive.
+  bubbleSizes.disconnect();
+  for (const b of anchoredEl.querySelectorAll('.bubble')) bubbleSizes.observe(b);
   renderCarried();
 }
 
@@ -858,6 +867,14 @@ function renderCarried() {
   carriedEl.append(h);
   for (const c of carried) carriedEl.append(bubbleFor(c, { past: true }));
 }
+
+/**
+ * A bubble also changes height with nothing calling layoutRail: hover and :focus-within
+ * show the reply form on a bubble that is not active, and it grew under the next one
+ * (#246). Watching the sizes covers those and any other. layoutRail only moves bubbles,
+ * never resizes one, so this does not feed itself.
+ */
+const bubbleSizes = new ResizeObserver(() => layoutRail());
 
 /**
  * Line each bubble up with its anchor row. Overlaps push down; the document never moves.

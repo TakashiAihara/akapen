@@ -39,14 +39,15 @@ export type Akapen = {
   append: (text: string) => void;
 };
 
-async function waitUntilServing(url: string): Promise<void> {
+async function waitUntilServing(url: string, token = TOKEN): Promise<void> {
   const deadline = Date.now() + 20_000;
   for (;;) {
     try {
       // Each attempt is given its own deadline. A server that accepts the connection and
       // then never answers would otherwise hold this open past the loop's deadline, and
       // "did not start" would arrive as a test timeout with nothing said about why.
-      if ((await fetch(`${url}/api/doc`, { headers: AUTH, signal: AbortSignal.timeout(2_000) })).ok) return;
+      const headers = { authorization: `Bearer ${token}` };
+      if ((await fetch(`${url}/api/doc`, { headers, signal: AbortSignal.timeout(2_000) })).ok) return;
     } catch {
       /* not up yet */
     }
@@ -69,6 +70,8 @@ export async function startPeer(
   extra: string[] = [],
   /** A port to take again, for a test of what happens when one is reused. */
   reuse?: number,
+  /** Another token, for an akapen a tab's cookie does not open. */
+  token = TOKEN,
 ): Promise<{ port: number; stop: () => Promise<void> }> {
   const port = reuse ?? nextPort++;
   const sandbox = mkdtempSync(join(tmpdir(), 'akapen-e2e-peer-'));
@@ -78,7 +81,7 @@ export async function startPeer(
   const proc: ChildProcess = spawn(
     'bun',
     ['run', 'packages/cli/src/cli.ts', file, '-p', String(port), ...extra],
-    { env: { ...process.env, AKAPEN_HOME: home, AKAPEN_TOKEN: TOKEN }, stdio: 'ignore' },
+    { env: { ...process.env, AKAPEN_HOME: home, AKAPEN_TOKEN: token }, stdio: 'ignore' },
   );
 
   /**
@@ -96,7 +99,7 @@ export async function startPeer(
   };
 
   try {
-    await waitUntilServing(`http://127.0.0.1:${port}`);
+    await waitUntilServing(`http://127.0.0.1:${port}`, token);
   } catch (err) {
     // The caller never receives a handle when this throws, so nothing else can stop it
     await stop();
