@@ -129,7 +129,15 @@ test('says the connection is lost when the port answers to another token, and st
       // Not knowing whose akapen answers, the screen writes nothing to it.
       const bubble = page.locator('#railAnchored .bubble').first();
       await bubble.getByRole('button', { name: 'Resolve' }).click();
-      await expect(bubble.locator('.bubble-error')).toContainText('another document');
+      await expect(bubble.locator('.bubble-head ~ .bubble-error')).toContainText('another document');
+      await bubble.hover();
+      await bubble.locator('.reply-input').fill('not for that akapen');
+      await bubble.locator('.reply-send').click();
+      const said = bubble.locator('.reply-form .bubble-error');
+      await expect(said).toContainText('reply failed');
+      await expect(said).toContainText('another document');
+      // Kept, so the words are not lost.
+      await expect(bubble.locator('.reply-input')).toHaveValue('not for that akapen');
     } finally {
       await locked.stop();
     }

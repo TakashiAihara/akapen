@@ -611,7 +611,7 @@ function repliesFor(c: Comment | RoundComment, past: boolean): HTMLElement {
       s.title = r.sessionId;
       who.append(s);
     }
-    item.append(who, el('div', 'reply-body', escapeHtml(r.body)));
+    item.append(who, foldedBody('reply-body', r.body));
     wrap.append(item);
   }
 
@@ -672,6 +672,20 @@ function repliesFor(c: Comment | RoundComment, past: boolean): HTMLElement {
   return wrap;
 }
 
+/**
+ * A comment's or a reply's body, folded at 12em until its bubble is active.
+ *
+ * Out of the Tab order (#246). Folded, the browser makes it a stop of its own as a scroll
+ * box, but landing there did not make the bubble active, and once open it is no longer a
+ * scroll box, so the focus fell out of the bubble. The bubble is the stop instead: focus
+ * on it makes it active, which opens every body in it. A click still focuses the body.
+ */
+function foldedBody(cls: 'bubble-body' | 'reply-body', text: string): HTMLElement {
+  const body = el('div', cls, escapeHtml(text));
+  body.tabIndex = -1;
+  return body;
+}
+
 function bubbleFor(c: Comment, opts?: { past?: false }): HTMLElement;
 function bubbleFor(c: RoundComment, opts: { past: true }): HTMLElement;
 function bubbleFor(c: Comment | RoundComment, opts: { past?: boolean } = {}): HTMLElement {
@@ -715,7 +729,7 @@ function bubbleFor(c: Comment | RoundComment, opts: { past?: boolean } = {}): HT
   });
   head.append(btn);
 
-  box.append(head, el('div', 'bubble-body', escapeHtml(c.body)));
+  box.append(head, foldedBody('bubble-body', c.body));
   box.append(repliesFor(c, opts.past === true));
   // If only a mouse can expand the collapsed body, the keyboard cannot read past 12em
   box.tabIndex = 0;
@@ -723,17 +737,7 @@ function bubbleFor(c: Comment | RoundComment, opts: { past?: boolean } = {}): HT
     if (opts.past) void showRound((c as RoundComment).round, c.id);
     else setActive(c.id, 'doc');
   });
-  // `focusin`, not `focus`: a keyboard also lands in a folded body's scroll box, and
-  // `focus` on the bubble never hears of it, so the body stayed at 12em (#246). Not the
-  // reply box or the buttons: focusing those is not a request to read the thread.
-  box.addEventListener('focusin', (e) => {
-    if (e.target === box) return setActive(c.id);
-    if (!(e.target instanceof Element && e.target.matches('.bubble-body, .reply-body'))) return;
-    // Moved to the bubble, which makes it active through the first check here.
-    // Left on the body, the focus would drop to the page once the open body is no longer
-    // a scroll box, and the next Tab would start from the top.
-    box.focus({ preventScroll: true });
-  });
+  box.addEventListener('focus', () => setActive(c.id));
   return box;
 }
 
@@ -846,7 +850,8 @@ function renderRail() {
     anchoredEl.append(bubbleFor(c));
   }
   // The old bubbles are gone from the page; still watched, they would be kept alive.
-  // Observing calls back once more, one extra layout per render, which is cheap.
+  // Observing calls back once more: one extra layout per render, and the rail is rendered
+  // on comment updates, not on keystrokes.
   bubbleSizes.disconnect();
   for (const b of anchoredEl.querySelectorAll('.bubble')) bubbleSizes.observe(b);
   renderCarried();
@@ -873,7 +878,7 @@ function renderCarried() {
 /**
  * A bubble also changes height with nothing calling layoutRail: hover and :focus-within
  * show the reply form on a bubble that is not active, and it grew under the next one
- * (#246). Watching the sizes covers those, typing in a draft or a reply, and any other.
+ * (#246). Watching the sizes covers those, a draft or reply box resized by hand, and any other.
  *
  * layoutRail moves bubbles and sets the rail's height. The height can bring in the page's
  * scrollbar, which narrows the rail and makes bubbles taller, so it calls back once more;
@@ -887,7 +892,7 @@ const bubbleSizes = new ResizeObserver(() => layoutRail());
  * Not inserting rows into the document is the whole point, so all the alignment is absorbed here.
  *
  * Reads (rect, offsetHeight) and writes (style.top) are kept apart. Interleaving them forces
- * a synchronous layout per bubble, and this function runs on every keystroke in the textarea —
+ * a synchronous layout per bubble, and this function runs whenever a bubble changes size —
  * on a long document that becomes visible.
  */
 function layoutRail() {
@@ -942,7 +947,9 @@ function setActive(id: string, scroll?: 'doc' | 'rail') {
     const e = getLine(row, 'end');
     row.classList.toggle('linked', !!target && s <= target.endLine && e >= target.startLine);
   }
-  // `active` un-collapses .bubble-body and .reply-body, so the height changes. Re-run the alignment
+  // `active` un-collapses .bubble-body and .reply-body, so the height changes. The size
+  // watcher would realign too, but only after this returns, and the scroll below aims at
+  // where the bubble is: when the one above folds, it moves up.
   layoutRail();
   if (!target) return;
   if (scroll === 'doc') rowFor(target.startLine)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });

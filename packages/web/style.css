@@ -773,9 +773,8 @@ body.show-lines .row.fm-fence { height: auto; }
   overflow-wrap: anywhere;
 }
 .bubble-body, .reply-body { max-height: 12em; overflow-y: auto; }
-/* Only on `active`, not :focus-within. Opening a body removes its scroll box, so focus on
-   it would leave and :focus-within would fold it again. Focus on the bubble, or on a
-   folded body's scroll box, makes it active instead, which is the keyboard's way in. */
+/* Only on `active`, not :focus-within: focus on Resolve or the reply box is not a request
+   to read the thread. Focus on the bubble itself makes it active, the keyboard's way in. */
 .bubble.active :is(.bubble-body, .reply-body) { max-height: none; }
 /* A click on a carried bubble opens its round's history instead of making it active, so
    hover, or focus inside it, opens it here. It sits in the flow rather than at a
