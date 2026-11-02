@@ -427,6 +427,44 @@ describe('akapen reply and resolve', () => {
     expect(nobody.stderr).toContain('answered, so nothing was written; start one (akapen');
   }, 60_000);
 
+  it('cuts a round, and exits 1 when nothing serves the file or the server refuses (#178)', async () => {
+    const { lines, home, file, stop } = await start(['--no-auth']);
+    const [url] = urlsIn(lines);
+    const current = async () =>
+      ((await (await fetch(`${url}/api/rounds`)).json()) as { current: number }).current;
+    expect(await current()).toBe(1);
+
+    const cut = cli(home, ['rounds', 'cut', file]);
+    expect(cut.status).toBe(0);
+    expect(cut.stdout.trim()).toBe('round 2 is now current');
+    expect(await current()).toBe(2);
+    expect(cli(home, ['rounds', 'cut', file]).stdout.trim()).toBe('round 3 is now current');
+    expect(await current()).toBe(3);
+
+    const misspelt = cli(home, ['rounds', 'cutt', file]);
+    expect(misspelt.status).toBe(1);
+    expect(misspelt.stderr).toContain('unknown subcommand "cutt"');
+    expect(await current()).toBe(3);
+
+    const extra = cli(home, ['rounds', 'cut', file, 'again']);
+    expect(extra.status).toBe(1);
+    expect(extra.stderr).toContain('unexpected "again"');
+    expect(await current()).toBe(3);
+
+    // The server refuses a cut of an emptied file; that is the CLI's failure too.
+    writeFileSync(file, '');
+    const refused = cli(home, ['rounds', 'cut', file]);
+    expect(refused.status).toBe(1);
+    expect(refused.stderr).toContain('answered 409');
+    expect(await current()).toBe(3);
+
+    stop();
+    await new Promise((r) => setTimeout(r, 500));
+    const nobody = cli(home, ['rounds', 'cut', file]);
+    expect(nobody.status).toBe(1);
+    expect(nobody.stderr).toContain('answered, so nothing was written; start one (akapen');
+  }, 60_000);
+
   it('says who spoke last on the thread (#249)', async () => {
     const { lines, home, file } = await start(['--no-auth']);
     const [url] = urlsIn(lines);
