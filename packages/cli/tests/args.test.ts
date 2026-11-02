@@ -205,9 +205,14 @@ describe('resolveHost', () => {
     expect(resolveHost(undefined)).toBe('127.0.0.1');
   });
 
-  it('passes an address or localhost through as typed', () => {
+  it('leaves an address already in the form a browser sends, and localhost, unchanged', () => {
     for (const host of ['0.0.0.0', '::', '[::]', '127.0.0.1', '::1', '[::1]', 'localhost'])
       expect(resolveHost(host)).toBe(host);
+  });
+
+  it('keeps an IPv6 address bracketed or bare as it was typed, while shortening it', () => {
+    expect(resolveHost('0::0')).toBe('::');
+    expect(resolveHost('[0::0]')).toBe('[::]');
   });
 
   it('hands an IPv6 address on in the form a browser sends as Host (#215)', () => {

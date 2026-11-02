@@ -29,13 +29,14 @@ async function open(page: Page, css: (dir: string) => string, source: string, ru
   }
 }
 
-test('takes the space above every heading level from examples/dense.css', async ({ page }) => {
+test('takes the space above h1, h2 and h4 to h6 from examples/dense.css', async ({ page }) => {
   await open(
     page,
     () => resolve('examples/dense.css'),
-    'Para.\n\n# Top\n\nPara.\n\n## Section\n\n### Right under\n\nPara.\n',
+    'Para.\n\n# Top\n\nPara.\n\n## Section\n\n### Right under\n\nPara.\n\n### Three\n\nPara.\n\n' +
+      '#### Four\n\nPara.\n\n##### Five\n\nPara.\n\n###### Six\n\nPara.\n',
     async () => {
-      await expect(page.locator('.row.heading')).toHaveCount(3);
+      await expect(page.locator('.row.heading')).toHaveCount(7);
       // The heading's top margin and the gutter's top padding: one number, used twice.
       const above = await page.evaluate(() =>
         [...document.querySelectorAll('.row.heading')].map((row) => [
@@ -44,10 +45,16 @@ test('takes the space above every heading level from examples/dense.css', async 
         ]),
       );
       // 12px from the sheet, h1 included; the default 6px under another heading still wins.
+      // h3 to h6 each after a paragraph: the default sheet gives h4 10px and h5 and h6 9px,
+      // so those three show the sheet took. An h3 is 12px either way.
       expect(above).toEqual([
         ['12px', '12px'],
         ['12px', '12px'],
         ['6px', '6px'],
+        ['12px', '12px'],
+        ['12px', '12px'],
+        ['12px', '12px'],
+        ['12px', '12px'],
       ]);
     },
   );

@@ -106,12 +106,27 @@ test('leaves a paragraph after a code block or a table the space it leaves after
   const code = await gapsOf(page, '```sh\nmake\n```\n\nAfter.\n', akapen, request);
   // fence → code, code → fence, fence → After
   expect(code).toHaveLength(3);
+  // The lines of a block stay tight, so the gaps below compared with this one mean that.
+  expect(code[0]).toBeLessThan(paraToPara - 3);
   expect(code[2]).toBeCloseTo(paraToPara, 0);
   // An empty fence and an indented block are code too (#262).
   const empty = await gapsOf(page, '```sh\n```\n\nAfter.\n', akapen, request);
   expect(empty.at(-1)).toBeCloseTo(paraToPara, 0);
+  // Its two fence rows stay as tight as a fence and its first line.
+  expect(empty[0]).toBeCloseTo(code[0]!, 0);
   await expect(page.locator('.row.code-last .code-fence')).toHaveText('```');
+  // One the end of a quote cuts off unclosed and empty is its opening row alone (#280).
+  const quoted = await gapsOf(page, '> ```sh\n\nAfter.\n', akapen, request);
+  expect(quoted).toHaveLength(1);
+  expect(quoted[0]).toBeCloseTo(paraToPara, 0);
+  // A fence opened right after a quoted empty one is spaced from it.
+  const quotedThenFence = await gapsOf(page, '> ```sh\n```py\nx\n```\n', akapen, request);
+  await expect(page.locator('.row.code-first')).toHaveCount(2);
+  expect(quotedThenFence[0]).toBeCloseTo(paraToPara, 0);
   const indented = await gapsOf(page, 'Before.\n\n    make\n    install\n\nAfter.\n', akapen, request);
+  // Before → make, make → install, install → After: the space only on the way out.
+  expect(indented).toHaveLength(3);
+  expect(indented[1]).toBeCloseTo(code[0]!, 0);
   expect(indented.at(-1)).toBeCloseTo(paraToPara, 0);
   const indentedThenFence = await gapsOf(page, '    make\n```sh\nrun\n```\n', akapen, request);
   expect(indentedThenFence[0]).toBeCloseTo(paraToPara, 0);
@@ -136,6 +151,11 @@ test('leaves a paragraph after a code block or a table the space it leaves after
   expect(tableInList.at(-1)).toBeLessThan(paraToPara - 3);
   const headerOnlyInList = await gapsOf(page, '- item\n\n  | a |\n  |---|\n- next\n', akapen, request);
   expect(headerOnlyInList.at(-2)! + headerOnlyInList.at(-1)!).toBeLessThan(paraToPara - 3);
+  // Nor a block with no closing fence row: an indented one, and a fence the next item cuts off.
+  const indentedInList = await gapsOf(page, '- item\n\n      make\n- next\n', akapen, request);
+  expect(indentedInList.at(-1)).toBeLessThan(paraToPara - 3);
+  const unclosedInList = await gapsOf(page, '- item\n\n  ```sh\n- next\n', akapen, request);
+  expect(unclosedInList.at(-1)).toBeLessThan(paraToPara - 3);
 });
 
 test('spaces the way out of a list that ends in a code block, and not the way into it', async ({

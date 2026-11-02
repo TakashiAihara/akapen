@@ -629,11 +629,16 @@ body.rail-overlay .marker { display: inline-flex; align-items: center; justify-c
    tight; a table with only its header takes the space on the header, its separator being
    hidden. Not before a list item: a block inside a list ends its item, not the list. The
    classes cannot tell that from a block before a new list, which stays tight too (#242).
-   An indented code block, and a fence left unclosed, have no closing fence row, so their
-   last line is the one followed by neither more of the same block nor a list item (#262).
-   A fence that opens right after starts another block, so it gets the space too. */
+   An indented code block, and a fence left unclosed, have no closing fence row, so the
+   space goes on any other code row followed by neither a list item nor a code row that
+   is not a fence's opening row (#262). That includes a fence's opening row: an unclosed
+   fence with no lines, as one cut off by the end of a quote, is that row alone (#280).
+   A fence that opens right after starts another block, so the row before it gets the
+   space too; an indented block right after an unclosed fence does not, its rows telling
+   nothing apart. The closing fence row is left to the code-last rule, so the two never
+   overlap. */
 .row.code-last:has(+ .row:not(.list-item)) .body > :first-child,
-.row.code:not(.code-first, .code-last):has(+ .row:not(.code:not(.code-first), .list-item))
+.row.code:not(.code-last):has(+ .row:not(.code:not(.code-first), .list-item))
   .body > :first-child,
 .row.table-row:has(+ .row:not(.table-row:not(.table-header), .list-item)) .body > :first-child,
 .row.table-header:has(+ .row.table-separator + .row:not(.table-row:not(.table-header), .list-item))
