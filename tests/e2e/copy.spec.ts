@@ -32,7 +32,9 @@ test.beforeEach(async ({ page, akapen, request }) => {
   expect((await request.post(`${akapen.url}/api/rounds`, { headers: AUTH })).ok()).toBe(true);
   await page.addInitScript(() => {
     Object.defineProperty(window, 'isSecureContext', { value: false });
-    document.execCommand = () => {
+    // Only the copy command puts anything on the clipboard; any other leaves it untouched.
+    document.execCommand = (command: string) => {
+      if (command !== 'copy') return false;
       (window as unknown as { copied: string }).copied = (
         document.activeElement as HTMLTextAreaElement
       ).value;
@@ -89,6 +91,59 @@ test('stops a fence left open at the end of its content, not at the next code bl
   await expect(first).toHaveCount(1);
   await first.hover();
   await first.locator('.copy-code').click();
+  expect(await copied(page)).toBe('echo q');
+});
+
+test('copies a line holding only a non-breaking space as it is, and an empty line as empty', async ({
+  page,
+  akapen,
+  request,
+}) => {
+  writeFileSync(akapen.file, '```\na\n\n\u00a0\nb\n```\n');
+  expect((await request.post(`${akapen.url}/api/rounds`, { headers: AUTH })).ok()).toBe(true);
+  await page.goto(akapen.url);
+  const first = page.locator('.row.code-first');
+  await expect(first).toHaveCount(1);
+  await first.hover();
+  await first.locator('.copy-code').click();
+  await expect(first.locator('.copy-code')).toHaveText('copied');
+  expect(await copied(page)).toBe('a\n\n\u00a0\nb');
+});
+
+test('draws an empty line inside a multi-line string as tall as any other empty code line', async ({
+  page,
+  akapen,
+  request,
+}) => {
+  // Line 3 is empty inside the template string, line 5 is empty outside it.
+  writeFileSync(akapen.file, '```js\nconst s = `a\n\nb`;\n\nx\n```\n');
+  expect((await request.post(`${akapen.url}/api/rounds`, { headers: AUTH })).ok()).toBe(true);
+  await page.goto(akapen.url);
+  await expect(page.locator('.row.code')).toHaveCount(7);
+  const height = (line: number) =>
+    page
+      .locator(`.row.code[data-start="${line}"] .code-line`)
+      .evaluate((node) => node.getBoundingClientRect().height);
+  const ordinary = await height(5);
+  expect(ordinary).toBeGreaterThan(0);
+  expect(await height(3)).toBe(ordinary);
+});
+
+test('stops a fence left open where an indented block follows on the very next line', async ({
+  page,
+  akapen,
+  request,
+}) => {
+  // No blank line between them, so the line numbers run on from one block into the other.
+  writeFileSync(akapen.file, '> ```sh\n> echo q\n    indented\n');
+  expect((await request.post(`${akapen.url}/api/rounds`, { headers: AUTH })).ok()).toBe(true);
+  await page.goto(akapen.url);
+  await expect(page.locator('.row.code')).toHaveCount(3);
+  const first = page.locator('.row.code-first');
+  await expect(first).toHaveCount(1);
+  await first.hover();
+  await first.locator('.copy-code').click();
+  await expect(first.locator('.copy-code')).toHaveText('copied');
   expect(await copied(page)).toBe('echo q');
 });
 
