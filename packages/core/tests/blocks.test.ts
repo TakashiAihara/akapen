@@ -213,8 +213,8 @@ describe('quoted', () => {
   });
 });
 
-/** `list-last` belongs to the list a table may sit in, not to the table. */
-const tableFlags = (b: { flags: string[] }) => b.flags.filter((f) => f !== 'list-last');
+/** Where a table ends is pinned under `block-end`; here only what each row is. */
+const tableFlags = (b: { flags: string[] }) => b.flags.filter((f) => f !== 'block-end');
 
 describe('a table inside a quote', () => {
   // Every way the delimiter row can be prefixed: one quote, nested quotes with and without
@@ -237,25 +237,78 @@ describe('a table inside a quote', () => {
   });
 });
 
-function lastOf(text: string): number[] {
+function endsOf(text: string): number[] {
   return buildDoc('/x.md', text)
-    .blocks.filter((b) => b.flags.includes('list-last'))
+    .blocks.filter((b) => b.flags.includes('block-end'))
     .map((b) => b.startLine);
 }
 
-describe('list-last', () => {
+describe('block-end', () => {
   it('marks the last row of a list, whatever kind of block it is', () => {
-    expect(lastOf('- a\n- b\n\nAfter.\n')).toEqual([2]);
-    expect(lastOf('- a\n\n  ```\n  x\n  ```\n\nAfter.\n')).toEqual([5]);
+    expect(endsOf('- a\n- b\n\nAfter.\n')).toEqual([2]);
+    expect(endsOf('- a\n\n  ```\n  x\n  ```\n\nAfter.\n')).toEqual([5]);
   });
 
-  it('marks each list, a nested one included, and nothing outside a list', () => {
-    expect(lastOf('- a\n  - b\n- c\n')).toEqual([2, 3]);
+  it("marks a nested list followed by more of its item, not by its outer list's next item", () => {
+    expect(endsOf('- a\n  - b\n- c\n\nAfter.\n')).toEqual([3]);
+    expect(endsOf('- a\n  - b\n\n  more of a\n- c\n\nAfter.\n')).toEqual([2, 5]);
     // The last row of both a nested list and its outer one is marked once.
-    expect(buildDoc('/x.md', '- a\n  - b\n').blocks[1]!.flags.filter((f) => f === 'list-last')).toHaveLength(
-      1,
-    );
-    expect(lastOf('Para.\n\n| a |\n| - |\n| 1 |\n')).toEqual([]);
+    const once = buildDoc('/x.md', '- a\n  - b\n\nAfter.\n').blocks[1]!;
+    expect(once.flags.filter((f) => f === 'block-end')).toHaveLength(1);
+  });
+
+  it('marks a list followed by another list, of another kind or the same (#242)', () => {
+    expect(endsOf('- a\n\n1. b\n')).toEqual([1]);
+    expect(endsOf('- a\n- b\n\n1. c\n2. d\n')).toEqual([2]);
+    expect(endsOf('1. a\n\n- b\n')).toEqual([1]);
+    // Another bullet character starts another list of the same kind.
+    expect(endsOf('- a\n\n* b\n')).toEqual([1]);
+  });
+
+  it('marks a list that ends in an empty item on that item, its gap row', () => {
+    expect(endsOf('- a\n-\n\n1. x\n')).toEqual([2]);
+    expect(endsOf('> - a\n> -\n>\n> 1. x\n')).toEqual([2]);
+  });
+
+  it('marks a list in a quote on its last item, not on the blank quote line after it', () => {
+    expect(endsOf('> - a\n>\n> After.\n')).toEqual([1]);
+    expect(endsOf('> > - a\n> >\n> > After.\n')).toEqual([1]);
+    expect(endsOf('> - a\n>\n>\n> After.\n')).toEqual([1]);
+    // Nor on an item's: a fence that ends one is followed by the next item tightly.
+    expect(endsOf('> - a\n>   ```\n>   x\n>   ```\n>\n> - b\n\nAfter.\n')).toEqual([6]);
+    expect(endsOf('> Before.\n>\n> - a\n> - b\n>\n> After.\n')).toEqual([4]);
+  });
+
+  it('marks the last row of a code block or a table, whatever list follows (#227, #242)', () => {
+    expect(endsOf('```sh\nmake\n```\n\n- b\n')).toEqual([3]);
+    expect(endsOf('| a |\n|---|\n| 1 |\n\n- b\n')).toEqual([3]);
+    expect(endsOf('    make\n    install\n\n- b\n')).toEqual([2]);
+    expect(endsOf('    make\n\nAfter.\n')).toEqual([1]);
+    expect(endsOf('```sh\n```\n\nAfter.\n')).toEqual([2]);
+  });
+
+  it('marks a fence left unclosed on its last line of code (#262)', () => {
+    expect(endsOf('> ```sh\n> make\n> run\n\nAfter.\n')).toEqual([3]);
+    // Inside an item it runs to the item's end, its blank line drawn as a row.
+    expect(endsOf('- a\n\n  ```sh\n  make\n\nAfter.\n')).toEqual([5]);
+  });
+
+  it('marks the header of a table that has only one, not its hidden delimiter row (#242)', () => {
+    expect(endsOf('| a |\n|---|\n\nAfter.\n')).toEqual([1]);
+    expect(endsOf('- item\n\n  | a |\n  |---|\n\n1. next\n')).toEqual([3]);
+  });
+
+  it('leaves a block that ends an item unmarked when the next item of its list follows', () => {
+    expect(endsOf('- item\n\n  ```sh\n  make\n  ```\n- next\n\nAfter.\n')).toEqual([6]);
+    expect(endsOf('- item\n\n  | a |\n  |---|\n- next\n\nAfter.\n')).toEqual([5]);
+    expect(endsOf('- item\n\n      make\n- next\n\nAfter.\n')).toEqual([4]);
+    expect(endsOf('- a\n-\n- c\n\nAfter.\n')).toEqual([3]);
+  });
+
+  it('marks nothing on the last row of the document, nor outside these blocks', () => {
+    expect(endsOf('- a\n- b\n')).toEqual([]);
+    expect(endsOf('| a |\n|---|\n')).toEqual([]);
+    expect(endsOf('Para.\n\n# Head\n\n---\n\nMore.\n')).toEqual([]);
   });
 });
 
@@ -264,7 +317,7 @@ describe('an empty fence (#262)', () => {
     const blocks = buildDoc('e.md', '```sh\n```\n\nAfter.\n').blocks.filter((b) => b.kind === 'code');
     expect(blocks.map((b) => [b.startLine, b.flags])).toEqual([
       [1, ['code-first']],
-      [2, ['code-last']],
+      [2, ['code-last', 'block-end']],
     ]);
   });
 

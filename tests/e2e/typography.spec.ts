@@ -83,6 +83,20 @@ test('leaves the same space on the way out of a list as on the way in (#92)', as
   expect(between).toBeLessThan(into - 3);
 });
 
+test('leaves the same space on the way out of a list in a quote as on the way in', async ({
+  page,
+  akapen,
+  request,
+}) => {
+  const source = '> Before.\n>\n> - a\n> - b\n>\n> After.\n';
+  const gaps = await gapsOf(page, source, akapen, request);
+  // Before → >, > → a, a → b, b → >, > → After: the blank quote line is a row of its own.
+  expect(gaps).toHaveLength(5);
+  const [toBlank, intoList, between, toBlankAgain, out] = gaps as [number, number, number, number, number];
+  expect(toBlankAgain + out).toBeCloseTo(toBlank + intoList, 0);
+  expect(between).toBeLessThan(intoList - 3);
+});
+
 test('keeps the margin of an hr that ends a list, as one outside a list has (#240)', async ({
   page,
   akapen,
@@ -91,7 +105,7 @@ test('keeps the margin of an hr that ends a list, as one outside a list has (#24
   // Below only: above a plain hr sits a paragraph, whose own margin adds to the gap.
   const [, below] = (await gapsOf(page, 'Before.\n\n***\n\nAfter.\n', akapen, request)) as [number, number];
   const hr = await gapsOf(page, '- a\n\n  ***\n\nAfter.\n', akapen, request);
-  await expect(page.locator('.row.hr.list-last')).toHaveCount(1);
+  await expect(page.locator('.row.hr.block-end')).toHaveCount(1);
   expect(hr).toHaveLength(2);
   expect(hr[1]).toBeCloseTo(below, 0);
   expect(hr[0]).toBeCloseTo(hr[1]!, 0);
@@ -136,6 +150,49 @@ test('leaves a paragraph after a code block or a table the space it leaves after
   expect(tableInList.at(-1)).toBeLessThan(paraToPara - 3);
   const headerOnlyInList = await gapsOf(page, '- item\n\n  | a |\n  |---|\n- next\n', akapen, request);
   expect(headerOnlyInList.at(-2)! + headerOnlyInList.at(-1)!).toBeLessThan(paraToPara - 3);
+});
+
+test('spaces a list, a code block or a table from a list that follows it (#242)', async ({
+  page,
+  akapen,
+  request,
+}) => {
+  const [paraToPara] = (await gapsOf(page, 'One.\n\nTwo.\n', akapen, request)) as [number];
+  // Two lists in a row are two lists, whether of another kind or the same one.
+  const kinds = await gapsOf(page, '- a\n- b\n\n1. c\n2. d\n', akapen, request);
+  expect(kinds).toHaveLength(3);
+  expect(kinds[1]).toBeCloseTo(paraToPara, 0);
+  expect(kinds[0]).toBeLessThan(paraToPara - 3);
+  expect(kinds[2]).toBeLessThan(paraToPara - 3);
+  // Another bullet character starts another list of the same kind.
+  const same = await gapsOf(page, '- a\n\n* b\n', akapen, request);
+  expect(same).toHaveLength(1);
+  expect(same[0]).toBeCloseTo(paraToPara, 0);
+  // A list that ends in an empty item ends after that item, not before it.
+  const empty = await gapsOf(page, '- a\n-\n\n1. x\n', akapen, request);
+  expect(empty).toHaveLength(2);
+  expect(empty[0]).toBeLessThan(paraToPara - 3);
+  expect(empty[1]).toBeCloseTo(paraToPara, 0);
+  // A nested list followed by its outer list's next item is still one list.
+  const nested = await gapsOf(page, '- a\n  - b\n- c\n', akapen, request);
+  expect(nested).toHaveLength(2);
+  expect(Math.max(...nested)).toBeLessThan(paraToPara - 3);
+  // At the top level a block followed by a list: a table, one with only its header, a fence
+  // and an indented code block.
+  for (const block of ['| a |\n|---|\n| 1 |\n', '| a |\n|---|\n', '```sh\nmake\n```\n', '    make\n']) {
+    const gaps = await gapsOf(page, `${block}\n- b\n`, akapen, request);
+    expect(gaps, block).toHaveLength(block.split('\n').length - 1);
+    // The hidden delimiter row adds its zero box between the header and what follows.
+    const out = block === '| a |\n|---|\n' ? gaps[0]! + gaps[1]! : gaps.at(-1)!;
+    expect(out, block).toBeCloseTo(paraToPara, 0);
+  }
+  // A list that ends in a table with only its header, followed by a paragraph or a list.
+  for (const after of ['After.', '1. next']) {
+    const gaps = await gapsOf(page, `- item\n\n  | a |\n  |---|\n\n${after}\n`, akapen, request);
+    expect(gaps).toHaveLength(3);
+    expect(gaps[1]! + gaps[2]!, after).toBeCloseTo(paraToPara, 0);
+    await expect(page.locator('.row.table-header.block-end')).toHaveCount(1);
+  }
 });
 
 test('spaces the way out of a list that ends in a code block, and not the way into it', async ({
