@@ -1,18 +1,21 @@
 /**
  * What the channel pushes into a session.
  *
- * Three ways this fails quietly, and all three look identical from the session's side —
+ * Four ways this fails quietly, and all four look identical from the session's side —
  * nothing arrives, or something arrives that should not have. Pushing a sibling
  * session's comments puts a document the reader never opened in front of them. Pushing
  * the backlog at startup buries the one comment that is new under everything already
  * handed over by `akapen comments`. Counting instead of naming re-fires on the same
- * unresolved comment every pass, forever.
+ * unresolved comment every pass, forever. And the quietest: a handshake that negotiates
+ * the modern protocol revision, so Claude Code never registers the channel at all.
  */
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import {
   chmodSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  readFileSync,
   renameSync,
   rmSync,
   statSync,
@@ -32,8 +35,10 @@ import {
   instructionsEvent,
   markSent,
   newEvents,
+  type ChannelEvent,
   type Loaded,
 } from '../src/channel.ts';
+import { openRound, saveComments } from '@akapen/core/store';
 import type { RoundComment } from '@akapen/shared';
 
 const comment = (id: string, over: Partial<RoundComment> = {}): RoundComment => ({
@@ -250,8 +255,6 @@ describe('collect', () => {
 
 describe('runChannel', () => {
   it('exits when the session closes its stdin', async () => {
-    const { spawn } = await import('node:child_process');
-
     const home = mkdtempSync(join(tmpdir(), 'akapen-channel-'));
     const cli = join(import.meta.dirname, '../src/cli.ts');
     const proc = spawn('bun', ['run', cli, 'channel'], {
@@ -274,7 +277,273 @@ describe('runChannel', () => {
       rmSync(home, { recursive: true, force: true });
     }
   }, 15000);
+
+  it('exits 2 and says why when no session spawned it', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'akapen-channel-'));
+    const env: NodeJS.ProcessEnv = { ...process.env, AKAPEN_HOME: home };
+    delete env['CLAUDE_CODE_SESSION_ID'];
+    const ch = startChannel(env);
+    try {
+      expect(await within(ch.exited, 10_000)).toBe(2);
+      expect(ch.stderr()).toContain('channel needs CLAUDE_CODE_SESSION_ID');
+      // stdout is the JSON-RPC stream Claude Code reads; the reason goes to stderr only.
+      expect(ch.stdout()).toBe('');
+    } finally {
+      ch.proc.kill();
+      rmSync(home, { recursive: true, force: true });
+    }
+  }, 15000);
+
+  it('writes a notification to stdout for a comment that lands while it runs', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'akapen-channel-'));
+    const doc = reviewing(home);
+    const ch = startChannel({ ...process.env, AKAPEN_HOME: home, CLAUDE_CODE_SESSION_ID: SESSION });
+    try {
+      // The initialize answer comes after the first pass, which is the one that seeds what is
+      // already there.
+      await handshake(ch);
+      inHome(home, () => saveComments(doc, 1, [comment('c-old'), comment('c-new')]));
+      const event = await ch.waitFor((m) => m['method'] === 'notifications/claude/channel', 10_000);
+      const params = event['params'] as ChannelEvent;
+      expect(params.meta['comment_id']).toBe('c-new');
+      expect(params.meta['file']).toBe(doc);
+      expect(params.content).toContain('body of c-new');
+      // A comment written after c-new arrived is delivered by a later pass, which is one that
+      // would send c-new again had its delivery not been recorded. The backlog it was started
+      // with is never pushed.
+      inHome(home, () => saveComments(doc, 1, [comment('c-old'), comment('c-new'), comment('c-later')]));
+      await ch.waitFor(
+        (m) => (m['params'] as ChannelEvent | undefined)?.meta['comment_id'] === 'c-later',
+        10_000,
+      );
+      expect(ch.notifications().map((n) => n.meta['comment_id'])).toEqual(['c-new', 'c-later']);
+      expect(ch.garbage()).toEqual([]);
+    } finally {
+      ch.proc.kill();
+      rmSync(home, { recursive: true, force: true });
+    }
+  }, 25000);
+
+  it('keeps running, and keeps delivering, after a pass that throws', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'akapen-channel-'));
+    const doc = reviewing(home);
+    const ch = startChannel({ ...process.env, AKAPEN_HOME: home, CLAUDE_CODE_SESSION_ID: SESSION });
+    try {
+      await handshake(ch);
+      // Replies that are not a list make naming the thread throw inside the pass.
+      const broken = { ...comment('c-broken'), replies: 5 } as unknown as RoundComment;
+      inHome(home, () => saveComments(doc, 1, [comment('c-old'), broken]));
+      await ch.waitForStderr('akapen: channel pass failed:', 10_000);
+      expect(ch.proc.exitCode).toBeNull();
+
+      inHome(home, () => saveComments(doc, 1, [comment('c-old'), comment('c-new')]));
+      const event = await ch.waitFor((m) => m['method'] === 'notifications/claude/channel', 10_000);
+      expect((event['params'] as ChannelEvent).meta['comment_id']).toBe('c-new');
+      expect(ch.proc.exitCode).toBeNull();
+      expect(ch.garbage()).toEqual([]);
+    } finally {
+      ch.proc.kill();
+      rmSync(home, { recursive: true, force: true });
+    }
+  }, 25000);
 });
+
+describe('the handshake Claude Code registers a channel on', () => {
+  // Spelled out rather than taken from the SDK: the point is to fail when a new SDK moves.
+  const LEGACY = ['2024-11-05', '2025-03-26', '2025-06-18', '2025-11-25'];
+
+  // tests/repo/dependabot.test.ts checks that Dependabot raises a bump of it on its own.
+  it('pins the SDK to an exact version', () => {
+    // A range lets `bun update` move it inside the range without anyone choosing that release.
+    const pkg = JSON.parse(readFileSync(join(import.meta.dirname, '..', 'package.json'), 'utf8')) as {
+      dependencies: Record<string, string>;
+    };
+    expect(pkg.dependencies['@modelcontextprotocol/sdk']).toMatch(/^\d+\.\d+\.\d+$/);
+  });
+
+  it('negotiates a legacy protocol revision, even when the client offers the modern one', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'akapen-channel-'));
+    const ch = startChannel({ ...process.env, AKAPEN_HOME: home, CLAUDE_CODE_SESSION_ID: SESSION });
+    try {
+      const result = await handshake(ch, '2026-07-28');
+      expect(LEGACY).toContain(result['protocolVersion']);
+      expect(ch.garbage()).toEqual([]);
+    } finally {
+      ch.proc.kill();
+      rmSync(home, { recursive: true, force: true });
+    }
+  }, 15000);
+
+  // No other on purpose: an experimental capability is something Claude Code acts on, so a
+  // new one should be a decision someone makes here, not something an SDK bump adds.
+  it('declares the channel capability and no other', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'akapen-channel-'));
+    const ch = startChannel({ ...process.env, AKAPEN_HOME: home, CLAUDE_CODE_SESSION_ID: SESSION });
+    try {
+      const result = await handshake(ch);
+      const experimental = (result['capabilities'] as { experimental?: Record<string, unknown> })
+        .experimental;
+      expect(Object.keys(experimental ?? {})).toEqual(['claude/channel']);
+      expect(ch.garbage()).toEqual([]);
+    } finally {
+      ch.proc.kill();
+      rmSync(home, { recursive: true, force: true });
+    }
+  }, 15000);
+
+  // Both orders, so a server that answers it only before, or only after, the connection is
+  // initialised still fails.
+  it.each(['before', 'after'] as const)(
+    'does not answer server/discover asked %s initialize',
+    async (when) => {
+      const home = mkdtempSync(join(tmpdir(), 'akapen-channel-'));
+      const ch = startChannel({ ...process.env, AKAPEN_HOME: home, CLAUDE_CODE_SESSION_ID: SESSION });
+      try {
+        if (when === 'after') await handshake(ch);
+        ch.send({ jsonrpc: '2.0', id: 2, method: 'server/discover', params: {} });
+        const answer = await ch.waitFor((m) => m['id'] === 2, 10_000);
+        expect(answer['result']).toBeUndefined();
+        // -32601: method not found.
+        expect((answer['error'] as { code?: number }).code).toBe(-32601);
+        expect(ch.garbage()).toEqual([]);
+      } finally {
+        ch.proc.kill();
+        rmSync(home, { recursive: true, force: true });
+      }
+    },
+    15000,
+  );
+});
+
+const SESSION = 'channel-lifecycle-test';
+
+type Message = Record<string, unknown>;
+
+type Running = {
+  proc: ChildProcessWithoutNullStreams;
+  exited: Promise<number | null>;
+  send: (m: Message) => void;
+  waitFor: (pred: (m: Message) => boolean, ms: number) => Promise<Message>;
+  waitForStderr: (text: string, ms: number) => Promise<void>;
+  notifications: () => ChannelEvent[];
+  garbage: () => string[];
+  stdout: () => string;
+  stderr: () => string;
+};
+
+/** `akapen channel` with its stdio held the way Claude Code holds it: line-delimited JSON-RPC. */
+function startChannel(env: NodeJS.ProcessEnv): Running {
+  const cli = join(import.meta.dirname, '../src/cli.ts');
+  const proc = spawn('bun', ['run', cli, 'channel'], { env, stdio: 'pipe' });
+  const messages: Message[] = [];
+  // Lines that are not JSON. Anything else on stdout breaks the stream Claude Code reads, so
+  // the waiting test fails on it, naming the line.
+  const garbage: string[] = [];
+  let raw = '';
+  let out = '';
+  let err = '';
+  // Read from the start, so a full pipe never stalls the child.
+  proc.stdout.setEncoding('utf8');
+  proc.stdout.on('data', (chunk: string) => {
+    raw += chunk;
+    out += chunk;
+    for (let i = out.indexOf('\n'); i >= 0; i = out.indexOf('\n')) {
+      const line = out.slice(0, i).trim();
+      out = out.slice(i + 1);
+      if (line === '') continue;
+      try {
+        messages.push(JSON.parse(line) as Message);
+      } catch {
+        garbage.push(line);
+      }
+    }
+  });
+  proc.stderr.setEncoding('utf8');
+  proc.stderr.on('data', (chunk: string) => {
+    err += chunk;
+  });
+  // `close`, not `exit`: it waits for stdout and stderr to drain, so a line written just
+  // before exiting is in `raw` by the time the exit code is read.
+  const exited = new Promise<number | null>((r) => proc.on('close', (code) => r(code)));
+  const poll = async <T>(found: () => T | undefined, ms: number, what: string): Promise<T> => {
+    const deadline = Date.now() + ms;
+    for (;;) {
+      if (garbage.length > 0) throw new Error(`not JSON-RPC on stdout: ${garbage[0]}`);
+      const hit = found();
+      if (hit !== undefined) return hit;
+      if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}; stderr: ${err}`);
+      await new Promise((r) => setTimeout(r, 50));
+    }
+  };
+  return {
+    proc,
+    exited,
+    send: (m) => proc.stdin.write(`${JSON.stringify(m)}\n`),
+    waitFor: (pred, ms) => poll(() => messages.find(pred), ms, 'a message'),
+    waitForStderr: (text, ms) => poll(() => (err.includes(text) ? true : undefined), ms, text).then(() => {}),
+    garbage: () => [...garbage],
+    notifications: () =>
+      messages
+        .filter((m) => m['method'] === 'notifications/claude/channel')
+        .map((m) => m['params'] as ChannelEvent),
+    stdout: () => raw,
+    stderr: () => err,
+  };
+}
+
+/** The initialize exchange, answered and acknowledged. Returns what the server answered. */
+async function handshake(ch: Running, protocolVersion = '2025-06-18'): Promise<Message> {
+  ch.send({
+    jsonrpc: '2.0',
+    id: 1,
+    method: 'initialize',
+    params: { protocolVersion, capabilities: {}, clientInfo: { name: 'channel-test', version: '0.0.0' } },
+  });
+  const answer = await ch.waitFor((m) => m['id'] === 1, 10_000);
+  ch.send({ jsonrpc: '2.0', method: 'notifications/initialized' });
+  return answer['result'] as Message;
+}
+
+function within<T>(p: Promise<T>, ms: number): Promise<T | 'timeout'> {
+  return Promise.race([p, new Promise<'timeout'>((r) => setTimeout(() => r('timeout'), ms))]);
+}
+
+function inHome<T>(home: string, fn: () => T): T {
+  const before = process.env['AKAPEN_HOME'];
+  process.env['AKAPEN_HOME'] = home;
+  try {
+    return fn();
+  } finally {
+    if (before === undefined) delete process.env['AKAPEN_HOME'];
+    else process.env['AKAPEN_HOME'] = before;
+  }
+}
+
+/**
+ * A document this session's akapen is serving, with one comment already on it.
+ *
+ * The instance entry names the test's own pid, which is alive, so the channel takes it as
+ * a running akapen without one being started.
+ */
+function reviewing(home: string): string {
+  const doc = join(home, 'doc.md');
+  writeFileSync(doc, '# Doc\n');
+  inHome(home, () => {
+    openRound(doc, '# Doc\n');
+    saveComments(doc, 1, [comment('c-old')]);
+  });
+  mkdirSync(join(home, 'instances'), { recursive: true });
+  const record = {
+    pid: process.pid,
+    host: '127.0.0.1',
+    port: 4300,
+    file: doc,
+    startedAt: new Date().toISOString(),
+    origin: { kind: 'claude-code', cwd: home, id: SESSION },
+  };
+  writeFileSync(join(home, 'instances', `${process.pid}.json`), JSON.stringify(record));
+  return doc;
+}
 
 describe('the store the channel reads by default', () => {
   it('leaves registry entries it cannot use where they are (#184)', () => {

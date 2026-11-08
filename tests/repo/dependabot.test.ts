@@ -68,4 +68,20 @@ describe('dependabot', () => {
 
     expect(version).toBeLessThanOrEqual(1);
   });
+
+  /**
+   * The MCP SDK is pinned exactly, and a release of it that moves the protocol negotiation
+   * switches every Claude Code channel off without an error (see the NOTE on `runChannel`).
+   * An exclusion anywhere but the bun ecosystem's weekly batch would leave it in that batch.
+   */
+  test('raises a bump of the MCP SDK on its own, out of the weekly bun batch', () => {
+    const bun =
+      /^\s*-\s*package-ecosystem:\s*bun\s*$([\s\S]*?)(?=^\s*-\s*package-ecosystem:|(?![\s\S]))/m.exec(
+        read('.github/dependabot.yml'),
+      )?.[1];
+    const batch = /^(\s*)minor-and-patch:\s*$((?:\n(?:\1\s+.*|\s*))*)/m.exec(bun ?? '')?.[2];
+
+    expect(batch).toBeDefined();
+    expect(batch).toMatch(/^\s*exclude-patterns:\s*\['@modelcontextprotocol\/sdk'\]\s*$/m);
+  });
 });
