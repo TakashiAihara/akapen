@@ -374,7 +374,7 @@ describe('fence content marks (#243)', () => {
   it('leaves an indented block right after a quoted fence left open unmarked', () => {
     expect(codeFlags('> ```sh\n> echo q\n    indented\n')).toEqual([
       [1, ['code-first']],
-      [2, ['code-content']],
+      [2, ['code-content', 'block-end']],
       [3, []],
     ]);
   });
