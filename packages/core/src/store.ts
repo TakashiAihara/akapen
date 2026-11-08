@@ -89,13 +89,22 @@ function isRoundMeta(v: unknown): v is RoundMeta {
  * review.json and resetting the round number to 0.
  */
 function roundsOnDisk(filePath: string): RoundMeta[] {
-  const dir = join(storeDir(filePath), 'rounds');
+  return roundsIn(storeDir(filePath));
+}
+
+/** roundsOnDisk for a store directory, for a reader that has no document path to start from. */
+function roundsIn(store: string): RoundMeta[] {
+  const dir = join(store, 'rounds');
   if (!existsSync(dir)) return [];
-  const ns = readdirSync(dir)
-    .map((name) => Number.parseInt(name, 10))
-    .filter((n) => Number.isInteger(n) && n > 0 && existsSync(join(roundDir(filePath, n), 'content.md')))
+  const at = (n: number) => join(dir, String(n).padStart(3, '0'));
+  // Only the padded name openRound writes is read (`at`). A Set because `001` and `0001`
+  // both parse to 1: without it round 1 would be listed, and `001` read, twice. Whatever
+  // sits in a directory under another name (`0001`, `2`) is not a round akapen made and
+  // is not read.
+  const ns = [...new Set(readdirSync(dir).map((name) => Number.parseInt(name, 10)))]
+    .filter((n) => Number.isInteger(n) && n > 0 && existsSync(join(at(n), 'content.md')))
     .toSorted((a, b) => a - b);
-  const createdAt = (n: number) => statSync(join(roundDir(filePath, n), 'content.md')).mtime.toISOString();
+  const createdAt = (n: number) => statSync(join(at(n), 'content.md')).mtime.toISOString();
   return ns.map((n, i) => ({
     n,
     createdAt: createdAt(n),
@@ -181,7 +190,10 @@ export function roundContent(filePath: string, n: number): string {
 }
 
 export function loadComments(filePath: string, n: number): Comment[] {
-  const f = join(roundDir(filePath, n), 'comments.json');
+  return readCommentsFile(join(roundDir(filePath, n), 'comments.json'));
+}
+
+function readCommentsFile(f: string): Comment[] {
   if (!existsSync(f)) return [];
   try {
     const parsed = JSON.parse(readFileSync(f, 'utf8'));
@@ -203,6 +215,76 @@ export function loadAllComments(filePath: string): RoundComment[] {
   const out: RoundComment[] = [];
   for (const r of review.rounds.toSorted((a, b) => b.n - a.n)) {
     for (const c of loadComments(filePath, r.n)) out.push({ ...c, round: r.n });
+  }
+  return out;
+}
+
+/** One review's comments across all its rounds, for `akapen history`. */
+export type ReviewComments = {
+  /** The store directory's name, which is what tells two documents with the same basename apart. */
+  reviewId: string;
+  /**
+   * The document as review.json records it: where it was when it was reviewed, which may
+   * have moved since. Null when review.json is missing or unreadable, or names a
+   * document whose store is not this directory — its line numbers belong to another file.
+   */
+  path: string | null;
+  currentRound: number;
+  /** Newest round first, in stored order within a round. */
+  comments: RoundComment[];
+};
+
+/**
+ * Every review in the store, read from its directory rather than from a document path.
+ *
+ * The directory name is a hash of the path, so it cannot be turned back into one; the
+ * path comes from review.json. When review.json names the document this directory
+ * belongs to, the review is read exactly as `akapen comments` reads it, so the two agree
+ * on which rounds exist and which one is current.
+ *
+ * Otherwise review.json is gone, corrupt, or names a document whose store is elsewhere,
+ * and the rounds on disk are all there is: they are read the way loadReview recovers from
+ * a lost review.json. Dropping such a review would hide its feedback, so it is listed,
+ * with no path: a path whose hash is not this directory is not this review's document.
+ */
+export function allReviewComments(): ReviewComments[] {
+  const reviews = join(akapenHome(), 'reviews');
+  if (!existsSync(reviews)) return [];
+  const out: ReviewComments[] = [];
+  for (const reviewId of readdirSync(reviews).toSorted()) {
+    const dir = join(reviews, reviewId);
+    try {
+      if (!statSync(dir).isDirectory()) continue;
+    } catch {
+      // A dangling symlink, or an entry removed since the listing. Not a review either way.
+      continue;
+    }
+
+    let path: string | null = null;
+    try {
+      const parsed = JSON.parse(readFileSync(join(dir, 'review.json'), 'utf8')) as Partial<Review>;
+      if (typeof parsed.path === 'string') path = parsed.path;
+    } catch {
+      /* Missing or corrupt: the rounds on disk are still read below. */
+    }
+
+    if (path !== null && basename(storeDir(path)) === reviewId) {
+      out.push({
+        reviewId,
+        path,
+        currentRound: loadReview(path).currentRound,
+        comments: loadAllComments(path),
+      });
+      continue;
+    }
+
+    const rounds = roundsIn(dir).toSorted((a, b) => b.n - a.n);
+    const comments: RoundComment[] = [];
+    for (const { n } of rounds) {
+      const f = join(dir, 'rounds', String(n).padStart(3, '0'), 'comments.json');
+      for (const c of readCommentsFile(f)) comments.push({ ...c, round: n });
+    }
+    out.push({ reviewId, path: null, currentRound: rounds[0]?.n ?? 0, comments });
   }
   return out;
 }

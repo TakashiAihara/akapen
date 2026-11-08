@@ -28,6 +28,8 @@ const VALUE_FLAGS = [
   'token',
   'advertise',
   'session',
+  'grep',
+  'since',
 ] as const;
 
 /** Flags that are on or off. Given a value, they fail — `--all=false` reads as "off". */
@@ -146,6 +148,14 @@ export function parseArgs(argv: string[]): Args {
     if (missing(next)) throw new UsageError(`--${name} needs a value`);
     args[name] = next!;
     i++;
+  }
+
+  // Filters only history reads. Anywhere else they would be accepted and do nothing,
+  // which is the failure this file exists to remove.
+  for (const name of ['grep', 'since'] as const) {
+    if (args[name] !== undefined && args.positional[0] !== 'history') {
+      throw new UsageError(`--${name} is only for akapen history`);
+    }
   }
 
   return args;

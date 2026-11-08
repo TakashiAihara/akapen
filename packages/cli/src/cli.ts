@@ -6,16 +6,18 @@ import { resolve } from 'node:path';
 import { AdvertiseError, localAddresses, resolveAdvertised, urlsFor } from '@akapen/core/addresses';
 
 import { isInside } from '@akapen/core/files';
-import { loadReview, pendingComments } from '@akapen/core/store';
+import { allReviewComments, loadReview, pendingComments } from '@akapen/core/store';
 import { liveInstances, reachableHost, readInstances } from '@akapen/core/instances';
 import { liveEntries, sweep as sweepSessions } from '@akapen/core/sessions';
 import { currentToken, resolveToken, rotateToken, secureHome, tokenIsPinned } from '@akapen/core/token';
 import { parseArgs, resolveHost, resolvePort, resolveSession, UsageError, type Args } from './args.ts';
+import { commentJson, historyJson, parseSince, readable } from './history.ts';
 
 const USAGE = `akapen — markdown inline review
 
   akapen <file.md> [options]     start the review server
   akapen comments <file.md>      print unresolved comments as JSON (for agents)
+  akapen history                 print unresolved comments of every review as JSON
   akapen reply <file.md> <id> <text>   reply to a comment (--resolve to close it too;
                                        -- before a text that starts with a dash)
   akapen resolve <file.md> <id>  resolve a comment
@@ -34,10 +36,13 @@ options:
   --keymap <file>          JSON overriding the keymap ({ "action": ["key"] })
   --root <dir>             file root: serve images the document refers to from anywhere
                            under this directory (default: the document's own directory)
-  --author <name>          comment author (default $USER)
+  --author <name>          comment author (default $USER); history: only comments by that author
   --token <s>              use this token instead of the stored one
   --no-auth                serve with no token at all (only behind something that authenticates)
-  --all                    comments: include resolved ones
+  --all                    comments, history: include resolved ones
+  --grep <text>            history: only comments whose body contains it (any case)
+  --since <date>           history: only comments made at or after it
+                           (2026-08-01 is midnight UTC; or 2026-08-01T09:00+09:00)
   --json                   list: print as JSON (for agents)
   --session <id>           list: only what that session started (a unique prefix works)
   --rotate                 token: replace the stored token
@@ -385,39 +390,41 @@ if (positional[0] === 'comments') {
   const comments = pendingComments(file, args.all);
   console.log(
     JSON.stringify(
-      comments.map((c) => ({
-        id: c.id,
-        path: resolve(file),
-        round: c.round,
-        // Whether it belongs to the current round. Older ones are feedback on the document
-        // as it was, so treat their line numbers as already shifted in the live file.
-        current_round: c.round === review.currentRound,
-        start_line: c.startLine,
-        end_line: c.endLine,
-        body: c.body,
-        anchor: c.anchor,
-        author: c.author,
-        resolved: c.resolved,
-        // Who spoke last on the thread (#249), so a reader need not walk `replies`: until
-        // someone resolves it, a comment the agent has answered is still listed here. A
-        // comment carries no kind of its own, so one with no reply is treated as a person's.
-        last_author_kind: c.replies?.at(-1)?.authorKind ?? 'human',
-        // The agent's own replies are noise to it, but a person's reply to one is new
-        // feedback — "could not fix, because X" answered with "then do Y instead". Y
-        // only arrives if the thread comes with the comment.
-        replies: (c.replies ?? []).map((r) => ({
-          id: r.id,
-          body: r.body,
-          author: r.author,
-          author_kind: r.authorKind,
-          session_id: r.sessionId ?? null,
-          created_at: r.createdAt,
-        })),
-      })),
+      comments.map((c) => commentJson(c, resolve(file), review.currentRound)),
       null,
       2,
     ),
   );
+  process.exit(0);
+}
+
+/**
+ * Comments across every review in the store (#74), for looking back at what has been
+ * raised rather than for handing one document's feedback over.
+ *
+ * It reads the store directories, not a document, so a review whose file has since been
+ * moved or deleted still shows up.
+ */
+if (positional[0] === 'history') {
+  // It takes no file: a word here is most likely a document meant for `akapen comments`.
+  if (positional.length > 1) {
+    fail(
+      `history: unexpected ${JSON.stringify(positional.slice(1).join(' '))}; it takes no file (for one document: akapen comments <file.md>)`,
+    );
+  }
+  let since: number | undefined;
+  try {
+    since = args.since === undefined ? undefined : parseSince(args.since);
+  } catch (err) {
+    if (!(err instanceof UsageError)) throw err;
+    fail(err.message);
+  }
+  const filter = { all: args.all, grep: args.grep, author: args.author, since };
+  const { reviews, skipped } = readable(allReviewComments());
+  for (const s of skipped) {
+    console.error(`akapen: history: skipped ${s.id ?? 'a comment'} in ${s.review_id}: ${s.reason}`);
+  }
+  console.log(JSON.stringify(historyJson(reviews, filter), null, 2));
   process.exit(0);
 }
 
