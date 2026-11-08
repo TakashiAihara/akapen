@@ -454,6 +454,7 @@ function renderDoc() {
 
     docEl.append(row);
   }
+  observeImages();
 }
 
 /**
@@ -1090,13 +1091,53 @@ const zoomEl = must<HTMLDialogElement>('zoom');
 // to the window instead is not enough: a 20-node LR chart only grows from 0.2x to 0.3x.
 // So a diagram's copy is shown at its own size and scrolls. An image is fitted to the
 // window instead and never enlarged: at its own size a photo or a retina screenshot opens
-// on its top-left corner.
+// on its top-left corner. So an image has something to gain only when the sheet shows
+// it smaller than its own size, or taller than the window so it cannot be seen whole.
 
-/** What can be enlarged: an image not inside a link, and a diagram's own svg (not an icon svg some diagram types nest inside it). */
-const FIGURE = '.body img:not(a img), pre.mermaid > svg';
+/** What can be enlarged: a zoomable image not inside a link, and a diagram's own svg (not an icon svg some diagram types nest inside it). */
+const FIGURE = '.body img.zoomable:not(a img), pre.mermaid > svg';
+
+/**
+ * Whether opening an image shows more of it. An image with no size of its own (0, which
+ * the spec allows for an SVG with only a viewBox; Chromium gives it 300px instead) has no
+ * size to cap the copy at, so it is never enlarged.
+ */
+function markZoomable(img: HTMLImageElement) {
+  const shrunk = img.naturalWidth > img.clientWidth || img.naturalHeight > img.clientHeight;
+  img.classList.toggle('zoomable', img.naturalWidth > 0 && (shrunk || img.clientHeight > window.innerHeight));
+}
+
+// Decided again whenever any of its inputs changes, so the cursor, a click and the key
+// always agree: its own size arrives with load (which does not bubble, so it is caught on
+// the way down), its shown size with a resize of the image, and the window's height with
+// a resize of the window. The image's resize does not cover its load: a stylesheet that
+// fixes an image's size keeps it the same size before and after it loads.
+docEl.addEventListener(
+  'load',
+  (e) => {
+    if (e.target instanceof HTMLImageElement) markZoomable(e.target);
+  },
+  true,
+);
+const imageSizes = new ResizeObserver((entries) => {
+  for (const { target } of entries) if (target instanceof HTMLImageElement) markZoomable(target);
+});
+/** Each render replaces every image: the old ones are let go and the new ones observed. */
+function observeImages() {
+  imageSizes.disconnect();
+  for (const img of docEl.querySelectorAll<HTMLImageElement>('.body img')) imageSizes.observe(img);
+}
+window.addEventListener('resize', () => {
+  for (const img of docEl.querySelectorAll<HTMLImageElement>('.body img')) markZoomable(img);
+});
 
 /** The mouse and the `figure.zoom` key both come here, so the two cannot diverge. */
 function openZoom(fig: Element) {
+  // The overlay goes over an open panel, which would otherwise be waiting behind it. A
+  // click on a figure is outside the panel, but it is stopped before the document-wide
+  // handlers that close a panel on such a click, so close them here.
+  closeOutline();
+  closePeers();
   // The copy keeps mermaid's ids, so they are duplicated while it is open. Its styles
   // (#id .node) and arrowheads (url(#id-…)) need them; the dialog sits before #doc, so
   // they resolve to the copy itself, and both are the same drawing anyway.
@@ -1105,6 +1146,13 @@ function openZoom(fig: Element) {
   if (box?.width) {
     copy.setAttribute('width', String(box.width));
     copy.setAttribute('height', String(box.height));
+  }
+  // An SVG with only a viewBox has no size of its own, so the copy would stretch to the
+  // window. Its own size is what Chromium makes of it (300px wide at the viewBox's ratio),
+  // and the stylesheet caps the copy there as it caps any other image.
+  if (fig instanceof HTMLImageElement && copy instanceof HTMLImageElement) {
+    copy.style.setProperty('--own-w', `${fig.naturalWidth}px`);
+    copy.style.setProperty('--own-ratio', String(fig.naturalWidth / fig.naturalHeight));
   }
   zoomEl.replaceChildren(copy);
   zoomEl.showModal();
