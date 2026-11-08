@@ -449,10 +449,17 @@ describe('akapen reply and resolve', () => {
       ((await (await fetch(`${url}/api/rounds`)).json()) as { current: number }).current;
     expect(await current()).toBe(1);
 
+    writeFileSync(file, `${SOURCE}\nan edit\n`);
     const cut = cli(home, ['rounds', 'cut', file]);
     expect(cut.status).toBe(0);
     expect(cut.stdout.trim()).toBe('round 2 is now current');
     expect(await current()).toBe(2);
+    // Nothing changed since, so the round just opened is still the one to read (#110).
+    const unchanged = cli(home, ['rounds', 'cut', file]);
+    expect(unchanged.status).toBe(0);
+    expect(unchanged.stdout.trim()).toBe('round 2 is now current');
+    expect(await current()).toBe(2);
+    writeFileSync(file, `${SOURCE}\nan edit\nanother\n`);
     const second = cli(home, ['rounds', 'cut', file]);
     expect(second.status).toBe(0);
     expect(second.stdout.trim()).toBe('round 3 is now current');
@@ -504,6 +511,7 @@ describe('akapen reply and resolve', () => {
       ).current;
     expect(await current()).toBe(1);
 
+    writeFileSync(file, `${SOURCE}\nan edit\n`);
     const without = cli(home, ['rounds', 'cut', file]);
     expect(without.status).toBe(1);
     expect(await current()).toBe(1);

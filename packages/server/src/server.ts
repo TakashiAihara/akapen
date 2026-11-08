@@ -638,9 +638,9 @@ export function startServer(opts: ServeOptions) {
    * first, the first one closed before a single comment could be written on it, and the
    * screen that opened it already behind.
    *
-   * The second one is refused rather than queued. Queuing it just opens that spare round
-   * a moment later; refusing says the truth, which is that the round it asked for exists
-   * already. It arrives on that screen as the `round` event, same as any other.
+   * The second one is refused rather than queued: the round it asked for is the one
+   * already being opened, and it arrives on that screen as the `round` event, same as
+   * any other.
    */
   let cutting = false;
 
@@ -669,6 +669,12 @@ export function startServer(opts: ServeOptions) {
     if (looksEmptied(live)) {
       return c.text('the file is empty right now; the round was not opened', 409);
     }
+    // Two people pressing the button half a second apart, after the first cut is over and
+    // so past the guard above: the second reads what the first just froze. Opening a
+    // round for it would close the first one before anything could be written on it, and
+    // leave that screen behind. The round it asked for exists already, holding the
+    // content it would have frozen, so it gets that one.
+    if (live === snapshot) return c.json(docPayload());
     review = openRound(file, live);
     snapshot = live;
     doc = buildDoc(file, snapshot);
