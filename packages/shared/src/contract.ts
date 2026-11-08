@@ -140,6 +140,16 @@ export const RoundMetaSchema = v.object({
 });
 export type RoundMeta = v.InferOutput<typeof RoundMetaSchema>;
 
+/**
+ * The shape of review.json as far as loading needs it. `rounds` stays unknown[] so one
+ * damaged entry costs only itself (it is rebuilt from the round directories), not the
+ * whole file.
+ */
+export const ReviewFileSchema = v.object({
+  currentRound: v.pipe(v.number(), v.integer(), v.minValue(0)),
+  rounds: v.array(v.unknown()),
+});
+
 /** Round state for the UI. `viewing` is set only while browsing history. */
 export const RoundStateSchema = v.object({
   n: v.pipe(v.number(), v.integer(), v.minValue(1)),

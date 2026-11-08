@@ -5,10 +5,10 @@
  * while building the history view, loadAllComments trusted review.json and missed
  * rounds that were on disk.
  */
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   addReply,
   carriedOver,
@@ -20,6 +20,7 @@ import {
   openRound,
   pendingComments,
   roundContent,
+  roundDir,
   roundNumbersOnDisk,
   saveComments,
   storeDir,
@@ -309,5 +310,195 @@ describe('replies', () => {
     openRound(work, EDITED);
     const carried = carriedOver(work).find((c) => c.id === first!.id);
     expect(carried?.replies?.[0]?.body).toBe('why it is still open');
+  });
+});
+
+describe('validating stored JSON', () => {
+  const commentsFile = () => join(roundDir(work, 1), 'comments.json');
+  const raw = (entries: unknown[]) => writeFileSync(commentsFile(), JSON.stringify(entries));
+  const legacyComment = {
+    id: 'c_old111',
+    startLine: 6,
+    endLine: 7,
+    body: 'written before replies existed',
+    author: 'someone',
+    createdAt: '2026-01-02T03:04:05.000Z',
+    resolved: false,
+    anchor: '## Heading\nline',
+  };
+
+  it('loads a comment from before replies existed with body and anchor intact', () => {
+    ensureRound(work, SOURCE);
+    raw([legacyComment]);
+    const [c] = loadComments(work, 1);
+    expect(c?.body).toBe('written before replies existed');
+    expect(c?.anchor).toBe('## Heading\nline');
+    expect(c?.replies).toEqual([]);
+  });
+
+  it('loads a reply written before sessionId existed', () => {
+    ensureRound(work, SOURCE);
+    const reply = {
+      id: 'r_aa',
+      body: 'old reply',
+      author: 'a',
+      authorKind: 'agent',
+      createdAt: '2026-01-02T00:00:00.000Z',
+    };
+    raw([{ ...legacyComment, replies: [reply] }]);
+    expect(loadComments(work, 1)[0]?.replies?.[0]?.body).toBe('old reply');
+  });
+
+  it('skips only the invalid entry and says so on stderr with the file and count', () => {
+    ensureRound(work, SOURCE);
+    raw([
+      legacyComment,
+      { id: 'c_bad', startLine: 'x' },
+      { id: 'c_bad2' },
+      { ...legacyComment, id: 'c_old222' },
+    ]);
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      expect(loadComments(work, 1).map((c) => c.id)).toEqual(['c_old111', 'c_old222']);
+      const msg = String(spy.mock.calls[0]?.[0]);
+      expect(msg).toContain(commentsFile());
+      expect(msg).toContain('skipped 2 comment(s)');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('keeps a rejected entry in the file across a write', () => {
+    ensureRound(work, SOURCE);
+    const bad = { id: 'c_bad', startLine: 'x', body: 'hand-edited, must not vanish' };
+    raw([legacyComment, bad]);
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      expect(updateComment(work, 'c_old111', (c) => (c.resolved = true))?.resolved).toBe(true);
+      addReply(work, 'c_old111', 'hello', 't');
+      const written = loadComments(work, 1)[0];
+      expect(written?.resolved).toBe(true);
+      expect(written?.replies?.map((r) => r.body)).toEqual(['hello']);
+    } finally {
+      spy.mockRestore();
+    }
+    const onDisk = JSON.parse(readFileSync(commentsFile(), 'utf8')) as { id: string }[];
+    expect(onDisk.filter((e) => e.id === 'c_bad')).toEqual([bad]);
+    expect(onDisk.map((e) => e.id)).toEqual(['c_old111', 'c_bad']);
+  });
+
+  it('keeps the bytes of a comments.json that is not an array when it is written over', () => {
+    ensureRound(work, SOURCE);
+    writeFileSync(commentsFile(), '{"not":"an array"');
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      expect(loadComments(work, 1)).toEqual([]);
+      saveComments(work, 1, [makeComment(SOURCE, 3, 3, 'new', 't')]);
+      const msgs = spy.mock.calls.map((c) => String(c[0]));
+      expect(msgs.some((m) => m.includes('is not a JSON array') && m.includes(commentsFile()))).toBe(true);
+      expect(msgs.some((m) => m.includes('kept at'))).toBe(true);
+    } finally {
+      spy.mockRestore();
+    }
+    const backups = readdirSync(roundDir(work, 1)).filter((n) => n.startsWith('comments.json.unreadable-'));
+    expect(backups).toHaveLength(1);
+    expect(readFileSync(join(roundDir(work, 1), backups[0]!), 'utf8')).toBe('{"not":"an array"');
+  });
+
+  it('recovers from a review.json whose fields have the wrong types', () => {
+    openRound(work, SOURCE);
+    writeFileSync(join(storeDir(work), 'review.json'), JSON.stringify({ currentRound: '5', rounds: [] }));
+    const r = loadReview(work);
+    expect(r.currentRound).toBe(1);
+    expect(r.rounds.map((x) => x.n)).toEqual([1]);
+  });
+
+  it('drops a malformed round entry from review.json and rebuilds it from disk', () => {
+    openRound(work, SOURCE);
+    writeFileSync(
+      join(storeDir(work), 'review.json'),
+      JSON.stringify({ currentRound: 1, rounds: [{ n: 1, createdAt: 5, closedAt: null }] }),
+    );
+    const r = loadReview(work);
+    expect(r.rounds).toHaveLength(1);
+    expect(typeof r.rounds[0]?.createdAt).toBe('string');
+  });
+
+  it('keeps keys it does not know on a valid comment and its reply across a write', () => {
+    ensureRound(work, SOURCE);
+    const reply = {
+      id: 'r_aa',
+      body: 'b',
+      author: 'a',
+      authorKind: 'agent',
+      createdAt: '2026-01-02T00:00:00.000Z',
+      extraR: 7,
+    };
+    raw([{ ...legacyComment, futureField: 'x', replies: [reply] }]);
+    updateComment(work, 'c_old111', (c) => (c.resolved = true));
+    const [e] = JSON.parse(readFileSync(commentsFile(), 'utf8')) as Record<string, unknown>[];
+    expect(e?.['futureField']).toBe('x');
+    const replies = e?.['replies'] as Record<string, unknown>[];
+    expect(replies[0]?.['extraR']).toBe(7);
+    expect(e?.['resolved']).toBe(true);
+  });
+
+  it('reports a bad entry once however often the round is read', () => {
+    ensureRound(work, SOURCE);
+    raw([legacyComment, { id: 'c_bad' }]);
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      pendingComments(work);
+      pendingComments(work);
+      expect(spy).toHaveBeenCalledTimes(1);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('stays quiet when every entry is valid', () => {
+    ensureRound(work, SOURCE);
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      raw([legacyComment]);
+      expect(pendingComments(work).map((c) => c.id)).toEqual(['c_old111']);
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it.each([
+    ['a non-integer currentRound', { currentRound: 1.5, rounds: [] }],
+    ['a negative currentRound', { currentRound: -1, rounds: [] }],
+    ['a rounds that is not an array', { currentRound: 1, rounds: 'x' }],
+  ])('recovers from review.json with %s', (_name, content) => {
+    openRound(work, SOURCE);
+    writeFileSync(join(storeDir(work), 'review.json'), JSON.stringify(content));
+    const r = loadReview(work);
+    expect(r.currentRound).toBe(1);
+    expect(r.rounds.map((x) => x.n)).toEqual([1]);
+  });
+
+  it('keeps unknown keys on a round entry across a save', () => {
+    openRound(work, SOURCE);
+    const f = join(storeDir(work), 'review.json');
+    const j = JSON.parse(readFileSync(f, 'utf8')) as { rounds: Record<string, unknown>[] };
+    j.rounds[0]!['futureField'] = 'kept';
+    writeFileSync(f, JSON.stringify(j));
+    openRound(work, EDITED);
+    const saved = JSON.parse(readFileSync(f, 'utf8')) as { rounds: Record<string, unknown>[] };
+    expect(saved.rounds[0]?.['futureField']).toBe('kept');
+  });
+
+  it('hands the agent only the valid comments when one entry is bad', () => {
+    ensureRound(work, SOURCE);
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      raw([legacyComment, { id: 'c_bad' }]);
+      expect(pendingComments(work).map((c) => c.id)).toEqual(['c_old111']);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
