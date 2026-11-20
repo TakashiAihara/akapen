@@ -34,7 +34,13 @@ import {
   type Comment,
   type Review,
 } from '@akapen/core/store';
-import { detectOrigin, liveInstances, registerInstance, removeInstance } from '@akapen/core/instances';
+import {
+  detectOrigin,
+  liveInstances,
+  readInstances,
+  registerInstance,
+  removeInstance,
+} from '@akapen/core/instances';
 import { forgetUrl, liveEntries, recordUrl, sweep as sweepSessions } from '@akapen/core/sessions';
 import { urlsFor } from '@akapen/core/addresses';
 import {
@@ -307,7 +313,25 @@ export function openDocument(file: string, opts: DocumentOptions, currentSecret:
   // A live change never swaps the document. We only say that it changed and leave
   // the decision to move to the next round with the person.
   let timer: ReturnType<typeof setTimeout> | null = null;
-  const watcher = watch(file, () => {
+  /**
+   * A save that writes a new file and renames it over the old one leaves the watcher on
+   * the old inode, which never fires again. A one-document server is restarted often
+   * enough to hide that; one serving for days is not, so it watches the path afresh.
+   */
+  let rearmTimer: ReturnType<typeof setTimeout> | null = null;
+  const rearm = (): void => {
+    rearmTimer = null;
+    if (disposed) return;
+    watcher.close();
+    try {
+      watcher = watch(file, onChange);
+    } catch {
+      // Not back yet: the rename has not landed. Look again shortly.
+      rearmTimer = setTimeout(rearm, 200);
+    }
+  };
+  const onChange = (event: string): void => {
+    if (event === 'rename' && rearmTimer === null) rearmTimer = setTimeout(rearm, 50);
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => {
       const live = readLive();
@@ -316,7 +340,8 @@ export function openDocument(file: string, opts: DocumentOptions, currentSecret:
       changes = live === snapshot ? 0 : changes + 1;
       notifyChanged();
     }, 80);
-  });
+  };
+  let watcher = watch(file, onChange);
 
   const app = new Hono<DocEnv>();
 
@@ -611,8 +636,9 @@ export function openDocument(file: string, opts: DocumentOptions, currentSecret:
     if (timer) clearTimeout(timer);
     timer = null;
     clearInterval(heartbeat);
-    watcher.close();
     disposed = true;
+    if (rearmTimer) clearTimeout(rearmTimer);
+    watcher.close();
     // Ended rather than dropped, so a page reading a document that is no longer served
     // sees its stream close at once instead of waiting on the connection to time out.
     for (const end of streamEnds.values()) end();
@@ -1046,7 +1072,8 @@ const escapeHtml = (s: string): string => s.replace(/[&<>"']/g, (ch) => `&#${ch.
  * One long-lived process serving every registered document under `/d/<id>/` (#305).
  *
  * Documents are opened on their first request rather than on registration, so a
- * registered document nobody is reading holds no watcher. The registry is written here
+ * registered document nobody has read holds no watcher. Once opened, one stays open until
+ * it is removed: a file watcher and a 3-second heartbeat timer each. The registry is written here
  * and only here: the CLI goes through `/api/documents`, which makes this the single
  * writer of `documents.json`.
  */
@@ -1145,16 +1172,23 @@ export function startDaemon(opts: DaemonOptions) {
         return c.text(`root does not contain the document: ${root}`, 400);
       }
     }
+    // A one-document akapen on the same file holds the round and comments in memory and
+    // writes them back, as this server would: two holders of one store overwrite each other.
+    if (readInstances({ sweep: false }).some((r) => r.file === file)) {
+      return c.text(`a one-document akapen is serving ${file}; stop it first`, 409);
+    }
     const id = documentId(file);
     const prev = entries.find((e) => e.id === id);
     // Registered again from a shell, it keeps the session it had: that session's channel
     // still wants its comments. From another session, it moves to that one.
     const owner = session ?? prev?.session;
+    // The same for the root: registering again without one is not asking to drop it.
+    const kept = root ?? prev?.root;
     const entry: DocumentEntry = {
       id,
       file,
       ...(owner === undefined ? {} : { session: owner }),
-      ...(root === undefined ? {} : { root }),
+      ...(kept === undefined ? {} : { root: kept }),
       addedAt: prev?.addedAt ?? new Date().toISOString(),
     };
     // Written before anything is closed, so a write that fails leaves the document serving.

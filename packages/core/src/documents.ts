@@ -55,7 +55,10 @@ export function readDocuments(): DocumentEntry[] {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return [];
     throw err;
   }
-  const parsed = JSON.parse(raw) as { documents?: unknown };
+  const parsed = JSON.parse(raw) as { version?: unknown; documents?: unknown };
+  // A newer layout read as this one would be rewritten as this one on the next write.
+  if (parsed.version !== 1)
+    throw new Error(`${documentsPath()}: version ${String(parsed.version)} is not one this akapen reads`);
   if (!Array.isArray(parsed.documents)) throw new Error(`${documentsPath()}: no documents array`);
   // Refused rather than skipped: a row left out here is gone after the next write.
   const bad = parsed.documents.findIndex((e) => !isEntry(e));
@@ -79,7 +82,7 @@ export function servePath(): string {
 export function readServePort(): number | null {
   try {
     const port = (JSON.parse(readFileSync(servePath(), 'utf8')) as { port?: unknown }).port;
-    return typeof port === 'number' && Number.isInteger(port) ? port : null;
+    return typeof port === 'number' && Number.isInteger(port) && port > 0 && port <= 65_535 ? port : null;
   } catch {
     return null;
   }

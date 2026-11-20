@@ -63,7 +63,11 @@ function fail(message: string): never {
 function daemonPort(): number {
   try {
     // `-p` on a command that talks to the server names the server's port, as it does on serve.
-    return resolvePort(args?.port ?? (process.env['AKAPEN_PORT'] || undefined), 4300);
+    // Then the port the running server recorded, so `serve -p <n>` alone is found too.
+    return resolvePort(
+      (portFlagNamesServer ? args?.port : undefined) ?? (process.env['AKAPEN_PORT'] || undefined),
+      readServePort() ?? 4300,
+    );
   } catch (err) {
     if (!(err instanceof UsageError)) throw err;
     fail(`AKAPEN_PORT: ${err.message}`);
@@ -74,6 +78,9 @@ function daemonPort(): number {
 function clientToken(): string | null {
   return args?.token !== undefined && args.token !== '' ? args.token : currentToken();
 }
+
+/** Whether `-p` names akapen serve's port. Not for `akapen <file.md>`, where it is that server's own. */
+let portFlagNamesServer = true;
 
 /** A row of the server's `GET /api/documents`. */
 type DaemonDocument = {
@@ -109,7 +116,8 @@ async function daemon(
     return await fetch(`http://127.0.0.1:${daemonPort()}${path}`, {
       ...init,
       headers,
-      signal: AbortSignal.timeout(10_000),
+      // A read only finds the server, and whatever holds the port should not hold the command.
+      signal: AbortSignal.timeout(init.method === undefined ? 3_000 : 10_000),
     });
   } catch {
     return null;
@@ -506,7 +514,8 @@ if (positional[0] === 'add') {
   const [, target, ...extra] = positional;
   if (!target || !existsSync(target)) fail(`no such file: ${target ?? '(missing)'}`);
   if (extra.length > 0) fail(`add: unexpected ${JSON.stringify(extra.join(' '))}`);
-  const token = resolveToken(args.token);
+  // Read, not created: a running server already has the token it checks.
+  const token = clientToken();
   const res = await daemon(
     '/api/documents',
     {
@@ -530,7 +539,7 @@ if (positional[0] === 'add') {
   }
   const added = (await res.json()) as DaemonDocument;
   console.log(`akapen  ${added.file}`);
-  console.log(`  url     ${added.url}?token=${encodeURIComponent(token)}`);
+  console.log(`  url     ${token === null ? added.url : `${added.url}?token=${encodeURIComponent(token)}`}`);
   console.log(`  id      ${added.id}`);
   process.exit(0);
 }
@@ -624,10 +633,13 @@ if (positional[0] === 'serve') {
   // One server per home: a second would write documents.json from its own copy.
   const runningOn = readServePort();
   if (runningOn !== null) {
+    const token = clientToken();
     const answer = await fetch(`http://127.0.0.1:${runningOn}/api/documents`, {
+      headers: token === null ? {} : { authorization: `Bearer ${token}` },
       signal: AbortSignal.timeout(2_000),
     }).catch(() => null);
-    if (answer !== null && (answer.ok || answer.status === 401)) {
+    // Only a listing counts: whatever else took the port after a crash is not a server here.
+    if (answer?.ok === true && Array.isArray(await answer.json().catch(() => null))) {
       fail(`akapen serve is already running for ${akapenHome()} on port ${runningOn}`);
     }
   }
@@ -636,7 +648,14 @@ if (positional[0] === 'serve') {
   let port: number;
   try {
     host = resolveHost(args.host);
-    port = args.port === undefined ? daemonPort() : resolvePort(args.port, 4300);
+    port = daemonPort();
+    // The CLI reaches the server on 127.0.0.1, and only loopback may manage it, so it has to
+    // listen there: loopback itself, or every interface.
+    if (!['127.0.0.1', '::1', 'localhost', '0.0.0.0', '::'].includes(host)) {
+      throw new UsageError(
+        `serve: --host ${host} would leave the CLI on this machine unable to reach it; use 0.0.0.0 or 127.0.0.1`,
+      );
+    }
   } catch (err) {
     if (!(err instanceof UsageError)) throw err;
     fail(err.message);
@@ -683,6 +702,13 @@ if (positional[0] === 'serve') {
 
 const file = positional[0]!;
 if (!existsSync(file)) fail(`no such file: ${file}`);
+// The same store held by akapen serve as well would be overwritten by whichever wrote last.
+portFlagNamesServer = false;
+if ((await daemonDocuments())?.some((d) => d.file === resolve(file))) {
+  fail(
+    `akapen serve already serves ${resolve(file)}; open it there (akapen list), or akapen remove it first`,
+  );
+}
 // Checked here rather than left to 404: a mistyped root would otherwise show every
 // image as broken with nothing saying why.
 if (args.root !== undefined) {

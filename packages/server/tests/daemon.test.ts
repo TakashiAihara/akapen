@@ -4,7 +4,7 @@
  * Spawned, as server.test.ts does, so the path under test is the one the binary takes.
  */
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -78,6 +78,14 @@ function cli(d: Daemon | null, args: string[], extra: NodeJS.ProcessEnv = {}) {
 }
 
 const urlIn = (out: string): string => /url\s+(\S+)\?token=/.exec(out)![1]!;
+
+async function until(cond: () => boolean | Promise<boolean>, ms = 5_000): Promise<void> {
+  const end = Date.now() + ms;
+  while (!(await cond())) {
+    if (Date.now() > end) throw new Error('timed out');
+    await new Promise((r) => setTimeout(r, 50));
+  }
+}
 
 const comment = (url: string, body: string) =>
   authed(`${url}api/comments`, {
@@ -358,9 +366,136 @@ describe('akapen serve', () => {
     expect(registered.documents.map((e) => e.file)).toEqual([join(sandbox, 'kept.md')]);
   });
 
-  it('keeps the management API to this machine', async () => {
+  it('keeps telling the page about edits saved by rename, one after another', async () => {
+    const d = await serve();
+    const file = note('note.md');
+    const url = urlIn(cli(d, ['add', file]).out);
+    const ctl = new AbortController();
+    const frames: string[] = [];
+    void authed(`${url}events`, { signal: ctl.signal }).then(async (res) => {
+      const dec = new TextDecoder();
+      try {
+        for await (const chunk of res.body!) frames.push(dec.decode(chunk));
+      } catch {
+        /* aborted */
+      }
+    });
+    const changes = () =>
+      frames
+        .join('')
+        .match(/"changes":(\d+)/g)
+        ?.at(-1);
+    await until(() => frames.length > 0);
+    for (const n of [1, 2, 3]) {
+      const tmp = join(sandbox, `save-${n}.tmp`);
+      writeFileSync(tmp, `# A heading\n\nsaved ${n}\n`);
+      renameSync(tmp, file);
+      await until(() => changes() === `"changes":${n}`);
+    }
+    ctl.abort();
+  });
+
+  it('refuses to start on a registry written by a newer layout, and leaves it as it was', () => {
+    mkdirSync(home, { recursive: true });
+    const newer = JSON.stringify({ version: 2, documents: [] });
+    writeFileSync(join(home, 'documents.json'), newer);
+    const r = spawnSync('bun', ['run', CLI, 'serve', '-p', '0'], {
+      env: env(),
+      encoding: 'utf8',
+      timeout: 15_000,
+    });
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toContain('version 2 is not one this akapen reads');
+    expect(readFileSync(join(home, 'documents.json'), 'utf8')).toBe(newer);
+  });
+
+  it('refuses the management API to a request a proxy on this machine forwarded', async () => {
+    const d = await serve();
+    for (const header of ['x-forwarded-for', 'forwarded', 'x-real-ip']) {
+      const res = await authed(`${d.base}/api/documents`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', [header]: '203.0.113.9' },
+        body: JSON.stringify({ file: note('secret.md') }),
+      });
+      expect(res.status, header).toBe(403);
+    }
+    expect(existsSync(join(home, 'documents.json'))).toBe(false);
+  });
+
+  it('applies a new root by reopening the document, and keeps the root on a re-add without one', async () => {
+    const d = await serve();
+    const png = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
+      'base64',
+    );
+    mkdirSync(join(sandbox, 'img'), { recursive: true });
+    writeFileSync(join(sandbox, 'img', 'a.png'), png);
+    const file = note('docs/note.md', '# A\n\n![a](../img/a.png)\n');
+    const url = urlIn(cli(d, ['add', file]).out);
+    const image = () => authed(`${url}file?path=${encodeURIComponent('../img/a.png')}`);
+    expect((await image()).status).toBe(404);
+
+    cli(d, ['add', file, '--root', sandbox]);
+    expect((await image()).status).toBe(200);
+    cli(d, ['add', file]);
+    expect((await image()).status).toBe(200);
+  });
+
+  it('refuses to register a file a one-document akapen is serving, and the reverse', async () => {
+    const d = await serve();
+    const file = note('note.md');
+    cli(d, ['add', file]);
+    const legacy = spawnSync('bun', ['run', CLI, file, '-p', '0'], {
+      env: env({ AKAPEN_PORT: d.port }),
+      encoding: 'utf8',
+      timeout: 15_000,
+    });
+    expect(legacy.status).toBe(1);
+    expect(legacy.stderr).toContain('akapen serve already serves');
+
+    const other = note('other.md');
+    const proc = spawn('bun', ['run', CLI, other, '-p', '0'], {
+      env: env({ AKAPEN_PORT: d.port }),
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    const exited = new Promise<void>((done) => proc.on('exit', () => done()));
+    try {
+      await new Promise<void>((resolve) =>
+        proc.stdout.on('data', (c: Buffer) => c.toString().includes('url') && resolve()),
+      );
+      const r = cli(d, ['add', other]);
+      expect(r.code).toBe(1);
+      expect(r.err).toContain('a one-document akapen is serving');
+    } finally {
+      proc.kill();
+      await exited;
+    }
+  });
+
+  it('finds a server started on its own port through what it recorded', async () => {
+    const d = await serve();
+    const r = spawnSync('bun', ['run', CLI, 'add', note('note.md')], {
+      env: { ...env(), AKAPEN_PORT: '' },
+      encoding: 'utf8',
+    });
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toContain(`127.0.0.1:${d.port}/d/note-`);
+  });
+
+  it('refuses a bind the CLI on this machine could not reach', () => {
     const lan = localAddresses().find((a) => a !== '127.0.0.1' && !a.includes(':'));
-    if (lan === undefined) return;
+    const r = spawnSync('bun', ['run', CLI, 'serve', '-p', '0', '--host', lan ?? '192.0.2.1'], {
+      env: env(),
+      encoding: 'utf8',
+      timeout: 15_000,
+    });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('unable to reach it');
+  });
+
+  const lanAddress = localAddresses().find((a) => a !== '127.0.0.1' && !a.includes(':'));
+  it.skipIf(lanAddress === undefined)('keeps the management API to this machine', async () => {
+    const lan = lanAddress!;
     const d = await serve(['--host', '0.0.0.0']);
     cli(d, ['add', note('note.md')]);
 
