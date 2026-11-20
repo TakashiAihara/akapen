@@ -117,6 +117,23 @@ The examples below use `bun run packages/cli/src/cli.ts`; read that as `akapen` 
 
 Use `--host 0.0.0.0` to run it on a remote machine and read it from a local browser. A wildcard bind is not an address anything connects to, so what gets printed is the machine's own addresses — the section below says which, and how to pin one. An address, not a name: akapen serves literal addresses and `localhost` only, because a name is the one thing another machine on the network can claim and rebind.
 
+### One process for many documents
+
+`akapen serve` is a long-lived server that hands out every registered document under its own path, so a host reviewing fifty documents runs one akapen rather than fifty:
+
+```bash
+akapen serve --host 0.0.0.0          # once per host, run however you run services
+akapen add notes/plan.md             # prints http://<addr>:4300/d/plan-<hash>/
+akapen remove notes/plan.md          # stops serving it; its comments stay
+```
+
+- The path segment is the store directory's name: the file name and a hash of its absolute path. The same file always gets the same URL, across restarts of the server and re-registration, and two files with the same name in different directories get different ones
+- The port is `4300`, or `$AKAPEN_PORT`, or `-p`. A taken port is a failure rather than a move, since a URL already handed out has to keep working. `add`, `remove` and `list` reach the server on `127.0.0.1` at that port, and `list` shows what it serves next to any one-document servers
+- `add` does not start a server. With none answering it says so and exits 1
+- Registrations are kept in `~/.akapen/documents.json`, which only the server writes. Registering and listing are answered for this machine only: whoever holds the token can read what is registered, and registering would let them read any file
+- `--root <dir>` belongs to `add`, per document. `--css`, `--keymap`, `--author` and the authentication options belong to `serve`
+- `reply`, `resolve` and `rounds cut` find a registered document through the server, as they find a one-document server
+
 ### Pushing comments into a Claude Code session
 
 `akapen channel` is a [channel](https://code.claude.com/docs/en/channels): an MCP server Claude Code spawns over stdio, which pushes each new comment into the session that is already running, as it is written. Without it a session has to be told to go and look, and the looking is something it has to keep re-arming.
