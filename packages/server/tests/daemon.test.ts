@@ -38,6 +38,12 @@ async function serve(args: string[] = []): Promise<Daemon> {
     env: env(),
     stdio: ['ignore', 'pipe', 'pipe'],
   });
+  // Before anything can fail, so a server that never prints its URL is still stopped.
+  const exited = new Promise<void>((done) => proc.on('exit', () => done()));
+  const kill = async () => {
+    if (proc.exitCode === null && proc.signalCode === null) proc.kill();
+    await exited;
+  };
   let out = '';
   proc.stderr?.on('data', (c: Buffer) => (out += c.toString()));
   const port = await new Promise<string>((resolve, reject) => {
@@ -53,16 +59,11 @@ async function serve(args: string[] = []): Promise<Daemon> {
       clearTimeout(timer);
       reject(new Error(`akapen serve exited with ${code}\n${out}`));
     });
+  }).catch(async (err: unknown) => {
+    await kill();
+    throw err;
   });
-  const exited = new Promise<void>((done) => proc.on('exit', () => done()));
-  const daemon: Daemon = {
-    port,
-    base: `http://127.0.0.1:${port}`,
-    stop: async () => {
-      proc.kill();
-      await exited;
-    },
-  };
+  const daemon: Daemon = { port, base: `http://127.0.0.1:${port}`, stop: kill };
   running.push(daemon);
   return daemon;
 }
@@ -77,6 +78,13 @@ function cli(d: Daemon | null, args: string[], extra: NodeJS.ProcessEnv = {}) {
 }
 
 const urlIn = (out: string): string => /url\s+(\S+)\?token=/.exec(out)![1]!;
+
+const comment = (url: string, body: string) =>
+  authed(`${url}api/comments`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ startLine: 1, endLine: 1, body }),
+  });
 
 function note(rel: string, text = '# A heading\n\nA paragraph.\n'): string {
   const path = join(sandbox, rel);
@@ -154,6 +162,62 @@ describe('akapen serve', () => {
     expect(listed.map((r) => [r.file, r.missing])).toEqual([[file, true]]);
   });
 
+  it('serves a document whose name holds characters a URL has to escape', async () => {
+    const d = await serve();
+    const file = note('team plan #2.md');
+    const url = urlIn(cli(d, ['add', file]).out);
+    expect(url).toContain('/d/team%20plan%20%232-');
+    expect((await authed(`${url}api/status`)).status).toBe(200);
+    const index = await (await authed(`${d.base}/`)).text();
+    expect(index).toContain(`href="${new URL(url).pathname.slice(1)}"`);
+    // Through the CLI as well, which reaches the document by its id.
+    writeFileSync(file, '# A heading\n\nA paragraph.\n\nMore.\n');
+    const cut = cli(d, ['rounds', 'cut', file]);
+    expect(cut.code, cut.err).toBe(0);
+    expect(cut.out).toContain('round 2 is now current');
+    const removed = cli(d, ['remove', file]);
+    expect(removed.code, removed.err).toBe(0);
+  });
+
+  it('removes by an exact id even when it is the prefix of another', async () => {
+    const d = await serve();
+    const first = urlIn(cli(d, ['add', note('plan.md')]).out);
+    const id = /\/d\/([^/]+)\//.exec(first)![1]!;
+    const second = urlIn(cli(d, ['add', note(`${id}-x.md`)]).out);
+    const r = cli(d, ['remove', id]);
+    expect(r.code, r.err).toBe(0);
+    expect((await authed(`${first}api/status`)).status).toBe(404);
+    expect((await authed(`${second}api/status`)).status).toBe(200);
+  });
+
+  it('keeps taking comments on an open document while its file is briefly gone', async () => {
+    const d = await serve();
+    const file = note('note.md');
+    const url = urlIn(cli(d, ['add', file]).out);
+    expect((await authed(`${url}api/status`)).status).toBe(200);
+    rmSync(file);
+    expect((await comment(url, 'while it was gone')).status).toBe(200);
+  });
+
+  it('refuses a second server on the same home while the first answers', async () => {
+    await serve();
+    const r = spawnSync('bun', ['run', CLI, 'serve', '-p', '0'], {
+      env: env(),
+      encoding: 'utf8',
+      timeout: 15_000,
+    });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('already running');
+  });
+
+  it('gives an untitled document its file name as the link', async () => {
+    const d = await serve();
+    const url = urlIn(cli(d, ['add', note('plain.md', 'no heading here\n')]).out);
+    await authed(`${url}api/status`);
+    const index = await (await authed(`${d.base}/`)).text();
+    expect(index).toMatch(/<a href="d\/plain-[0-9a-f]{12}\/">plain\.md<\/a>/);
+  });
+
   it('answers 404 for a path nothing is registered under', async () => {
     const d = await serve();
     expect((await authed(`${d.base}/d/nothing-000000000000/api/status`)).status).toBe(404);
@@ -209,6 +273,34 @@ describe('akapen serve', () => {
     expect((await authed(`${theirs}api/status`)).status).toBe(200);
   });
 
+  it('keeps the session of a document registered again from a shell', async () => {
+    const d = await serve();
+    const file = note('note.md');
+    cli(d, ['add', file], { CLAUDE_CODE_SESSION_ID: 'session-a' });
+    cli(d, ['add', file]);
+    const listed = JSON.parse(cli(d, ['list', '--json']).out) as { origin: { id: string } | null }[];
+    expect(listed.map((r) => r.origin?.id)).toEqual(['session-a']);
+  });
+
+  it('presents --token to the server, for one started on a pinned token', async () => {
+    const d = await serve();
+    const file = note('note.md');
+    cli(d, ['add', file]);
+    const r = cli(d, ['remove', file, '--token', TOKEN], { AKAPEN_TOKEN: '' });
+    expect(r.code, r.err).toBe(0);
+    expect(r.out).toContain('removed');
+  });
+
+  it('reaches a server on another port with -p', async () => {
+    const d = await serve();
+    const r = spawnSync('bun', ['run', CLI, 'add', note('note.md'), '-p', d.port], {
+      env: env({ AKAPEN_PORT: '1' }),
+      encoding: 'utf8',
+    });
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toContain(`127.0.0.1:${d.port}/d/note-`);
+  });
+
   it('records the registering session, which akapen list --session filters on', async () => {
     const d = await serve();
     const file = note('note.md');
@@ -238,12 +330,12 @@ describe('akapen serve', () => {
       CLAUDE_CODE_SESSION_ID: 'session-a',
     });
     expect(r.code, r.err).toBe(0);
-    const [comment] = JSON.parse(cli(d, ['comments', file, '--all']).out) as {
+    const [thread] = JSON.parse(cli(d, ['comments', file, '--all']).out) as {
       resolved: boolean;
       replies: { body: string; session_id: string }[];
     }[];
-    expect(comment!.resolved).toBe(true);
-    expect(comment!.replies.map((x) => [x.body, x.session_id])).toEqual([['answered', 'session-a']]);
+    expect(thread!.resolved).toBe(true);
+    expect(thread!.replies.map((x) => [x.body, x.session_id])).toEqual([['answered', 'session-a']]);
   });
 
   it('refuses add when no daemon answers, and writes nothing', () => {
@@ -255,11 +347,15 @@ describe('akapen serve', () => {
 
   it('refuses a root that does not hold the document', async () => {
     const d = await serve();
+    cli(d, ['add', note('kept.md')]);
     mkdirSync(join(sandbox, 'elsewhere'));
     const r = cli(d, ['add', note('docs/note.md'), '--root', join(sandbox, 'elsewhere')]);
     expect(r.code).toBe(1);
     expect(r.err).toContain('root does not contain the document');
-    expect(existsSync(join(home, 'documents.json'))).toBe(false);
+    const registered = JSON.parse(readFileSync(join(home, 'documents.json'), 'utf8')) as {
+      documents: { file: string }[];
+    };
+    expect(registered.documents.map((e) => e.file)).toEqual([join(sandbox, 'kept.md')]);
   });
 
   it('keeps the management API to this machine', async () => {

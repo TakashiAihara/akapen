@@ -57,10 +57,35 @@ export function readDocuments(): DocumentEntry[] {
   }
   const parsed = JSON.parse(raw) as { documents?: unknown };
   if (!Array.isArray(parsed.documents)) throw new Error(`${documentsPath()}: no documents array`);
-  return parsed.documents.filter(isEntry);
+  // Refused rather than skipped: a row left out here is gone after the next write.
+  const bad = parsed.documents.findIndex((e) => !isEntry(e));
+  if (bad !== -1) throw new Error(`${documentsPath()}: entry ${bad} is not a registration; fix or remove it`);
+  return parsed.documents as DocumentEntry[];
 }
 
 export function writeDocuments(entries: DocumentEntry[]): void {
   mkdirSync(akapenHome(), { recursive: true });
   writeAtomic(documentsPath(), `${JSON.stringify({ version: 1, documents: entries }, null, 2)}\n`);
+}
+
+/**
+ * Where the running `akapen serve` listens, so a second one on the same home can find it
+ * and refuse to start: two would each write `documents.json` from their own copy.
+ */
+export function servePath(): string {
+  return join(akapenHome(), 'serve.json');
+}
+
+export function readServePort(): number | null {
+  try {
+    const port = (JSON.parse(readFileSync(servePath(), 'utf8')) as { port?: unknown }).port;
+    return typeof port === 'number' && Number.isInteger(port) ? port : null;
+  } catch {
+    return null;
+  }
+}
+
+export function writeServePort(port: number): void {
+  mkdirSync(akapenHome(), { recursive: true });
+  writeAtomic(servePath(), `${JSON.stringify({ port, pid: process.pid })}\n`);
 }

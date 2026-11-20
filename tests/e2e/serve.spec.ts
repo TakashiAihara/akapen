@@ -30,6 +30,8 @@ const test = base.extend<{ served: Served }>({
       env,
       stdio: ['ignore', 'pipe', 'ignore'],
     });
+    // Taken before anything can fail, so teardown never waits on an exit that already happened.
+    const exited = new Promise<void>((done) => proc.once('exit', () => done()));
     try {
       const port = await new Promise<string>((resolve, reject) => {
         let out = '';
@@ -54,8 +56,7 @@ const test = base.extend<{ served: Served }>({
       };
       await use({ add, sandbox });
     } finally {
-      const exited = new Promise<void>((done) => proc.once('exit', () => done()));
-      proc.kill();
+      if (proc.exitCode === null && proc.signalCode === null) proc.kill();
       await exited;
       rmSync(sandbox, { recursive: true, force: true });
     }
@@ -78,10 +79,11 @@ test('reads, comments and follows edits on each document under its own path', as
   const urlA = served.add(fileA);
   const urlB = served.add(join(dirB, 'note.md'));
 
-  await request.post(`${urlB}api/comments`, {
+  const seeded = await request.post(`${urlB}api/comments`, {
     headers: AUTH,
     data: { startLine: 3, endLine: 3, body: 'only on B' },
   });
+  expect(seeded.ok()).toBe(true);
 
   await page.goto(urlA);
   await expect(page.locator('#doc')).toContainText('First paragraph.');

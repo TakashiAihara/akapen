@@ -6,7 +6,8 @@ import { resolve } from 'node:path';
 import { AdvertiseError, localAddresses, resolveAdvertised, urlsFor } from '@akapen/core/addresses';
 
 import { isInside } from '@akapen/core/files';
-import { loadReview, pendingComments } from '@akapen/core/store';
+import { readServePort } from '@akapen/core/documents';
+import { akapenHome, loadReview, pendingComments } from '@akapen/core/store';
 import { liveInstances, reachableHost, readInstances } from '@akapen/core/instances';
 import { liveEntries, sweep as sweepSessions } from '@akapen/core/sessions';
 import { currentToken, resolveToken, rotateToken, secureHome, tokenIsPinned } from '@akapen/core/token';
@@ -61,11 +62,17 @@ function fail(message: string): never {
 /** Where `akapen serve` listens, as every command finds it: `$AKAPEN_PORT`, else 4300. */
 function daemonPort(): number {
   try {
-    return resolvePort(process.env['AKAPEN_PORT'] || undefined, 4300);
+    // `-p` on a command that talks to the server names the server's port, as it does on serve.
+    return resolvePort(args?.port ?? (process.env['AKAPEN_PORT'] || undefined), 4300);
   } catch (err) {
     if (!(err instanceof UsageError)) throw err;
     fail(`AKAPEN_PORT: ${err.message}`);
   }
+}
+
+/** The token a command presents to the server: `--token`, else as `currentToken` finds it. */
+function clientToken(): string | null {
+  return args?.token !== undefined && args.token !== '' ? args.token : currentToken();
 }
 
 /** A row of the server's `GET /api/documents`. */
@@ -90,7 +97,7 @@ type DaemonDocument = {
 async function daemon(
   path: string,
   init: RequestInit = {},
-  token: string | null = currentToken(),
+  token: string | null = clientToken(),
 ): Promise<Response | null> {
   const session = process.env['CLAUDE_CODE_SESSION_ID'] ?? '';
   const headers: Record<string, string> = {
@@ -109,12 +116,26 @@ async function daemon(
   }
 }
 
-/** What `akapen serve` has registered, or null when it is not running. */
-async function daemonDocuments(): Promise<DaemonDocument[] | null> {
-  const res = await daemon('/api/documents');
+/**
+ * What `akapen serve` has registered, or null when it is not running — or when whatever
+ * answers on its port is not it, which is told by the shape of the answer.
+ */
+async function daemonDocuments(token: string | null = clientToken()): Promise<DaemonDocument[] | null> {
+  const res = await daemon('/api/documents', {}, token);
   if (res === null || !res.ok) return null;
-  return (await res.json()) as DaemonDocument[];
+  const body: unknown = await res.json().catch(() => null);
+  if (!Array.isArray(body)) return null;
+  return body.filter(
+    (d): d is DaemonDocument =>
+      typeof d === 'object' &&
+      d !== null &&
+      typeof (d as DaemonDocument).id === 'string' &&
+      typeof (d as DaemonDocument).file === 'string',
+  );
 }
+
+/** The API path of a registered document. Ids are file names, which may hold `#` or a space. */
+const docPath = (id: string): string => `/d/${encodeURIComponent(id)}`;
 
 let args: Args;
 try {
@@ -340,7 +361,7 @@ async function reachInstance(file: string): Promise<{
   const token = args.token !== undefined && args.token !== '' ? args.token : currentToken();
   const target = resolve(file);
   // A document `akapen serve` holds is reached under its path there (#305).
-  const registered = (await daemonDocuments())?.find((d) => d.file === target);
+  const registered = (await daemonDocuments(token))?.find((d) => d.file === target);
   const serving = registered ? null : (await liveInstances({ token })).find((e) => e.record.file === target);
   if (!registered && !serving) {
     // Said as observed: one may be running on another token, and not have answered. Not
@@ -353,7 +374,7 @@ async function reachInstance(file: string): Promise<{
     process.exit(1);
   }
   const base = registered
-    ? `http://127.0.0.1:${daemonPort()}/d/${registered.id}`
+    ? `http://127.0.0.1:${daemonPort()}${docPath(registered.id)}`
     : `http://${reachableHost(serving!.record.host)}:${serving!.record.port}`;
   const session = process.env['CLAUDE_CODE_SESSION_ID'] ?? '';
   const headers: Record<string, string> = {
@@ -525,8 +546,10 @@ if (positional[0] === 'remove') {
     process.exit(1);
   }
   const byPath = documents.find((d) => d.file === resolve(target));
+  // An exact id wins over the longer ids it is a prefix of.
+  const exact = documents.find((d) => d.id === target);
   const byId = documents.filter((d) => d.id.startsWith(target));
-  const found = byPath ?? (byId.length === 1 ? byId[0] : undefined);
+  const found = byPath ?? exact ?? (byId.length === 1 ? byId[0] : undefined);
   if (found === undefined) {
     console.error(
       byId.length > 1
@@ -598,6 +621,16 @@ if (positional[0] === 'comments') {
  */
 if (positional[0] === 'serve') {
   if (positional.length > 1) fail(`serve: unexpected ${JSON.stringify(positional.slice(1).join(' '))}`);
+  // One server per home: a second would write documents.json from its own copy.
+  const runningOn = readServePort();
+  if (runningOn !== null) {
+    const answer = await fetch(`http://127.0.0.1:${runningOn}/api/documents`, {
+      signal: AbortSignal.timeout(2_000),
+    }).catch(() => null);
+    if (answer !== null && (answer.ok || answer.status === 401)) {
+      fail(`akapen serve is already running for ${akapenHome()} on port ${runningOn}`);
+    }
+  }
   if (args.root !== undefined) fail('serve: --root belongs to akapen add, per document');
   let host: string;
   let port: number;

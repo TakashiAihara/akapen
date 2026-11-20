@@ -128,7 +128,8 @@ akapen remove notes/plan.md          # stops serving it; its comments stay
 ```
 
 - The path segment is the store directory's name: the file name and a hash of its absolute path. The same file always gets the same URL, across restarts of the server and re-registration, and two files with the same name in different directories get different ones
-- The port is `4300`, or `$AKAPEN_PORT`, or `-p`. A taken port is a failure rather than a move, since a URL already handed out has to keep working. `add`, `remove` and `list` reach the server on `127.0.0.1` at that port, and `list` shows what it serves next to any one-document servers
+- The port is `4300`, or `$AKAPEN_PORT`, or `-p`. A taken port is a failure rather than a move, since a URL already handed out has to keep working. `add`, `remove` and `list` reach the server on `127.0.0.1` at `$AKAPEN_PORT` or `4300` — `-p` moves only the server, so a host that wants another port sets `AKAPEN_PORT` for both. `list` shows what the server holds next to any one-document servers
+- One server per `~/.akapen`: a second refuses to start while the first answers
 - `add` does not start a server. With none answering it says so and exits 1
 - Registrations are kept in `~/.akapen/documents.json`, which only the server writes. Registering and listing are answered for this machine only: whoever holds the token can read what is registered, and registering would let them read any file
 - `--root <dir>` belongs to `add`, per document. `--css`, `--keymap`, `--author` and the authentication options belong to `serve`

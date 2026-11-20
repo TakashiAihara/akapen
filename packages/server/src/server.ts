@@ -1,4 +1,4 @@
-import { readFileSync, realpathSync, statSync, watch, existsSync } from 'node:fs';
+import { readFileSync, realpathSync, rmSync, statSync, watch, existsSync } from 'node:fs';
 import { basename, dirname, resolve } from 'node:path';
 import { Hono, type Context } from 'hono';
 import { getConnInfo } from 'hono/bun';
@@ -7,7 +7,14 @@ import * as v from 'valibot';
 import { vValidator } from '@hono/valibot-validator';
 import { ASSETS, mimeFor } from './assets.ts';
 import { buildDoc } from '@akapen/core/blocks';
-import { readDocuments, writeDocuments, documentId, type DocumentEntry } from '@akapen/core/documents';
+import {
+  documentId,
+  readDocuments,
+  servePath,
+  writeDocuments,
+  writeServePort,
+  type DocumentEntry,
+} from '@akapen/core/documents';
 import { FILE_ROUTE, imageMime, isInside, resolveDocumentFile } from '@akapen/core/files';
 import { allowedHostnames, hostnameOf } from '@akapen/core/hosts';
 import { readToken, tokensMatch } from '@akapen/core/token';
@@ -437,6 +444,10 @@ export function openDocument(file: string, opts: DocumentOptions, currentSecret:
    * any other.
    */
   let cutting = false;
+  /** Set by `stop`: this holder no longer owns the document's store. */
+  let disposed = false;
+  /** How to end each open stream, for `stop`. */
+  const streamEnds = new Map<(frame: string) => void, () => void>();
 
   // A round is cut on request: by a person, or by an agent running `akapen rounds cut`. An agent's intermediate save never cuts one.
   app.post('/api/rounds', async (c) => {
@@ -453,6 +464,9 @@ export function openDocument(file: string, opts: DocumentOptions, currentSecret:
 
   const cutRound = async (c: Context) => {
     const read = await readSettled();
+    // Removed or reopened while the file was settling: another holder may already have
+    // the store, and opening a round from here would move it behind that one's back.
+    if (disposed) return c.text('this document is no longer served here', 409);
     if (!read.ok) {
       if (read.reason === 'unreadable') return c.text('cannot read file', 500);
       // Refusing costs a click. Freezing a half-written document costs the whole file:
@@ -534,12 +548,20 @@ export function openDocument(file: string, opts: DocumentOptions, currentSecret:
           }
         };
         clients.add(send);
+        streamEnds.set(send, () => {
+          try {
+            controller.close();
+          } catch {
+            /* Already closed by the reader. */
+          }
+        });
         // The first render comes from /api/doc on load. Sending a doc here would
         // rebuild the screen on every reconnect.
         send(`data: ${JSON.stringify(changedEvent())}\n\n`);
       },
       cancel() {
         clients.delete(send);
+        streamEnds.delete(send);
       },
     });
     // Hono's streamSSE owns the lifetime of the handler, but this stream outlives the
@@ -590,6 +612,11 @@ export function openDocument(file: string, opts: DocumentOptions, currentSecret:
     timer = null;
     clearInterval(heartbeat);
     watcher.close();
+    disposed = true;
+    // Ended rather than dropped, so a page reading a document that is no longer served
+    // sees its stream close at once instead of waiting on the connection to time out.
+    for (const end of streamEnds.values()) end();
+    streamEnds.clear();
     clients.clear();
   };
 
@@ -997,6 +1024,22 @@ const AddDocumentSchema = v.object({
 const isLoopbackPeer = (address: string | undefined): boolean =>
   address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1';
 
+/**
+ * A request that came through a proxy on this machine arrives from loopback too, on behalf
+ * of whoever reached the proxy. Proxies say so in these headers, and such a request is
+ * refused the management API.
+ *
+ * shortcut: a proxy that forwards without any of these still gets through; if one is put
+ * in front, management should move to a unix socket.
+ */
+const FORWARDING_HEADERS = ['forwarded', 'x-forwarded-for', 'x-real-ip'];
+const fromThisMachine = (c: Context): boolean =>
+  isLoopbackPeer(getConnInfo(c).remote.address) &&
+  FORWARDING_HEADERS.every((h) => c.req.header(h) === undefined);
+
+/** The URL path of a document. The id is a file name, which may hold `#`, `%` or a space. */
+const pathOf = (id: string): string => `/d/${encodeURIComponent(id)}/`;
+
 const escapeHtml = (s: string): string => s.replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
 
 /**
@@ -1020,9 +1063,12 @@ export function startDaemon(opts: DaemonOptions) {
 
   const documentFor = (id: string): OpenDocument | null => {
     const entry = entries.find((e) => e.id === id);
-    if (entry === undefined || !existsSync(entry.file)) return null;
+    if (entry === undefined) return null;
     let doc = open.get(id);
+    // One already open keeps answering while the file is briefly gone: an editor that
+    // replaces it by delete and create must not turn a comment on the round into a 404.
     if (doc === undefined) {
+      if (!existsSync(entry.file)) return null;
       doc = openDocument(
         entry.file,
         { author: opts.author, ...(entry.root === undefined ? {} : { root: entry.root }) },
@@ -1049,7 +1095,7 @@ export function startDaemon(opts: DaemonOptions) {
       id: e.id,
       file: e.file,
       session: e.session ?? null,
-      url: `${base}/d/${e.id}/`,
+      url: `${base}${pathOf(e.id)}`,
       title,
       round,
       unresolved: missing ? 0 : pendingComments(e.file).length,
@@ -1071,7 +1117,7 @@ export function startDaemon(opts: DaemonOptions) {
    */
   // The wildcard matches `/api/documents` itself as well.
   app.use('/api/documents/*', async (c, next) => {
-    if (!isLoopbackPeer(getConnInfo(c).remote.address)) {
+    if (!fromThisMachine(c)) {
       return c.text('documents are managed from this machine only', 403);
     }
     return next();
@@ -1101,24 +1147,28 @@ export function startDaemon(opts: DaemonOptions) {
     }
     const id = documentId(file);
     const prev = entries.find((e) => e.id === id);
+    // Registered again from a shell, it keeps the session it had: that session's channel
+    // still wants its comments. From another session, it moves to that one.
+    const owner = session ?? prev?.session;
     const entry: DocumentEntry = {
       id,
       file,
-      ...(session === undefined ? {} : { session }),
+      ...(owner === undefined ? {} : { session: owner }),
       ...(root === undefined ? {} : { root }),
       addedAt: prev?.addedAt ?? new Date().toISOString(),
     };
-    // A root that changed applies to the next opening, not to the one already serving.
-    if (prev?.root !== entry.root) close(id);
+    // Written before anything is closed, so a write that fails leaves the document serving.
     save([...entries.filter((e) => e.id !== id), entry]);
+    // A root that changed takes effect by closing the open copy: the next request opens it again with the new root.
+    if (prev?.root !== entry.root) close(id);
     return c.json(describe(entry));
   });
 
   app.delete('/api/documents/:id', (c) => {
     const id = c.req.param('id');
     if (!entries.some((e) => e.id === id)) return c.text('not registered', 404);
-    close(id);
     save(entries.filter((e) => e.id !== id));
+    close(id);
     return c.json({ removed: [id] });
   });
 
@@ -1128,12 +1178,13 @@ export function startDaemon(opts: DaemonOptions) {
     if (session === undefined || !SESSION_ID.test(session))
       return c.text('name a session: ?session=<id>', 400);
     const removed = entries.filter((e) => e.session === session).map((e) => e.id);
-    for (const id of removed) close(id);
     if (removed.length > 0) save(entries.filter((e) => e.session !== session));
+    for (const id of removed) close(id);
     return c.json({ removed });
   });
 
-  // The page's switcher asks this. There are no other processes to find any more.
+  // The page's switcher asks this. It lists other processes, and every document here is
+  // in this one, so it stays empty; the index at `/` is where the others are listed.
   app.get('/api/instances', (c) => c.json({ instances: [] } satisfies InstancesPayload));
 
   /**
@@ -1149,7 +1200,8 @@ export function startDaemon(opts: DaemonOptions) {
     const items = rows
       .map(
         (r) =>
-          `<li><a href="d/${escapeHtml(r.id)}/">${escapeHtml(r.title ?? basename(r.file))}</a> ` +
+          // An empty title would leave nothing to click.
+          `<li><a href="${escapeHtml(pathOf(r.id).slice(1))}">${escapeHtml(r.title || basename(r.file))}</a> ` +
           `<span>${escapeHtml(basename(r.file))} · R${String(r.round).padStart(3, '0')} · ${r.unresolved} unresolved${r.missing ? ' · missing' : ''}</span></li>`,
       )
       .join('\n');
@@ -1165,7 +1217,8 @@ export function startDaemon(opts: DaemonOptions) {
     const id = c.req.param('id');
     const doc = documentFor(id);
     if (doc === null) return c.text('not registered here', 404);
-    return forward(c, doc, new URL(c.req.url).pathname.slice(`/d/${id}`.length) || '/');
+    // Cut from the raw path: the id arrives decoded, and its encoded form is longer.
+    return forward(c, doc, new URL(c.req.url).pathname.replace(/^\/d\/[^/]*/, '') || '/');
   });
 
   serveAssets(app);
@@ -1177,9 +1230,11 @@ export function startDaemon(opts: DaemonOptions) {
     fetch: app.fetch,
   });
   base = urlsFor(opts.advertised ?? opts.host, server.port ?? opts.port)[0]!;
+  if (server.port !== undefined) writeServePort(server.port);
 
   const stop = async (): Promise<void> => {
     for (const id of open.keys()) close(id);
+    rmSync(servePath(), { force: true });
     await server.stop(true);
   };
 
