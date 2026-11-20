@@ -5,7 +5,7 @@
  * server's API, so there is a single writer and no lock. docs/design/multi-document-server.md
  * has the decisions behind it.
  */
-import { mkdirSync, readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, readdirSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 
 import { akapenHome, storeDir, writeAtomic } from './store.ts';
@@ -99,4 +99,42 @@ export function readServeRecord(): { port: number; pid: number | null } | null {
 export function writeServePort(port: number): void {
   mkdirSync(akapenHome(), { recursive: true });
   writeAtomic(servePath(), `${JSON.stringify({ port, pid: process.pid })}\n`);
+}
+
+/**
+ * Who registered a document last, kept in its store (#305).
+ *
+ * The registration itself is removed when the session ends; this is what is left for
+ * `akapen restore` to find when the same session is resumed. It lives beside the
+ * comments, which outlive any registration, rather than in `documents.json`, which only
+ * holds what is being served.
+ */
+export type Registration = { file: string; session: string; root?: string };
+
+const registrationFile = (file: string): string => join(storeDir(resolve(file)), 'registration.json');
+
+export function writeRegistration(reg: Registration): void {
+  mkdirSync(storeDir(reg.file), { recursive: true });
+  writeAtomic(registrationFile(reg.file), `${JSON.stringify(reg, null, 2)}\n`);
+}
+
+/** Every document whose last registration was made by `session`. A store that cannot be read is skipped. */
+export function registrationsOf(session: string): Registration[] {
+  const root = join(akapenHome(), 'reviews');
+  let names: string[];
+  try {
+    names = readdirSync(root);
+  } catch {
+    return [];
+  }
+  const out: Registration[] = [];
+  for (const name of names) {
+    try {
+      const reg = JSON.parse(readFileSync(join(root, name, 'registration.json'), 'utf8')) as Registration;
+      if (reg.session === session && typeof reg.file === 'string') out.push(reg);
+    } catch {
+      /* No registration recorded for this store, or one that cannot be read. */
+    }
+  }
+  return out;
 }

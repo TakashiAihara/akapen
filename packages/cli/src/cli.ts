@@ -26,7 +26,11 @@ const USAGE = `akapen — markdown inline review
   akapen serve [options]         start the server that serves every registered document
   akapen add <file.md>           register a document with that server and print its URL
                                  (--root <dir> to serve its images from a wider directory)
-  akapen remove <file.md|id>     unregister a document (its comments stay)
+  akapen remove <file.md|id>     unregister a document (its comments stay;
+                                 --session <id> instead: every document that session
+                                 registered, for its SessionEnd hook)
+  akapen restore <session-id>    register again what that session registered last,
+                                 for its SessionStart hook on resume
   akapen <file.md> [options]     start a server for this one document
   akapen comments <file.md>      print unresolved comments as JSON (for agents)
   akapen reply <file.md> <id> <text>   reply to a comment (--resolve to close it too;
@@ -630,6 +634,47 @@ if (positional[0] === 'add') {
 }
 
 /** Unregister a document by its path, or by its id or a unique prefix of it. Its comments stay. */
+if (positional[0] === 'remove' && args.session !== undefined) {
+  if (positional.length > 1)
+    fail('remove --session takes no path: it removes everything that session registered');
+  const res = await daemon(`/api/documents?session=${encodeURIComponent(args.session)}`, {
+    method: 'DELETE',
+  });
+  if (res === null || !res.ok) {
+    console.error(
+      `akapen: removing the documents of ${args.session} failed: ${res === null ? `akapen serve is not answering on 127.0.0.1:${daemonPort()}` : `${res.status} ${await res.text()}`}`,
+    );
+    process.exit(1);
+  }
+  const { removed } = (await res.json()) as { removed: string[] };
+  console.log(
+    removed.length === 0 ? 'nothing was registered by that session' : `removed ${removed.join(', ')}`,
+  );
+  process.exit(0);
+}
+
+/**
+ * Register again what a session registered last (#305). Its SessionStart hook runs this
+ * when the session is resumed, so the URLs handed out before work again without anyone
+ * asking: they follow from the paths, so they come back as they were.
+ */
+if (positional[0] === 'restore') {
+  const [, session, ...extra] = positional;
+  if (!session) fail('restore: whose documents? Give the session id');
+  if (extra.length > 0) fail(`restore: unexpected ${JSON.stringify(extra.join(' '))}`);
+  const res = await daemon(`/api/sessions/${encodeURIComponent(session)}/restore`, { method: 'POST' });
+  if (res === null || !res.ok) {
+    console.error(
+      `akapen: restore failed: ${res === null ? `akapen serve is not answering on 127.0.0.1:${daemonPort()}` : `${res.status} ${await res.text()}`}`,
+    );
+    process.exit(1);
+  }
+  const restored = (await res.json()) as DaemonDocument[];
+  for (const d of restored) console.log(`${d.url}  ${d.file}`);
+  if (restored.length === 0) console.log('nothing to restore for that session');
+  process.exit(0);
+}
+
 if (positional[0] === 'remove') {
   const [, target, ...extra] = positional;
   if (!target) fail('remove: which document? Give its path or its id, as akapen list prints it');
@@ -673,8 +718,22 @@ if (positional[0] === 'comments') {
   // Unresolved comments from earlier rounds are included. Closing a round removes them
   // from the screen, not from the feedback. Line numbers refer to that round's snapshot
   // and will not match the live file, so an agent matches on `anchor` (the text as it was).
-  const review = loadReview(file);
-  const comments = pendingComments(file, args.all);
+  // Through `akapen serve` when it holds the document (#305): the server owns the store.
+  const registered = (await daemonDocuments())?.find((d) => d.file === resolve(file));
+  let current: number;
+  let comments: ReturnType<typeof pendingComments>;
+  if (registered) {
+    const res = await daemon(`/d/${registered.id}/api/pending${args.all ? '?all=1' : ''}`);
+    if (res === null || !res.ok) {
+      console.error(`akapen: akapen serve did not hand over the comments on ${registered.file}`);
+      process.exit(1);
+    }
+    ({ current, comments } = (await res.json()) as { current: number; comments: typeof comments });
+  } else {
+    current = loadReview(file).currentRound;
+    comments = pendingComments(file, args.all);
+  }
+  const review = { currentRound: current };
   console.log(
     JSON.stringify(
       comments.map((c) => ({
