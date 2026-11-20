@@ -49,7 +49,8 @@ export function documentFileSrc(src: string): string | null {
   } catch {
     path = bare;
   }
-  return `${FILE_ROUTE}?path=${encodeURIComponent(path)}`;
+  // Relative, so a document mounted under /d/<id>/ asks its own route (#305).
+  return `${FILE_ROUTE.slice(1)}?path=${encodeURIComponent(path)}`;
 }
 
 /**

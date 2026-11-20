@@ -169,7 +169,7 @@ async function decode<S extends v.GenericSchema>(res: Response, schema: S): Prom
 nextRoundBtn.addEventListener('click', async () => {
   nextRoundBtn.disabled = true;
   try {
-    const res = await fetch('/api/rounds', { method: 'POST' });
+    const res = await fetch('api/rounds', { method: 'POST' });
     // A refused cut is not a failure to report and forget: the server says the file is
     // being written or is empty right now, and clicking again once it settles works.
     if (!res.ok) throw await failureOf(res);
@@ -636,7 +636,7 @@ function repliesFor(c: Comment | RoundComment, past: boolean): HTMLElement {
     if (!body || send.disabled) return;
     send.disabled = true;
     try {
-      const res = await fetch(`/api/comments/${c.id}/replies`, {
+      const res = await fetch(`api/comments/${c.id}/replies`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ body }),
@@ -719,7 +719,7 @@ function bubbleFor(c: Comment | RoundComment, opts: { past?: boolean } = {}): HT
     e.stopPropagation();
     btn.disabled = true;
     try {
-      const res = await fetch(`/api/comments/${c.id}/resolve`, { method: 'POST' });
+      const res = await fetch(`api/comments/${c.id}/resolve`, { method: 'POST' });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       if (!state.history) takeAnswer(await decode(res, CommentsPayloadSchema));
       else if (state.round?.viewing) void showRound(state.round.viewing);
@@ -789,7 +789,7 @@ function draftBubble(): HTMLElement {
     if (draftIsStale()) return fail(box, STALE_DRAFT);
     submit.disabled = true;
     try {
-      const res = await fetch('/api/comments', {
+      const res = await fetch('api/comments', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         // Which round these line numbers belong to, so the comment is filed there.
@@ -1236,7 +1236,7 @@ syncRailMode();
  */
 async function showRound(n: number, focusId?: string) {
   try {
-    const res = await fetch(`/api/doc?round=${n}`);
+    const res = await fetch(`api/doc?round=${n}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const payload = await decode(res, DocPayloadSchema);
     draft = null;
@@ -1253,7 +1253,7 @@ async function showRound(n: number, focusId?: string) {
 
 async function showCurrent() {
   try {
-    const res = await fetch('/api/doc');
+    const res = await fetch('api/doc');
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const payload = await decode(res, DocPayloadSchema);
     active = null;
@@ -1656,7 +1656,7 @@ function applyPayload(payload: DocPayload) {
 // rebuilt only when a round is cut or history is opened — both things a person did.
 async function boot() {
   try {
-    const res = await fetch('/api/doc');
+    const res = await fetch('api/doc');
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     applyPayload(await decode(res, DocPayloadSchema));
     // Separate from the document: whether another review is running says nothing about
@@ -1675,7 +1675,7 @@ async function boot() {
  * position, the focused input, an in-flight IME composition and the text selection —
  * none of it caused by anything the person did.
  */
-const sse = new EventSource('/events');
+const sse = new EventSource('events');
 sse.addEventListener('message', (e) => {
   // Another document's events say nothing about the one on screen (#177).
   if (foreign) return;
@@ -1740,7 +1740,7 @@ const checkPath = async (): Promise<void> => {
   const mine = ++checks;
   try {
     if (!state.doc) return;
-    const res = await realFetch('/api/doc');
+    const res = await realFetch('api/doc');
     if (!res.ok || !state.doc) throw new Error(`answered ${res.status}`);
     const payload = await decode(res, DocPayloadSchema);
     if (mine !== checks) return;

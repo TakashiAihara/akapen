@@ -14,7 +14,11 @@ import { parseArgs, resolveHost, resolvePort, resolveSession, UsageError, type A
 
 const USAGE = `akapen — markdown inline review
 
-  akapen <file.md> [options]     start the review server
+  akapen serve [options]         start the server that serves every registered document
+  akapen add <file.md>           register a document with that server and print its URL
+                                 (--root <dir> to serve its images from a wider directory)
+  akapen remove <file.md|id>     unregister a document (its comments stay)
+  akapen <file.md> [options]     start a server for this one document
   akapen comments <file.md>      print unresolved comments as JSON (for agents)
   akapen reply <file.md> <id> <text>   reply to a comment (--resolve to close it too;
                                        -- before a text that starts with a dash)
@@ -28,7 +32,9 @@ const USAGE = `akapen — markdown inline review
 options:
   --host <addr>            listen address: an IP address or localhost (default 127.0.0.1)
   -p, --port <n>           port (default 4300, or one the OS picks when that is taken;
-                           a port given here is never moved off. 0: let the OS pick)
+                           a port given here is never moved off. 0: let the OS pick).
+                           serve: $AKAPEN_PORT or 4300, never moved off; add, remove and
+                           list reach it on 127.0.0.1 at the same port
   -A, --advertise <addr>   address to print in the URL, or an interface to take one
                            from ($AKAPEN_ADVERTISE sets it once per host)
   --css <file>             extra stylesheet to load
@@ -50,6 +56,64 @@ function fail(message: string): never {
   console.error(`akapen: ${message}`);
   console.error(`\n${USAGE}`);
   process.exit(1);
+}
+
+/** Where `akapen serve` listens, as every command finds it: `$AKAPEN_PORT`, else 4300. */
+function daemonPort(): number {
+  try {
+    return resolvePort(process.env['AKAPEN_PORT'] || undefined, 4300);
+  } catch (err) {
+    if (!(err instanceof UsageError)) throw err;
+    fail(`AKAPEN_PORT: ${err.message}`);
+  }
+}
+
+/** A row of the server's `GET /api/documents`. */
+type DaemonDocument = {
+  id: string;
+  file: string;
+  session: string | null;
+  url: string;
+  title: string | null;
+  round: number;
+  unresolved: number;
+  missing: boolean;
+  added_at: string;
+};
+
+/**
+ * A request to `akapen serve` on this machine, or null when nothing answers there.
+ *
+ * shortcut: always 127.0.0.1, so a server bound to one LAN address only is not found;
+ * a registry entry for the server would find it, if that bind ever matters.
+ */
+async function daemon(
+  path: string,
+  init: RequestInit = {},
+  token: string | null = currentToken(),
+): Promise<Response | null> {
+  const session = process.env['CLAUDE_CODE_SESSION_ID'] ?? '';
+  const headers: Record<string, string> = {
+    ...(token === null ? {} : { authorization: `Bearer ${token}` }),
+    ...(session === '' ? {} : { 'x-akapen-session': session }),
+    ...(init.body === undefined ? {} : { 'content-type': 'application/json' }),
+  };
+  try {
+    return await fetch(`http://127.0.0.1:${daemonPort()}${path}`, {
+      ...init,
+      headers,
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch {
+    return null;
+  }
+}
+
+/** What `akapen serve` has registered, or null when it is not running. */
+async function daemonDocuments(): Promise<DaemonDocument[] | null> {
+  const res = await daemon('/api/documents');
+  if (res === null || !res.ok) return null;
+  return (await res.json()) as DaemonDocument[];
 }
 
 let args: Args;
@@ -118,6 +182,8 @@ if (positional[0] === 'list') {
   // `currentToken`, not `resolveToken`: listing is a read, and a read that generates and
   // stores a secret as a side effect is a surprise. An instance running on a token this
   // caller does not have simply does not answer, and is reported as not answering.
+  // The documents `akapen serve` holds, listed beside the one-document servers (#305).
+  const documents = (await daemonDocuments()) ?? [];
   const all = await liveInstances({ token: currentToken() });
   /**
    * Only what one session started.
@@ -135,12 +201,14 @@ if (positional[0] === 'list') {
         : resolveSession(args.session, [
             ...entries.map((e) => e.sessionId),
             ...all.flatMap((e) => (e.record.origin?.id === undefined ? [] : [e.record.origin.id])),
+            ...documents.flatMap((d) => (d.session === null ? [] : [d.session])),
           ]);
   } catch (err) {
     if (!(err instanceof UsageError)) throw err;
     fail(err.message);
   }
   const live = session === undefined ? all : all.filter((e) => e.record.origin?.id === session);
+  const served = session === undefined ? documents : documents.filter((d) => d.session === session);
   // Reading the registry is the other half of the sweep's rule, and `list` has just
   // done it. Not `all`: an instance that did not answer may simply be busy, and the
   // registry keeps it for that reason — deleting its url here would contradict that.
@@ -157,28 +225,46 @@ if (positional[0] === 'list') {
   if (args.json) {
     console.log(
       JSON.stringify(
-        live.map(({ record, status }) => ({
-          pid: record.pid,
-          host: record.host,
-          port: record.port,
-          url: urlOf(record),
-          // The whole record, so `jq '.[] | select(.origin.id == "…")'` needs nothing
-          // this command did not already know. Null for an entry written before origins
-          // existed, or by a shell with no session to name.
-          origin: record.origin ?? null,
-          file: record.file,
-          title: status.title,
-          round: status.round,
-          unresolved: status.unresolved,
-          started_at: record.startedAt,
-        })),
+        [
+          ...live.map(({ record, status }) => ({
+            pid: record.pid,
+            host: record.host,
+            port: record.port,
+            url: urlOf(record),
+            // The whole record, so `jq '.[] | select(.origin.id == "…")'` needs nothing
+            // this command did not already know. Null for an entry written before origins
+            // existed, or by a shell with no session to name.
+            origin: record.origin ?? null,
+            file: record.file,
+            title: status.title,
+            round: status.round,
+            unresolved: status.unresolved,
+            started_at: record.startedAt,
+          })),
+          // The same shape, so a reader of this list needs nothing new. No pid: the server is
+          // one process for all of them, and a document is not a process.
+          ...served.map((d) => ({
+            pid: null,
+            host: '127.0.0.1',
+            port: daemonPort(),
+            url: d.url,
+            origin: d.session === null ? null : { kind: 'claude-code', id: d.session },
+            file: d.file,
+            id: d.id,
+            title: d.title,
+            round: d.round,
+            unresolved: d.unresolved,
+            missing: d.missing,
+            started_at: d.added_at,
+          })),
+        ],
         null,
         2,
       ),
     );
     process.exit(0);
   }
-  if (live.length === 0) {
+  if (live.length === 0 && served.length === 0) {
     // Each sentence says only what was observed (#157). A value nothing matches may be a
     // typo or a session that has closed everything, so it is not called a session. A
     // match with nothing live is a registered instance that did not answer — busy, or on
@@ -197,18 +283,28 @@ if (positional[0] === 'list') {
     );
     process.exit(0);
   }
-  const rows = live.map(({ record, status }) => ({
-    pid: String(record.pid),
-    // Enough of the id to tell five apart, which is what the column is for. The whole of
-    // it is in `--json`, for anything that has to match rather than read.
-    session: record.origin?.id?.slice(0, 8) ?? '-',
-    // The bind address is what the registry holds, and `0.0.0.0:4300` is not somewhere
-    // to go. The column is the URL for the same reason the startup line is.
-    url: urlOf(record),
-    round: `R${String(status.round).padStart(3, '0')}`,
-    unresolved: String(status.unresolved),
-    file: record.file,
-  }));
+  const rows = [
+    ...live.map(({ record, status }) => ({
+      pid: String(record.pid),
+      // Enough of the id to tell five apart, which is what the column is for. The whole of
+      // it is in `--json`, for anything that has to match rather than read.
+      session: record.origin?.id?.slice(0, 8) ?? '-',
+      // The bind address is what the registry holds, and `0.0.0.0:4300` is not somewhere
+      // to go. The column is the URL for the same reason the startup line is.
+      url: urlOf(record),
+      round: `R${String(status.round).padStart(3, '0')}`,
+      unresolved: String(status.unresolved),
+      file: record.file,
+    })),
+    ...served.map((d) => ({
+      pid: 'serve',
+      session: d.session?.slice(0, 8) ?? '-',
+      url: d.url,
+      round: `R${String(d.round).padStart(3, '0')}`,
+      unresolved: String(d.unresolved),
+      file: d.missing ? `${d.file} (missing)` : d.file,
+    })),
+  ];
   // Widths come from the rows themselves. A fixed width either wraps a long path or
   // leaves a gap wide enough that the columns stop reading as columns.
   const width = (pick: (r: (typeof rows)[number]) => string, head: string) =>
@@ -243,8 +339,10 @@ async function reachInstance(file: string): Promise<{
 }> {
   const token = args.token !== undefined && args.token !== '' ? args.token : currentToken();
   const target = resolve(file);
-  const serving = (await liveInstances({ token })).find((e) => e.record.file === target);
-  if (!serving) {
+  // A document `akapen serve` holds is reached under its path there (#305).
+  const registered = (await daemonDocuments())?.find((d) => d.file === target);
+  const serving = registered ? null : (await liveInstances({ token })).find((e) => e.record.file === target);
+  if (!registered && !serving) {
     // Said as observed: one may be running on another token, and not have answered. Not
     // written to the store instead (#258): a server that is running or starting holds the
     // round in memory and writes it back, and two of these at once would race each other.
@@ -254,7 +352,9 @@ async function reachInstance(file: string): Promise<{
     );
     process.exit(1);
   }
-  const base = `http://${reachableHost(serving.record.host)}:${serving.record.port}`;
+  const base = registered
+    ? `http://127.0.0.1:${daemonPort()}/d/${registered.id}`
+    : `http://${reachableHost(serving!.record.host)}:${serving!.record.port}`;
   const session = process.env['CLAUDE_CODE_SESSION_ID'] ?? '';
   const headers: Record<string, string> = {
     ...(token === null ? {} : { authorization: `Bearer ${token}` }),
@@ -376,6 +476,76 @@ if (positional[0] === 'reply' || positional[0] === 'resolve') {
   process.exit(0);
 }
 
+/**
+ * Register a document with `akapen serve` and print its URL (#305). The same path always
+ * gets the same URL, so running this again — after the session was resumed, say — is
+ * how it comes back. Nothing is started: the server is run by whatever runs services here.
+ */
+if (positional[0] === 'add') {
+  const [, target, ...extra] = positional;
+  if (!target || !existsSync(target)) fail(`no such file: ${target ?? '(missing)'}`);
+  if (extra.length > 0) fail(`add: unexpected ${JSON.stringify(extra.join(' '))}`);
+  const token = resolveToken(args.token);
+  const res = await daemon(
+    '/api/documents',
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        file: resolve(target),
+        ...(args.root === undefined ? {} : { root: resolve(args.root) }),
+      }),
+    },
+    token,
+  );
+  if (res === null) {
+    console.error(
+      `akapen: akapen serve is not answering on 127.0.0.1:${daemonPort()}; start it (akapen serve) and run this again`,
+    );
+    process.exit(1);
+  }
+  if (!res.ok) {
+    console.error(`akapen: akapen serve answered ${res.status}: ${await res.text()}`);
+    process.exit(1);
+  }
+  const added = (await res.json()) as DaemonDocument;
+  console.log(`akapen  ${added.file}`);
+  console.log(`  url     ${added.url}?token=${encodeURIComponent(token)}`);
+  console.log(`  id      ${added.id}`);
+  process.exit(0);
+}
+
+/** Unregister a document by its path, or by its id or a unique prefix of it. Its comments stay. */
+if (positional[0] === 'remove') {
+  const [, target, ...extra] = positional;
+  if (!target) fail('remove: which document? Give its path or its id, as akapen list prints it');
+  if (extra.length > 0) fail(`remove: unexpected ${JSON.stringify(extra.join(' '))}`);
+  const documents = await daemonDocuments();
+  if (documents === null) {
+    console.error(`akapen: akapen serve is not answering on 127.0.0.1:${daemonPort()}`);
+    process.exit(1);
+  }
+  const byPath = documents.find((d) => d.file === resolve(target));
+  const byId = documents.filter((d) => d.id.startsWith(target));
+  const found = byPath ?? (byId.length === 1 ? byId[0] : undefined);
+  if (found === undefined) {
+    console.error(
+      byId.length > 1
+        ? `akapen: ${JSON.stringify(target)} matches more than one document: ${byId.map((d) => d.id).join(', ')}`
+        : `akapen: nothing registered as ${JSON.stringify(target)}`,
+    );
+    process.exit(1);
+  }
+  const res = await daemon(`/api/documents/${encodeURIComponent(found.id)}`, { method: 'DELETE' });
+  if (res === null || !res.ok) {
+    console.error(
+      `akapen: removing ${found.id} failed: ${res === null ? 'no answer' : `${res.status} ${await res.text()}`}`,
+    );
+    process.exit(1);
+  }
+  console.log(`removed ${found.id} (${found.file}); its comments stay`);
+  process.exit(0);
+}
+
 if (positional[0] === 'comments') {
   const file = positional[1];
   if (!file || !existsSync(file)) fail(`no such file: ${file ?? '(missing)'}`);
@@ -422,6 +592,62 @@ if (positional[0] === 'comments') {
   process.exit(0);
 }
 
+/**
+ * The server for every registered document (#305). Its port is fixed: a URL handed out
+ * has to work tomorrow, so a port that is taken is a failure, never a move.
+ */
+if (positional[0] === 'serve') {
+  if (positional.length > 1) fail(`serve: unexpected ${JSON.stringify(positional.slice(1).join(' '))}`);
+  if (args.root !== undefined) fail('serve: --root belongs to akapen add, per document');
+  let host: string;
+  let port: number;
+  try {
+    host = resolveHost(args.host);
+    port = args.port === undefined ? daemonPort() : resolvePort(args.port, 4300);
+  } catch (err) {
+    if (!(err instanceof UsageError)) throw err;
+    fail(err.message);
+  }
+  const advertisedServe = advertisedFor(host);
+  secureHome();
+  const serveToken = args['no-auth'] ? null : resolveToken(args.token);
+  const { startDaemon } = await import('@akapen/server');
+  let daemonServer: ReturnType<typeof startDaemon>;
+  try {
+    daemonServer = startDaemon({
+      host,
+      port,
+      token: serveToken,
+      tokenPinned: tokenIsPinned(args.token),
+      author: args.author ?? process.env['USER'] ?? 'user',
+      advertised: advertisedServe,
+      ...(args.css ? { cssPath: resolve(args.css) } : {}),
+      ...(args.keymap ? { keymapPath: resolve(args.keymap) } : {}),
+    });
+  } catch (err) {
+    if ((err as { code?: unknown }).code !== 'EADDRINUSE') throw err;
+    fail(
+      `port ${port} is in use. If it is akapen serve, it is already running; otherwise pick another with -p or $AKAPEN_PORT`,
+    );
+  }
+  for (const [signal, code] of [
+    ['SIGINT', 130],
+    ['SIGTERM', 143],
+  ] as const) {
+    process.once(signal, () => {
+      void daemonServer.stop().finally(() => process.exit(code));
+    });
+  }
+  console.log(`akapen serve`);
+  console.log(
+    `  url     ${serveToken === null ? daemonServer.url : `${daemonServer.url}/?token=${encodeURIComponent(serveToken)}`}`,
+  );
+  if (serveToken === null)
+    console.log(`  note    --no-auth: anyone who can reach this address can read and write.`);
+  // Kept alive by the socket.
+  await new Promise(() => {});
+}
+
 const file = positional[0]!;
 if (!existsSync(file)) fail(`no such file: ${file}`);
 // Checked here rather than left to 404: a mistyped root would otherwise show every
@@ -462,11 +688,13 @@ try {
  * conditionally is far more likely than somebody asking to advertise nothing, and the
  * flag form of the same mistake is already refused by parseArgs.
  */
-let advertised: string | null = null;
-const requestedAdvertise = args.advertise ?? process.env['AKAPEN_ADVERTISE'] ?? '';
-if (requestedAdvertise !== '') {
+const advertised = advertisedFor(host);
+
+function advertisedFor(bind: string): string | null {
+  const requested = args.advertise ?? process.env['AKAPEN_ADVERTISE'] ?? '';
+  if (requested === '') return null;
   try {
-    advertised = resolveAdvertised(requestedAdvertise, host);
+    return resolveAdvertised(requested, bind);
   } catch (err) {
     if (!(err instanceof AdvertiseError)) throw err;
     fail(err.message);

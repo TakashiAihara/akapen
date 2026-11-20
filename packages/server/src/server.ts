@@ -1,11 +1,14 @@
-import { readFileSync, statSync, watch, existsSync } from 'node:fs';
+import { readFileSync, realpathSync, statSync, watch, existsSync } from 'node:fs';
 import { basename, dirname, resolve } from 'node:path';
 import { Hono, type Context } from 'hono';
+import { getConnInfo } from 'hono/bun';
 import { getCookie, setCookie } from 'hono/cookie';
+import * as v from 'valibot';
 import { vValidator } from '@hono/valibot-validator';
 import { ASSETS, mimeFor } from './assets.ts';
 import { buildDoc } from '@akapen/core/blocks';
-import { FILE_ROUTE, imageMime, resolveDocumentFile } from '@akapen/core/files';
+import { readDocuments, writeDocuments, documentId, type DocumentEntry } from '@akapen/core/documents';
+import { FILE_ROUTE, imageMime, isInside, resolveDocumentFile } from '@akapen/core/files';
 import { allowedHostnames, hostnameOf } from '@akapen/core/hosts';
 import { readToken, tokensMatch } from '@akapen/core/token';
 import {
@@ -13,6 +16,7 @@ import {
   carriedOver,
   ensureRound,
   loadComments,
+  loadReview,
   makeComment,
   openRound,
   pendingComments,
@@ -980,4 +984,204 @@ export function startServer(opts: ServeOptions) {
   };
 
   return { server, stop, storeDir: storeDir(file), round: document.round(), movedFrom };
+}
+
+export type DaemonOptions = Omit<ServeOptions, 'file' | 'root' | 'fallBackIfTaken'>;
+
+const AddDocumentSchema = v.object({
+  file: v.pipe(v.string(), v.minLength(1)),
+  root: v.optional(v.pipe(v.string(), v.minLength(1))),
+});
+
+/** The peers the management API answers: the CLI on this machine. */
+const isLoopbackPeer = (address: string | undefined): boolean =>
+  address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1';
+
+const escapeHtml = (s: string): string => s.replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
+
+/**
+ * One long-lived process serving every registered document under `/d/<id>/` (#305).
+ *
+ * Documents are opened on their first request rather than on registration, so a
+ * registered document nobody is reading holds no watcher. The registry is written here
+ * and only here: the CLI goes through `/api/documents`, which makes this the single
+ * writer of `documents.json`.
+ */
+export function startDaemon(opts: DaemonOptions) {
+  const { app, currentSecret } = guardedApp(opts, () => {});
+  let entries: DocumentEntry[] = readDocuments();
+  const open = new Map<string, OpenDocument>();
+  let base = '';
+
+  const close = (id: string): void => {
+    open.get(id)?.stop();
+    open.delete(id);
+  };
+
+  const documentFor = (id: string): OpenDocument | null => {
+    const entry = entries.find((e) => e.id === id);
+    if (entry === undefined || !existsSync(entry.file)) return null;
+    let doc = open.get(id);
+    if (doc === undefined) {
+      doc = openDocument(
+        entry.file,
+        { author: opts.author, ...(entry.root === undefined ? {} : { root: entry.root }) },
+        currentSecret,
+      );
+      open.set(id, doc);
+    }
+    return doc;
+  };
+
+  /** A row of `GET /api/documents`. Read from the store, so listing opens nothing. */
+  const describe = (e: DocumentEntry) => {
+    const missing = !existsSync(e.file);
+    const round = missing ? 0 : loadReview(e.file).currentRound;
+    let title: string | null = null;
+    if (!missing && round > 0) {
+      try {
+        title = documentTitle(buildDoc(e.file, roundContent(e.file, round)));
+      } catch {
+        /* A round that cannot be read: listed without a title rather than not at all. */
+      }
+    }
+    return {
+      id: e.id,
+      file: e.file,
+      session: e.session ?? null,
+      url: `${base}/d/${e.id}/`,
+      title,
+      round,
+      unresolved: missing ? 0 : pendingComments(e.file).length,
+      missing,
+      added_at: e.addedAt,
+    };
+  };
+
+  const save = (next: DocumentEntry[]): void => {
+    writeDocuments(next);
+    entries = next;
+  };
+
+  /**
+   * Registering a file hands out its contents, so only the CLI on this machine may do it.
+   * Whoever holds the token on the LAN can read and comment on what is registered; letting
+   * them register `~/.ssh/id_ed25519` as well would make the token a key to every file.
+   * Listing is held to the same peers because it carries full paths.
+   */
+  // The wildcard matches `/api/documents` itself as well.
+  app.use('/api/documents/*', async (c, next) => {
+    if (!isLoopbackPeer(getConnInfo(c).remote.address)) {
+      return c.text('documents are managed from this machine only', 403);
+    }
+    return next();
+  });
+
+  app.get('/api/documents', (c) => c.json(entries.map(describe)));
+
+  /**
+   * Register a document, or update the registration it already has. The same path always
+   * gets the same id, so registering again is how a resumed session gets its URL back.
+   */
+  app.post('/api/documents', vValidator('json', AddDocumentSchema), (c) => {
+    const session = c.req.header('x-akapen-session');
+    if (session !== undefined && !SESSION_ID.test(session)) return c.text('bad x-akapen-session', 400);
+    const body = c.req.valid('json');
+    const file = resolve(body.file);
+    if (!statSync(file, { throwIfNoEntry: false })?.isFile()) return c.text(`no such file: ${file}`, 400);
+    let root: string | undefined;
+    if (body.root !== undefined) {
+      root = resolve(body.root);
+      if (!statSync(root, { throwIfNoEntry: false })?.isDirectory()) {
+        return c.text(`root is not a directory: ${root}`, 400);
+      }
+      if (!isInside(realpathSync(root), realpathSync(file))) {
+        return c.text(`root does not contain the document: ${root}`, 400);
+      }
+    }
+    const id = documentId(file);
+    const prev = entries.find((e) => e.id === id);
+    const entry: DocumentEntry = {
+      id,
+      file,
+      ...(session === undefined ? {} : { session }),
+      ...(root === undefined ? {} : { root }),
+      addedAt: prev?.addedAt ?? new Date().toISOString(),
+    };
+    // A root that changed applies to the next opening, not to the one already serving.
+    if (prev?.root !== entry.root) close(id);
+    save([...entries.filter((e) => e.id !== id), entry]);
+    return c.json(describe(entry));
+  });
+
+  app.delete('/api/documents/:id', (c) => {
+    const id = c.req.param('id');
+    if (!entries.some((e) => e.id === id)) return c.text('not registered', 404);
+    close(id);
+    save(entries.filter((e) => e.id !== id));
+    return c.json({ removed: [id] });
+  });
+
+  /** Every registration a session made, for the hook that runs when it ends. */
+  app.delete('/api/documents', (c) => {
+    const session = c.req.query('session');
+    if (session === undefined || !SESSION_ID.test(session))
+      return c.text('name a session: ?session=<id>', 400);
+    const removed = entries.filter((e) => e.session === session).map((e) => e.id);
+    for (const id of removed) close(id);
+    if (removed.length > 0) save(entries.filter((e) => e.session !== session));
+    return c.json({ removed });
+  });
+
+  // The page's switcher asks this. There are no other processes to find any more.
+  app.get('/api/instances', (c) => c.json({ instances: [] } satisfies InstancesPayload));
+
+  /**
+   * What is registered, for a browser. The basename and the title, never the path: this
+   * page is read over the LAN, and directory layout is not something to hand out.
+   */
+  app.get('/', (c) => {
+    const rows = entries
+      .map(describe)
+      .toSorted(
+        (a, b) => Number(b.unresolved > 0) - Number(a.unresolved > 0) || b.added_at.localeCompare(a.added_at),
+      );
+    const items = rows
+      .map(
+        (r) =>
+          `<li><a href="d/${escapeHtml(r.id)}/">${escapeHtml(r.title ?? basename(r.file))}</a> ` +
+          `<span>${escapeHtml(basename(r.file))} · R${String(r.round).padStart(3, '0')} · ${r.unresolved} unresolved${r.missing ? ' · missing' : ''}</span></li>`,
+      )
+      .join('\n');
+    return c.html(
+      `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>akapen</title><link rel="stylesheet" href="/style.css"></head>` +
+        `<body><main class="documents"><h1>akapen</h1><ul>${items || '<li>nothing registered</li>'}</ul></main></body></html>`,
+    );
+  });
+
+  // Without the slash, the page's relative requests would resolve one level up.
+  app.get('/d/:id', (c) => c.redirect(`/d/${encodeURIComponent(c.req.param('id'))}/`, 301));
+  app.all('/d/:id/*', (c) => {
+    const id = c.req.param('id');
+    const doc = documentFor(id);
+    if (doc === null) return c.text('not registered here', 404);
+    return forward(c, doc, new URL(c.req.url).pathname.slice(`/d/${id}`.length) || '/');
+  });
+
+  serveAssets(app);
+
+  const server = Bun.serve({
+    hostname: opts.host,
+    port: opts.port,
+    idleTimeout: IDLE_TIMEOUT_S,
+    fetch: app.fetch,
+  });
+  base = urlsFor(opts.advertised ?? opts.host, server.port ?? opts.port)[0]!;
+
+  const stop = async (): Promise<void> => {
+    for (const id of open.keys()) close(id);
+    await server.stop(true);
+  };
+
+  return { server, stop, url: base };
 }
