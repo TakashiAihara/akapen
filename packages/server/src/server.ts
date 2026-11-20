@@ -144,38 +144,24 @@ const SETTLE_MS = ((): number => {
   return Number.isInteger(asked) && asked > 0 ? asked : 50;
 })();
 
-export function startServer(opts: ServeOptions) {
-  const file = resolve(opts.file);
-  // Read once. It cannot change while the process runs, and the login handler below
-  // needs it on a path that should not be touching the environment.
-  const origin = detectOrigin();
+/** What a document's routes are handed by whoever forwarded the request to them. */
+type DocEnv = { Bindings: { checkedSecret: string | null } };
 
-  /**
-   * Say where this instance can be reached, if anybody is going to look.
-   *
-   * Written twice over a life. Once when the socket is listening, with the address the
-   * startup line printed — so a session that has just started one has something to show
-   * before anybody has opened it. Again when a browser logs in, with the origin that
-   * browser now holds a cookie for.
-   *
-   * The second is what makes the first safe. The recorded url is a guess at which of
-   * this machine's addresses the reader will use, and a cookie is scoped to scheme, host
-   * and port together — so a wrong guess is one a bare url cannot come back on. But a
-   * wrong guess is also, precisely, one whose cookie will not be sent, which forces a
-   * login, which rewrites it. It repairs itself in the case it is wrong, and only then.
-   *
-   * Guarded on the value because a bookmark carrying `?token=` logs in on every visit,
-   * and rewriting an identical file on every reload is a write nobody asked for.
-   */
-  let recordedUrl: string | null = null;
-  const rememberUrl = (url: string): void => {
-    if (origin.id === undefined || url === recordedUrl) return;
-    // Cached only once it is on disk. Caching the attempt would mean a write that failed
-    // — a directory removed underneath it, a full disk — is never tried again, and the
-    // login that would have repaired a wrong guess returns early instead.
-    if (recordUrl(origin.id, process.pid, url)) recordedUrl = url;
-  };
+type DocumentOptions = {
+  author: string;
+  /** See ServeOptions.root. */
+  root?: string;
+};
 
+/**
+ * One document: its round, its comments, its watcher and its streams, and the routes
+ * that read and write them, relative to wherever the document is mounted.
+ *
+ * Split out of the server so one process can hold many (#305). The routes sit behind the
+ * guard of whichever server forwards to them; `checkedSecret` arrives as a binding
+ * because the request that was checked is the forwarding one, not this one.
+ */
+export function openDocument(file: string, opts: DocumentOptions, currentSecret: () => string | null) {
   let review: Review = ensureRound(file, readFileSync(file, 'utf8'));
   // What we render is the current round's snapshot, not the live file. Freezing what
   // comments attach to removes, structurally, the path where positions conflict while
@@ -321,6 +307,302 @@ export function startServer(opts: ServeOptions) {
     }, 80);
   });
 
+  const app = new Hono<DocEnv>();
+
+  app.get('/', (c) =>
+    c.body(Bun.file(ASSETS['index.html']!).stream(), 200, { 'content-type': mimeFor('index.html') }),
+  );
+
+  app.get('/api/doc', vValidator('query', DocQuerySchema), (c) => {
+    const want = c.req.valid('query').round ?? review.currentRound;
+    if (want === review.currentRound) return c.json(docPayload());
+    if (!review.rounds.some((r) => r.n === want)) return c.text('no such round', 404);
+    return c.json(historyPayload(want));
+  });
+
+  app.get('/api/comments', (c) => c.json(comments));
+
+  app.post('/api/comments', vValidator('json', CreateCommentSchema), (c) => {
+    const { startLine, endLine, body, round } = c.req.valid('json');
+    /**
+     * Filed on the round the screen was showing, whichever that is. Never refused for it.
+     *
+     * akapen is read while an agent keeps writing: a person reviews one round while the
+     * next one is cut on another screen, or goes back to an earlier round to say something
+     * about it. The line numbers were read from that round's snapshot, and saving the
+     * comment into that round is what keeps them pointing where the person pointed.
+     * Refusing it instead throws away a review somebody already wrote and asks them to
+     * write it again, which is the one thing a review tool must not do. The only refusal
+     * left is a range that points at nothing.
+     *
+     * A client that names no round is on the current one.
+     */
+    const n = round ?? review.currentRound;
+    const current = n === review.currentRound;
+    if (!current && !review.rounds.some((r) => r.n === n)) return c.text('no such round', 404);
+    const source = current ? snapshot : roundContent(file, n);
+    const target = current ? doc : buildDoc(file, source);
+    /**
+     * The schema only knows a line number is a positive integer. Whether the range
+     * points at anything depends on the document, which the schema cannot see.
+     *
+     * The test is the blocks, not the text. Reading the snapshot again here made the
+     * server answer, from the same file, a question the browser had already answered
+     * differently: a blank line inside a code block is a block of its own, is drawn,
+     * gets a `+`, and was refused for holding only whitespace (#101). Letting code
+     * blocks through as a special case would only move the disagreement somewhere
+     * else — the blocks are what the screen offers, so they are what decides.
+     *
+     * A trailing newline still makes a last "line" that is not there, and a blank line
+     * between two blocks still belongs to nothing. Neither is in `blocks`, so both are
+     * refused without a rule of their own.
+     *
+     * Overlap, not coverage. A selection made in the gutter runs from one row to another
+     * and takes the blank lines between them with it, so demanding that every line in the
+     * range belong to a block would refuse ranges the screen offers. The end still has to
+     * be a line the document has, or a range starting on real text would drag in numbers
+     * past the end of the file and store them.
+     */
+    if (
+      endLine < startLine ||
+      endLine > target.lineCount ||
+      !target.blocks.some((b) => b.startLine <= endLine && b.endLine >= startLine)
+    ) {
+      return c.text('line range does not point at any text', 400);
+    }
+    const comment = makeComment(source, startLine, endLine, body, opts.author);
+    // Written before it is shown. Pushing first would leave a comment that only exists
+    // in memory when the write fails: the POST reports failure, GET returns it anyway,
+    // and the next successful save persists the one that was refused.
+    const next = [...(current ? comments : loadComments(file, n)), comment];
+    saveComments(file, n, next);
+    if (current) comments = next;
+    // Just answer. The author's own screen updates locally.
+    return c.json({ comment, comments, carried: carriedOver(file) });
+  });
+
+  // resolve works on past rounds too. Freezing the status as well would leave no
+  // way to close an unresolved comment, and the agent handoff would jam.
+  app.post('/api/comments/:id/resolve', (c) => {
+    const updated = updateComment(file, c.req.param('id'), (comment) => {
+      comment.resolved = !comment.resolved;
+    });
+    if (!updated) return c.text('not found', 404);
+    if (updated.round === review.currentRound) comments = loadComments(file, review.currentRound);
+    return c.json({ comment: updated, comments, carried: carriedOver(file) });
+  });
+
+  /**
+   * A reply lands on its parent wherever that parent lives, including a round that has
+   * already closed. What a closed round freezes is the document and its line anchors;
+   * the conversation about it is the same side of that line as `resolved`, which #4
+   * already decided can still move.
+   *
+   * `authorKind` is stamped here rather than taken from the body. A reply is an agent's
+   * when it names the Claude Code session that wrote it in `x-akapen-session`, which the
+   * channel's instructions have every session send from `$CLAUDE_CODE_SESSION_ID`. A
+   * browser never sends it. The header is a claim, not an identity: whoever holds the
+   * token (#112) can make it, which is the trust the token already carries.
+   *
+   * Not decided by the credential (cookie against bearer), as #161 first suggested. That
+   * tells a browser from everything else, not an agent from a person running curl, and
+   * it names no session.
+   */
+  app.post('/api/comments/:id/replies', vValidator('json', CreateReplySchema), (c) => {
+    const session = c.req.header('x-akapen-session');
+    if (session !== undefined && !SESSION_ID.test(session)) return c.text('bad x-akapen-session', 400);
+    const kind = session === undefined ? 'human' : 'agent';
+    const added = addReply(file, c.req.param('id'), c.req.valid('json').body, opts.author, kind, session);
+    if (!added) return c.text('not found', 404);
+    if (added.comment.round === review.currentRound) comments = loadComments(file, review.currentRound);
+    return c.json({ comment: added.comment, comments, carried: carriedOver(file) });
+  });
+
+  /**
+   * One cut at a time.
+   *
+   * Waiting for the file to settle handed control back mid-request, which the earlier
+   * synchronous handler never did. Two screens both showing the banner and both pressing
+   * the button — the situation this whole change is about — then landed inside that
+   * window together, and each opened a round of its own: the second one identical to the
+   * first, the first one closed before a single comment could be written on it, and the
+   * screen that opened it already behind.
+   *
+   * The second one is refused rather than queued: the round it asked for is the one
+   * already being opened, and it arrives on that screen as the `round` event, same as
+   * any other.
+   */
+  let cutting = false;
+
+  // A round is cut on request: by a person, or by an agent running `akapen rounds cut`. An agent's intermediate save never cuts one.
+  app.post('/api/rounds', async (c) => {
+    if (cutting) return c.text('a round is already being opened; it will arrive on its own', 409);
+    cutting = true;
+    try {
+      return await cutRound(c);
+    } finally {
+      // Every exit releases it. One that did not would leave the document permanently
+      // stuck on the round it was on, with nothing on screen saying why.
+      cutting = false;
+    }
+  });
+
+  const cutRound = async (c: Context) => {
+    const read = await readSettled();
+    if (!read.ok) {
+      if (read.reason === 'unreadable') return c.text('cannot read file', 500);
+      // Refusing costs a click. Freezing a half-written document costs the whole file:
+      // every comment on it is refused until another round is opened.
+      return c.text('the file is still being written; the round was not opened', 409);
+    }
+    const live = read.content;
+    if (looksEmptied(live)) {
+      return c.text('the file is empty right now; the round was not opened', 409);
+    }
+    // Two people pressing the button half a second apart, after the first cut is over and
+    // so past the guard above: the second reads what the first just froze. Opening a
+    // round for it would close the first one before anything could be written on it, and
+    // leave that screen behind. The round it asked for exists already, holding the
+    // content it would have frozen, so it gets that one.
+    if (live === snapshot) return c.json(docPayload());
+    review = openRound(file, live);
+    snapshot = live;
+    doc = buildDoc(file, snapshot);
+    comments = [];
+    changes = 0;
+    // Every other screen is still on the previous round and does not know. Telling them
+    // is what stops them from sending comments against line numbers that have moved.
+    // Only that it moved: rebuilding a screen nobody touched is what rounds exist to avoid.
+    notify(roundEvent());
+    // A new round means a new document. Return it, and only the clicker's screen swaps.
+    return c.json(docPayload());
+  };
+
+  app.get('/api/rounds', (c) => c.json({ current: review.currentRound, rounds: review.rounds }));
+
+  /**
+   * What this instance is showing. Small on purpose: it is answered on every liveness
+   * check another instance makes, and a row only needs enough to recognise a document
+   * and see whether it is waiting on someone.
+   *
+   * The basename, never the path. The switcher is read over the LAN with nothing
+   * authenticating a reader (#10), and directory layout is not something to hand out.
+   */
+  app.get('/api/status', (c) => {
+    const status: StatusPayload = {
+      file: basename(file),
+      // `doc` is the round being shown, not the file: a heading edited on disk is reported
+      // once a round is closed on it, the same moment the tab picks it up.
+      title: documentTitle(doc),
+      round: review.currentRound,
+      // Across every round, matching `akapen comments`: closing a round hands the
+      // unresolved ones over, so they are still what the document is waiting on.
+      unresolved: pendingComments(file).length,
+    };
+    return c.json(status);
+  });
+
+  app.get('/events', (c) => {
+    // Let in under this token. A rotation revokes it, and with the heartbeat keeping the
+    // stream open nothing else would, so the next frame closes the stream instead. Taken
+    // from the check that let the request in: reading the token again here could see a
+    // rotation that check did not, and a stream let in on the old token would then
+    // outlive it.
+    //
+    // No test pins this choice: telling it apart from a second `currentSecret()` needs
+    // the one-second cache to run out between the middleware and this line, inside one
+    // request, and the suite drives the server as a separate process (#244).
+    const openedUnder = c.env.checkedSecret;
+    let send!: (frame: string) => void;
+    const stream = new ReadableStream({
+      start(controller) {
+        const enc = new TextEncoder();
+        send = (frame: string) => {
+          try {
+            if (currentSecret() !== openedUnder) {
+              clients.delete(send);
+              controller.close();
+              return;
+            }
+            controller.enqueue(enc.encode(frame));
+          } catch {
+            clients.delete(send);
+          }
+        };
+        clients.add(send);
+        // The first render comes from /api/doc on load. Sending a doc here would
+        // rebuild the screen on every reconnect.
+        send(`data: ${JSON.stringify(changedEvent())}\n\n`);
+      },
+      cancel() {
+        clients.delete(send);
+      },
+    });
+    // Hono's streamSSE owns the lifetime of the handler, but this stream outlives the
+    // request and is written to from the file watcher, so the Response is built here.
+    return new Response(stream, {
+      headers: {
+        'content-type': 'text/event-stream',
+        'cache-control': 'no-cache',
+        connection: 'keep-alive',
+      },
+    });
+  });
+  /**
+   * An image the document refers to. Every refusal is the same 404, so the answer does
+   * not tell a reader what exists outside the root.
+   *
+   * Images are not frozen with a round, so a diagram re-exported beside the document
+   * has to show when the page next asks for it. `no-cache` makes the browser ask, and
+   * the ETag keeps that asking to a 304 instead of the whole file each time.
+   *
+   * The SVG headers are for someone opening this URL directly: from an `<img>` its
+   * script never runs, but as a document it would run on this origin, with the cookie.
+   */
+  const fileRoot = resolve(opts.root ?? dirname(file));
+  app.get(FILE_ROUTE, (c) => {
+    const found = resolveDocumentFile(file, fileRoot, c.req.query('path') ?? '');
+    if (found === null) return c.text('not found', 404);
+    const st = statSync(found, { throwIfNoEntry: false });
+    if (st === undefined) return c.text('not found', 404);
+
+    // Full precision: a same-size re-export within one millisecond must still change it.
+    const etag = `"${st.size}-${st.mtimeMs}"`;
+    const cache = { etag, 'cache-control': 'no-cache' };
+    if (c.req.header('if-none-match') === etag) return c.body(null, 304, cache);
+    // Set by hand: Bun answers HEAD on a streamed body with a length of 0.
+    return c.body(Bun.file(found).stream(), 200, {
+      ...cache,
+      'content-type': imageMime(found),
+      'content-length': String(st.size),
+      'x-content-type-options': 'nosniff',
+      'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+    });
+  });
+
+  /** Everything this document holds open. The socket is the server's, not its. */
+  const stop = (): void => {
+    if (timer) clearTimeout(timer);
+    timer = null;
+    clearInterval(heartbeat);
+    watcher.close();
+    clients.clear();
+  };
+
+  return { app, stop, file, round: () => review.currentRound };
+}
+
+export type OpenDocument = ReturnType<typeof openDocument>;
+
+type GuardOptions = Pick<ServeOptions, 'host' | 'token' | 'tokenPinned' | 'cssPath' | 'keymapPath'>;
+
+/**
+ * The parts of a server that are not about any one document: the Host, site and token
+ * checks in front of everything, and the stylesheet and keymap hooks.
+ *
+ * `rememberUrl` is told the origin a browser logged in on.
+ */
+function guardedApp(opts: GuardOptions, rememberUrl: (url: string) => void) {
   /**
    * `checkedSecret` is the secret this request was checked against, or null when nothing
    * is checked. A handler only runs once it has matched, so there it is the secret the
@@ -523,194 +805,92 @@ export function startServer(opts: ServeOptions) {
     });
   });
 
-  app.get('/api/doc', vValidator('query', DocQuerySchema), (c) => {
-    const want = c.req.valid('query').round ?? review.currentRound;
-    if (want === review.currentRound) return c.json(docPayload());
-    if (!review.rounds.some((r) => r.n === want)) return c.text('no such round', 404);
-    return c.json(historyPayload(want));
+  // Extra CSS. crit had no such hook; open one from the start.
+  app.get('/custom.css', (c) => {
+    const css = opts.cssPath && existsSync(opts.cssPath) ? readFileSync(opts.cssPath, 'utf8') : '';
+    return c.body(css, 200, { 'content-type': 'text/css; charset=utf-8' });
   });
 
-  app.get('/api/comments', (c) => c.json(comments));
-
-  app.post('/api/comments', vValidator('json', CreateCommentSchema), (c) => {
-    const { startLine, endLine, body, round } = c.req.valid('json');
-    /**
-     * Filed on the round the screen was showing, whichever that is. Never refused for it.
-     *
-     * akapen is read while an agent keeps writing: a person reviews one round while the
-     * next one is cut on another screen, or goes back to an earlier round to say something
-     * about it. The line numbers were read from that round's snapshot, and saving the
-     * comment into that round is what keeps them pointing where the person pointed.
-     * Refusing it instead throws away a review somebody already wrote and asks them to
-     * write it again, which is the one thing a review tool must not do. The only refusal
-     * left is a range that points at nothing.
-     *
-     * A client that names no round is on the current one.
-     */
-    const n = round ?? review.currentRound;
-    const current = n === review.currentRound;
-    if (!current && !review.rounds.some((r) => r.n === n)) return c.text('no such round', 404);
-    const source = current ? snapshot : roundContent(file, n);
-    const target = current ? doc : buildDoc(file, source);
-    /**
-     * The schema only knows a line number is a positive integer. Whether the range
-     * points at anything depends on the document, which the schema cannot see.
-     *
-     * The test is the blocks, not the text. Reading the snapshot again here made the
-     * server answer, from the same file, a question the browser had already answered
-     * differently: a blank line inside a code block is a block of its own, is drawn,
-     * gets a `+`, and was refused for holding only whitespace (#101). Letting code
-     * blocks through as a special case would only move the disagreement somewhere
-     * else — the blocks are what the screen offers, so they are what decides.
-     *
-     * A trailing newline still makes a last "line" that is not there, and a blank line
-     * between two blocks still belongs to nothing. Neither is in `blocks`, so both are
-     * refused without a rule of their own.
-     *
-     * Overlap, not coverage. A selection made in the gutter runs from one row to another
-     * and takes the blank lines between them with it, so demanding that every line in the
-     * range belong to a block would refuse ranges the screen offers. The end still has to
-     * be a line the document has, or a range starting on real text would drag in numbers
-     * past the end of the file and store them.
-     */
-    if (
-      endLine < startLine ||
-      endLine > target.lineCount ||
-      !target.blocks.some((b) => b.startLine <= endLine && b.endLine >= startLine)
-    ) {
-      return c.text('line range does not point at any text', 400);
+  // Keymap override. Like the CSS hook, a way to configure it from the start.
+  // A broken JSON must not make the tool unusable, so fall back to the defaults.
+  app.get('/keymap.json', (c) => {
+    let body = '{}';
+    if (opts.keymapPath && existsSync(opts.keymapPath)) {
+      const raw = readFileSync(opts.keymapPath, 'utf8');
+      try {
+        JSON.parse(raw);
+        body = raw;
+      } catch {
+        console.error(`akapen: keymap JSON is invalid; continuing with the defaults: ${opts.keymapPath}`);
+      }
     }
-    const comment = makeComment(source, startLine, endLine, body, opts.author);
-    // Written before it is shown. Pushing first would leave a comment that only exists
-    // in memory when the write fails: the POST reports failure, GET returns it anyway,
-    // and the next successful save persists the one that was refused.
-    const next = [...(current ? comments : loadComments(file, n)), comment];
-    saveComments(file, n, next);
-    if (current) comments = next;
-    // Just answer. The author's own screen updates locally.
-    return c.json({ comment, comments, carried: carriedOver(file) });
+    return c.body(body, 200, { 'content-type': 'application/json' });
   });
+  return { app, currentSecret };
+}
 
-  // resolve works on past rounds too. Freezing the status as well would leave no
-  // way to close an unresolved comment, and the agent handoff would jam.
-  app.post('/api/comments/:id/resolve', (c) => {
-    const updated = updateComment(file, c.req.param('id'), (comment) => {
-      comment.resolved = !comment.resolved;
-    });
-    if (!updated) return c.text('not found', 404);
-    if (updated.round === review.currentRound) comments = loadComments(file, review.currentRound);
-    return c.json({ comment: updated, comments, carried: carriedOver(file) });
+type GuardedApp = ReturnType<typeof guardedApp>['app'];
+
+/** Hand a request to a document's routes, under the path it has inside the document. */
+function forward(c: Context, doc: OpenDocument, path: string): Response | Promise<Response> {
+  const url = new URL(c.req.url);
+  url.pathname = path;
+  return doc.app.fetch(new Request(url, c.req.raw), {
+    checkedSecret: c.get('checkedSecret') as string | null,
   });
+}
+
+function serveAssets(app: GuardedApp): void {
+  // Only what ASSETS names is served here. No directory walking means this route has no
+  // path traversal to begin with (the file route above has its own containment), and it
+  // works unchanged inside the single binary.
+  app.get('*', (c) => {
+    const path = new URL(c.req.url).pathname;
+    const name = path === '/' ? 'index.html' : path.slice(1);
+    const asset = ASSETS[name];
+    if (!asset) return c.text('not found', 404);
+    return c.body(Bun.file(asset).stream(), 200, { 'content-type': mimeFor(name) });
+  });
+}
+
+export function startServer(opts: ServeOptions) {
+  const file = resolve(opts.file);
+  // Read once. It cannot change while the process runs, and the login handler below
+  // needs it on a path that should not be touching the environment.
+  const origin = detectOrigin();
 
   /**
-   * A reply lands on its parent wherever that parent lives, including a round that has
-   * already closed. What a closed round freezes is the document and its line anchors;
-   * the conversation about it is the same side of that line as `resolved`, which #4
-   * already decided can still move.
+   * Say where this instance can be reached, if anybody is going to look.
    *
-   * `authorKind` is stamped here rather than taken from the body. A reply is an agent's
-   * when it names the Claude Code session that wrote it in `x-akapen-session`, which the
-   * channel's instructions have every session send from `$CLAUDE_CODE_SESSION_ID`. A
-   * browser never sends it. The header is a claim, not an identity: whoever holds the
-   * token (#112) can make it, which is the trust the token already carries.
+   * Written twice over a life. Once when the socket is listening, with the address the
+   * startup line printed — so a session that has just started one has something to show
+   * before anybody has opened it. Again when a browser logs in, with the origin that
+   * browser now holds a cookie for.
    *
-   * Not decided by the credential (cookie against bearer), as #161 first suggested. That
-   * tells a browser from everything else, not an agent from a person running curl, and
-   * it names no session.
+   * The second is what makes the first safe. The recorded url is a guess at which of
+   * this machine's addresses the reader will use, and a cookie is scoped to scheme, host
+   * and port together — so a wrong guess is one a bare url cannot come back on. But a
+   * wrong guess is also, precisely, one whose cookie will not be sent, which forces a
+   * login, which rewrites it. It repairs itself in the case it is wrong, and only then.
+   *
+   * Guarded on the value because a bookmark carrying `?token=` logs in on every visit,
+   * and rewriting an identical file on every reload is a write nobody asked for.
    */
-  app.post('/api/comments/:id/replies', vValidator('json', CreateReplySchema), (c) => {
-    const session = c.req.header('x-akapen-session');
-    if (session !== undefined && !SESSION_ID.test(session)) return c.text('bad x-akapen-session', 400);
-    const kind = session === undefined ? 'human' : 'agent';
-    const added = addReply(file, c.req.param('id'), c.req.valid('json').body, opts.author, kind, session);
-    if (!added) return c.text('not found', 404);
-    if (added.comment.round === review.currentRound) comments = loadComments(file, review.currentRound);
-    return c.json({ comment: added.comment, comments, carried: carriedOver(file) });
-  });
-
-  /**
-   * One cut at a time.
-   *
-   * Waiting for the file to settle handed control back mid-request, which the earlier
-   * synchronous handler never did. Two screens both showing the banner and both pressing
-   * the button — the situation this whole change is about — then landed inside that
-   * window together, and each opened a round of its own: the second one identical to the
-   * first, the first one closed before a single comment could be written on it, and the
-   * screen that opened it already behind.
-   *
-   * The second one is refused rather than queued: the round it asked for is the one
-   * already being opened, and it arrives on that screen as the `round` event, same as
-   * any other.
-   */
-  let cutting = false;
-
-  // A round is cut on request: by a person, or by an agent running `akapen rounds cut`. An agent's intermediate save never cuts one.
-  app.post('/api/rounds', async (c) => {
-    if (cutting) return c.text('a round is already being opened; it will arrive on its own', 409);
-    cutting = true;
-    try {
-      return await cutRound(c);
-    } finally {
-      // Every exit releases it. One that did not would leave the document permanently
-      // stuck on the round it was on, with nothing on screen saying why.
-      cutting = false;
-    }
-  });
-
-  const cutRound = async (c: Context) => {
-    const read = await readSettled();
-    if (!read.ok) {
-      if (read.reason === 'unreadable') return c.text('cannot read file', 500);
-      // Refusing costs a click. Freezing a half-written document costs the whole file:
-      // every comment on it is refused until another round is opened.
-      return c.text('the file is still being written; the round was not opened', 409);
-    }
-    const live = read.content;
-    if (looksEmptied(live)) {
-      return c.text('the file is empty right now; the round was not opened', 409);
-    }
-    // Two people pressing the button half a second apart, after the first cut is over and
-    // so past the guard above: the second reads what the first just froze. Opening a
-    // round for it would close the first one before anything could be written on it, and
-    // leave that screen behind. The round it asked for exists already, holding the
-    // content it would have frozen, so it gets that one.
-    if (live === snapshot) return c.json(docPayload());
-    review = openRound(file, live);
-    snapshot = live;
-    doc = buildDoc(file, snapshot);
-    comments = [];
-    changes = 0;
-    // Every other screen is still on the previous round and does not know. Telling them
-    // is what stops them from sending comments against line numbers that have moved.
-    // Only that it moved: rebuilding a screen nobody touched is what rounds exist to avoid.
-    notify(roundEvent());
-    // A new round means a new document. Return it, and only the clicker's screen swaps.
-    return c.json(docPayload());
+  let recordedUrl: string | null = null;
+  const rememberUrl = (url: string): void => {
+    if (origin.id === undefined || url === recordedUrl) return;
+    // Cached only once it is on disk. Caching the attempt would mean a write that failed
+    // — a directory removed underneath it, a full disk — is never tried again, and the
+    // login that would have repaired a wrong guess returns early instead.
+    if (recordUrl(origin.id, process.pid, url)) recordedUrl = url;
   };
 
-  app.get('/api/rounds', (c) => c.json({ current: review.currentRound, rounds: review.rounds }));
-
-  /**
-   * What this instance is showing. Small on purpose: it is answered on every liveness
-   * check another instance makes, and a row only needs enough to recognise a document
-   * and see whether it is waiting on someone.
-   *
-   * The basename, never the path. The switcher is read over the LAN with nothing
-   * authenticating a reader (#10), and directory layout is not something to hand out.
-   */
-  app.get('/api/status', (c) => {
-    const status: StatusPayload = {
-      file: basename(file),
-      // `doc` is the round being shown, not the file: a heading edited on disk is reported
-      // once a round is closed on it, the same moment the tab picks it up.
-      title: documentTitle(doc),
-      round: review.currentRound,
-      // Across every round, matching `akapen comments`: closing a round hands the
-      // unresolved ones over, so they are still what the document is waiting on.
-      unresolved: pendingComments(file).length,
-    };
-    return c.json(status);
-  });
+  const { app, currentSecret } = guardedApp(opts, rememberUrl);
+  const document = openDocument(
+    file,
+    { author: opts.author, ...(opts.root === undefined ? {} : { root: opts.root }) },
+    currentSecret,
+  );
 
   /**
    * The other akapen running for this user, built here rather than in the browser.
@@ -739,118 +919,12 @@ export function startServer(opts: ServeOptions) {
     };
     return c.json(payload);
   });
-
-  app.get('/events', (c) => {
-    // Let in under this token. A rotation revokes it, and with the heartbeat keeping the
-    // stream open nothing else would, so the next frame closes the stream instead. Taken
-    // from the check that let the request in: reading the token again here could see a
-    // rotation that check did not, and a stream let in on the old token would then
-    // outlive it.
-    //
-    // No test pins this choice: telling it apart from a second `currentSecret()` needs
-    // the one-second cache to run out between the middleware and this line, inside one
-    // request, and the suite drives the server as a separate process (#244).
-    const openedUnder = c.get('checkedSecret');
-    let send!: (frame: string) => void;
-    const stream = new ReadableStream({
-      start(controller) {
-        const enc = new TextEncoder();
-        send = (frame: string) => {
-          try {
-            if (currentSecret() !== openedUnder) {
-              clients.delete(send);
-              controller.close();
-              return;
-            }
-            controller.enqueue(enc.encode(frame));
-          } catch {
-            clients.delete(send);
-          }
-        };
-        clients.add(send);
-        // The first render comes from /api/doc on load. Sending a doc here would
-        // rebuild the screen on every reconnect.
-        send(`data: ${JSON.stringify(changedEvent())}\n\n`);
-      },
-      cancel() {
-        clients.delete(send);
-      },
-    });
-    // Hono's streamSSE owns the lifetime of the handler, but this stream outlives the
-    // request and is written to from the file watcher, so the Response is built here.
-    return new Response(stream, {
-      headers: {
-        'content-type': 'text/event-stream',
-        'cache-control': 'no-cache',
-        connection: 'keep-alive',
-      },
-    });
-  });
-
-  // Extra CSS. crit had no such hook; open one from the start.
-  app.get('/custom.css', (c) => {
-    const css = opts.cssPath && existsSync(opts.cssPath) ? readFileSync(opts.cssPath, 'utf8') : '';
-    return c.body(css, 200, { 'content-type': 'text/css; charset=utf-8' });
-  });
-
-  // Keymap override. Like the CSS hook, a way to configure it from the start.
-  // A broken JSON must not make the tool unusable, so fall back to the defaults.
-  app.get('/keymap.json', (c) => {
-    let body = '{}';
-    if (opts.keymapPath && existsSync(opts.keymapPath)) {
-      const raw = readFileSync(opts.keymapPath, 'utf8');
-      try {
-        JSON.parse(raw);
-        body = raw;
-      } catch {
-        console.error(`akapen: keymap JSON is invalid; continuing with the defaults: ${opts.keymapPath}`);
-      }
-    }
-    return c.body(body, 200, { 'content-type': 'application/json' });
-  });
-
-  /**
-   * An image the document refers to. Every refusal is the same 404, so the answer does
-   * not tell a reader what exists outside the root.
-   *
-   * Images are not frozen with a round, so a diagram re-exported beside the document
-   * has to show when the page next asks for it. `no-cache` makes the browser ask, and
-   * the ETag keeps that asking to a 304 instead of the whole file each time.
-   *
-   * The SVG headers are for someone opening this URL directly: from an `<img>` its
-   * script never runs, but as a document it would run on this origin, with the cookie.
-   */
-  const fileRoot = resolve(opts.root ?? dirname(file));
-  app.get(FILE_ROUTE, (c) => {
-    const found = resolveDocumentFile(file, fileRoot, c.req.query('path') ?? '');
-    if (found === null) return c.text('not found', 404);
-    const st = statSync(found, { throwIfNoEntry: false });
-    if (st === undefined) return c.text('not found', 404);
-
-    // Full precision: a same-size re-export within one millisecond must still change it.
-    const etag = `"${st.size}-${st.mtimeMs}"`;
-    const cache = { etag, 'cache-control': 'no-cache' };
-    if (c.req.header('if-none-match') === etag) return c.body(null, 304, cache);
-    // Set by hand: Bun answers HEAD on a streamed body with a length of 0.
-    return c.body(Bun.file(found).stream(), 200, {
-      ...cache,
-      'content-type': imageMime(found),
-      'content-length': String(st.size),
-      'x-content-type-options': 'nosniff',
-      'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox",
-    });
-  });
-
-  // Only what ASSETS names is served here. No directory walking means this route has no
-  // path traversal to begin with (the file route above has its own containment), and it
-  // works unchanged inside the single binary.
-  app.get('*', (c) => {
-    const path = new URL(c.req.url).pathname;
-    const name = path === '/' ? 'index.html' : path.slice(1);
-    const asset = ASSETS[name];
-    if (!asset) return c.text('not found', 404);
-    return c.body(Bun.file(asset).stream(), 200, { 'content-type': mimeFor(name) });
-  });
+  // The document is mounted at the root: one process, one document.
+  app.get('/', (c) => forward(c, document, '/'));
+  app.all('/api/*', (c) => forward(c, document, new URL(c.req.url).pathname));
+  app.get('/events', (c) => forward(c, document, '/events'));
+  app.get(FILE_ROUTE, (c) => forward(c, document, FILE_ROUTE));
+  serveAssets(app);
 
   // One process, as before. Hono only replaces the routing inside the same fetch
   // handler; there is no second server and nothing to proxy.
@@ -897,11 +971,7 @@ export function startServer(opts: ServeOptions) {
    * the FSWatcher and a pending debounce timer holding the event loop open.
    */
   const stop = async () => {
-    if (timer) clearTimeout(timer);
-    timer = null;
-    // Held open otherwise, as the watcher would be.
-    clearInterval(heartbeat);
-    watcher.close();
+    document.stop();
     // Before the socket closes: an entry left pointing at a port nobody is listening on
     // is what every reader then has to spend a timeout discovering.
     removeInstance();
@@ -909,5 +979,5 @@ export function startServer(opts: ServeOptions) {
     await server.stop(true);
   };
 
-  return { server, stop, storeDir: storeDir(file), round: review.currentRound, movedFrom };
+  return { server, stop, storeDir: storeDir(file), round: document.round(), movedFrom };
 }
