@@ -21,7 +21,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { localAddresses } from '@akapen/core/addresses';
 import { collect, holdServeStream, serveStore } from '../../cli/src/channel.ts';
-import { chosenServePort } from '@akapen/core/documents';
+import { chosenServePort, documentId } from '@akapen/core/documents';
 
 const TOKEN = 'test-token-for-the-daemon-suite';
 const CLI = join(import.meta.dirname, '..', '..', 'cli', 'src', 'cli.ts');
@@ -136,6 +136,8 @@ afterEach(async () => {
   running = [];
   rmSync(sandbox, { recursive: true, force: true });
 });
+
+const lanAddress = localAddresses().find((a) => a !== '127.0.0.1' && !a.includes(':'));
 
 describe('akapen serve', () => {
   it('hands out the same URL for the same path, and another for the same name elsewhere', async () => {
@@ -634,6 +636,9 @@ describe('akapen serve', () => {
     const r = cli(d, ['list']);
     expect(r.out).toContain('refused this command');
     expect(r.out).not.toContain('was not sent');
+    const comments = cli(d, ['comments', note('note.md')]);
+    expect(comments.code).toBe(1);
+    expect(comments.err).toContain('refused this command');
     const removed = cli(d, ['remove', 'anything']);
     expect(removed.code).toBe(1);
     expect(removed.err).toContain('refused this command');
@@ -767,8 +772,6 @@ function hold(d: Daemon, session: string) {
   return { frames, close: () => ctl.abort(), opened };
 }
 
-const lanAddress = localAddresses().find((a) => a !== '127.0.0.1' && !a.includes(':'));
-
 describe('sessions on akapen serve', () => {
   it('gives a resumed session its documents back at the same URLs', async () => {
     const d = await serve();
@@ -799,12 +802,15 @@ describe('sessions on akapen serve', () => {
     const before = await addedAt();
 
     expect(cli(d, ['remove', dropped]).code).toBe(0);
+    const droppedUrl = `${url.split('/d/')[0]}/d/${encodeURIComponent(documentId(dropped))}/`;
     cli(d, ['remove', '--session', 'session-a']);
+    expect((await authed(`${url}api/status`)).status).toBe(404);
     await new Promise((r) => setTimeout(r, 20));
     const restored = cli(d, ['restore', 'session-a']);
     expect(restored.code, restored.err).toBe(0);
     expect(restored.out).toContain(url);
     expect(restored.out).not.toContain(dropped);
+    expect((await authed(`${droppedUrl}api/status`)).status).toBe(404);
     expect(await addedAt()).toBe(before);
   });
 
@@ -907,6 +913,18 @@ describe('sessions on akapen serve', () => {
     expect((await authed(`${url}api/status`)).status).toBe(200);
   });
 
+  it("keeps a resumed session's documents when its old channel's stream closes after the restore", async () => {
+    const d = await serve([], { AKAPEN_DISCONNECT_MS: '300' });
+    const url = urlIn(cli(d, ['add', note('a.md')], { CLAUDE_CODE_SESSION_ID: 'session-a' }).out);
+    const old = hold(d, 'session-a');
+    await until(() => old.frames.length > 0);
+    expect(cli(d, ['restore', 'session-a']).code).toBe(0);
+    old.close();
+
+    await new Promise((r) => setTimeout(r, 800));
+    expect((await authed(`${url}api/status`)).status).toBe(200);
+  });
+
   it("feeds a session's channel the comments on its documents, with the URL they are reached at", async () => {
     const d = await serve();
     const url = urlIn(cli(d, ['add', note('note.md')], { CLAUDE_CODE_SESSION_ID: 'session-a' }).out);
@@ -950,8 +968,11 @@ describe('sessions on akapen serve', () => {
       }
 
       // Without AKAPEN_PORT, only a port this home's live server recorded: never a bare default.
-      delete process.env['AKAPEN_PORT'];
+      process.env['AKAPEN_PORT'] = '1e3';
       mkdirSync(join(sandbox, 'elsewhere'), { recursive: true });
+      // Not decimal digits: not a port, and nothing is recorded to fall back on.
+      expect(chosenServePort()).toBeNull();
+      delete process.env['AKAPEN_PORT'];
       expect(chosenServePort()).toBeNull();
       writeFileSync(
         join(sandbox, 'elsewhere', 'serve.json'),
@@ -994,6 +1015,9 @@ describe('sessions on akapen serve', () => {
     const lan = lanAddress!;
     const d = await serve(['--host', '0.0.0.0']);
     expect((await managed(`http://${lan}:${d.port}/api/sessions/session-a/documents`)).status).toBe(403);
+    const events = await managed(`http://${lan}:${d.port}/api/sessions/session-a/events`);
+    expect(events.status).toBe(403);
+    expect(await events.text()).toBe('sessions are this machine only');
   });
 
   it('reads comments through the server for akapen comments, whatever the file is called', async () => {

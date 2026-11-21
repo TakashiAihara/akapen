@@ -102,13 +102,18 @@ export function readServeRecord(): { port: number; pid: number | null } | null {
  * server of this home never is, so it counts as gone.
  */
 export function recordedServerAlive(): boolean {
+  return liveServeRecord() !== null;
+}
+
+/** The recorded port, read once with the pid it was checked against. */
+function liveServeRecord(): number | null {
   const rec = readServeRecord();
-  if (rec === null || rec.pid === null) return false;
+  if (rec === null || rec.pid === null) return null;
   try {
     process.kill(rec.pid, 0);
-    return true;
+    return rec.port;
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -118,9 +123,11 @@ export function recordedServerAlive(): boolean {
  * another user on the machine could be listening on.
  */
 export function chosenServePort(): number | null {
-  const asked = Number(process.env['AKAPEN_PORT'] || Number.NaN);
-  if (Number.isInteger(asked) && asked > 0 && asked <= 65_535) return asked;
-  return recordedServerAlive() ? readServePort() : null;
+  // Decimal digits only, as the CLI reads it: `1e3` is not a port.
+  const given = process.env['AKAPEN_PORT'] ?? '';
+  const asked = /^\d{1,5}$/.test(given) ? Number(given) : Number.NaN;
+  if (asked > 0 && asked <= 65_535) return asked;
+  return liveServeRecord();
 }
 
 export function writeServePort(port: number): void {
@@ -156,8 +163,10 @@ export function registrationsOf(session: string): Registration[] {
   let names: string[];
   try {
     names = readdirSync(root);
-  } catch {
-    return [];
+  } catch (err) {
+    // No store yet is nothing to restore; one that cannot be read is a failed restore.
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw err;
   }
   const out: Registration[] = [];
   for (const name of names) {

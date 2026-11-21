@@ -710,6 +710,11 @@ if (positional[0] === 'comments') {
   // and will not match the live file, so an agent matches on `anchor` (the text as it was).
   // Through `akapen serve` when it holds the document (#305): the server owns the store.
   const registered = (await daemonDocuments())?.find((d) => d.file === resolve(file));
+  // A server that refused is not the same as none: its store may hold comments this home does not.
+  if (registered === undefined && serveRefused) {
+    console.error(`akapen: akapen serve on port ${daemonPort()} refused this command (${refusalCause()})`);
+    process.exit(1);
+  }
   let current: number;
   let comments: ReturnType<typeof pendingComments>;
   if (registered) {

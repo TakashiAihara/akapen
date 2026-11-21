@@ -1175,6 +1175,9 @@ export function startDaemon(opts: DaemonOptions & { manageToken: string }) {
   /** Each session's open channel streams, and the timer that removes its registrations once they are all gone. */
   const streams = new Map<string, Set<(frame: string) => void>>();
   const gone = new Map<string, ReturnType<typeof setTimeout>>();
+  /** Bumped by restore: a stream opened before it cannot start the removal of the resumed session. */
+  const generation = new Map<string, number>();
+  let stopping = false;
   const notifySession = (session: string | undefined): void => {
     if (session === undefined) return;
     for (const send of streams.get(session) ?? []) send('data: changed\n\n');
@@ -1354,6 +1357,7 @@ export function startDaemon(opts: DaemonOptions & { manageToken: string }) {
     streams.set(session, set);
     clearTimeout(gone.get(session));
     gone.delete(session);
+    const openedIn = generation.get(session) ?? 0;
     let send!: (frame: string) => void;
     let dropped = false;
     const drop = () => {
@@ -1362,13 +1366,21 @@ export function startDaemon(opts: DaemonOptions & { manageToken: string }) {
       dropped = true;
       set.delete(send);
       if (set.size > 0) return;
-      streams.delete(session);
+      if (streams.get(session) === set) streams.delete(session);
+      // A server shutting down keeps what is registered, as a crash would, for restore.
+      if (stopping || (generation.get(session) ?? 0) !== openedIn) return;
       clearTimeout(gone.get(session));
       gone.set(
         session,
         setTimeout(() => {
           gone.delete(session);
-          forget(session);
+          try {
+            forget(session);
+          } catch (err) {
+            console.error(
+              `akapen: could not unregister session ${session}: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
         }, DISCONNECT_MS),
       );
     };
@@ -1400,13 +1412,20 @@ export function startDaemon(opts: DaemonOptions & { manageToken: string }) {
     const session = c.req.param('session');
     const restored: ReturnType<typeof describe>[] = [];
     const refused: { file: string; reason: string }[] = [];
-    // The session is back: a removal its old channel's disconnect started no longer applies.
+    // The session is back: a removal its old channel's disconnect started, or will start
+    // when that stream closes, no longer applies.
     clearTimeout(gone.get(session));
     gone.delete(session);
+    generation.set(session, (generation.get(session) ?? 0) + 1);
     for (const reg of registrationsOf(session)) {
-      const added = register(reg.file, session, reg.root, reg.addedAt);
-      if ('refused' in added) refused.push({ file: reg.file, reason: added.refused });
-      else restored.push(describe(added));
+      try {
+        const added = register(reg.file, session, reg.root, reg.addedAt);
+        if ('refused' in added) refused.push({ file: reg.file, reason: added.refused });
+        else restored.push(describe(added));
+      } catch (err) {
+        // One file that cannot be read does not stop the others.
+        refused.push({ file: reg.file, reason: err instanceof Error ? err.message : String(err) });
+      }
     }
     return c.json({ restored, refused });
   });
@@ -1463,6 +1482,7 @@ export function startDaemon(opts: DaemonOptions & { manageToken: string }) {
   const stop = async (): Promise<void> => {
     for (const id of open.keys()) close(id);
     clearInterval(heartbeat);
+    stopping = true;
     for (const timer of gone.values()) clearTimeout(timer);
     rmSync(servePath(), { force: true });
     await server.stop(true);

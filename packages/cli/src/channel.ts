@@ -523,10 +523,25 @@ export async function serveStore(sessionId: string): Promise<Store> {
     if (port !== null) {
       const res = await fetch(
         `http://127.0.0.1:${port}/api/sessions/${encodeURIComponent(sessionId)}/documents`,
-        { headers: serveHeaders(), signal: AbortSignal.timeout(5_000) },
+        { headers: serveHeaders(), redirect: 'manual', signal: AbortSignal.timeout(5_000) },
       );
-      if (res.ok) served = (await res.json()) as Served[];
-      else noteRefusal(res);
+      if (res.ok) {
+        const body: unknown = await res.json();
+        // Anything else answering there is not taken for this session's documents.
+        if (
+          Array.isArray(body) &&
+          body.every(
+            (d) =>
+              typeof d === 'object' &&
+              d !== null &&
+              typeof (d as Served).file === 'string' &&
+              typeof (d as Served).url === 'string' &&
+              typeof (d as Served).added_at === 'string' &&
+              Array.isArray((d as Served).comments),
+          )
+        )
+          served = body as Served[];
+      } else noteRefusal(res);
     }
   } catch {
     /* No server, or one that did not answer: this pass reads the registry only. */
@@ -573,6 +588,7 @@ export async function holdServeStream(
         `http://127.0.0.1:${port}/api/sessions/${encodeURIComponent(sessionId)}/events`,
         {
           headers: serveHeaders(),
+          redirect: 'manual',
           ...(signal === undefined ? {} : { signal }),
         },
       );
