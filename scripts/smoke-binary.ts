@@ -71,7 +71,6 @@ ok(
   help.exitCode === 0 && new TextDecoder().decode(help.stdout).includes('akapen'),
 );
 
-const port = 4771;
 /**
  * The binary is authenticated like any other akapen, so the smoke run has to present a
  * credential or every request below is a 401 and "the server comes up" never becomes
@@ -79,19 +78,47 @@ const port = 4771;
  * on where the token was written.
  */
 const TOKEN = 'smoke-token';
-const server = Bun.spawn([bin, note, '-p', String(port)], {
-  cwd: sandbox,
-  env: { ...process.env, AKAPEN_HOME: join(sandbox, 'home'), AKAPEN_TOKEN: TOKEN },
-  stdout: 'pipe',
-  stderr: 'pipe',
-});
+const env = {
+  ...process.env,
+  AKAPEN_HOME: join(sandbox, 'home'),
+  AKAPEN_TOKEN: TOKEN,
+  AKAPEN_MANAGE_TOKEN: '',
+  AKAPEN_PORT: '',
+};
+// The OS picks the port, so a server someone left running cannot be the one answering.
+const server = Bun.spawn([bin, 'serve', '-p', '0'], { cwd: sandbox, env, stdout: 'pipe', stderr: 'pipe' });
+
+let port = 0;
+{
+  const reader = server.stdout.getReader();
+  const decoder = new TextDecoder();
+  let out = '';
+  const deadline = Date.now() + 12_000;
+  while (port === 0 && Date.now() < deadline) {
+    const chunk = await Promise.race([reader.read(), Bun.sleep(deadline - Date.now()).then(() => null)]);
+    if (chunk === null || chunk.done) break;
+    out += decoder.decode(chunk.value, { stream: true });
+    port = Number(/url\s+http:\/\/[^:\s]+:(\d+)/.exec(out)?.[1] ?? 0);
+  }
+  reader.releaseLock();
+}
 
 const base = `http://127.0.0.1:${port}`;
 const AUTH = { authorization: `Bearer ${TOKEN}` };
+
+// The document is registered with the running server, as anyone using the binary does.
+const added =
+  port === 0
+    ? null
+    : Bun.spawnSync([bin, 'add', note], { cwd: sandbox, env: { ...env, AKAPEN_PORT: String(port) } });
+const id = added === null ? undefined : /^\s+id\s+(\S+)/m.exec(new TextDecoder().decode(added.stdout))?.[1];
+const doc = `${base}/d/${id ?? ''}`;
+
 let up = false;
 for (let i = 0; i < 60; i++) {
+  if (id === undefined) break;
   try {
-    if ((await fetch(`${base}/api/doc`, { headers: AUTH })).ok) {
+    if ((await fetch(`${doc}/api/doc`, { headers: AUTH })).ok) {
       up = true;
       break;
     }
@@ -100,7 +127,7 @@ for (let i = 0; i < 60; i++) {
   }
   await Bun.sleep(200);
 }
-ok('the server comes up', up);
+ok('the server comes up and serves a registered document', up);
 
 if (up) {
   for (const name of Object.keys(ASSETS)) {
@@ -117,10 +144,10 @@ if (up) {
 
   // The credential is part of what ships, so the binary is checked for it too: a build
   // that served without one would pass every assertion above.
-  const bare = await fetch(`${base}/api/doc`);
+  const bare = await fetch(`${doc}/api/doc`);
   ok('the binary refuses a request with no token', bare.status === 401, `got ${bare.status}`);
 
-  const posted = await fetch(`${base}/api/comments`, {
+  const posted = await fetch(`${doc}/api/comments`, {
     method: 'POST',
     headers: { ...AUTH, 'content-type': 'application/json' },
     body: JSON.stringify({ startLine: 2, endLine: 2, body: 'smoke' }),

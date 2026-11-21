@@ -8,7 +8,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { Locator } from '@playwright/test';
-import { AUTH, expect, startPeer, test } from './fixtures.ts';
+import { AUTH, expect, test } from './fixtures.ts';
 
 // 1x1 transparent PNG.
 const PNG = Buffer.from(
@@ -407,34 +407,24 @@ test('closes an open panel when a figure opens over it, by a click or by z', asy
   );
   writeFileSync(akapen.file, '# Zoom\n\n![huge](huge.svg)\n');
   expect((await request.post(`${akapen.url}/api/rounds`, { headers: AUTH })).ok()).toBe(true);
-  const peer = await startPeer(akapen.home, 'design.md');
-  try {
-    await page.setViewportSize({ width: 1440, height: 900 });
-    await page.goto(akapen.url);
-    const zoom = page.locator('#zoom');
-    const huge = page.locator('.body img[alt="huge"]');
-    await expect(huge).toHaveClass(/zoomable/);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(akapen.url);
+  const zoom = page.locator('#zoom');
+  const huge = page.locator('.body img[alt="huge"]');
+  await expect(huge).toHaveClass(/zoomable/);
 
-    // The image's line, for z
-    await page.keyboard.press('j');
-    await page.keyboard.press('j');
-    await expect(page.locator('.row.focused img[alt="huge"]')).toHaveCount(1);
+  // The image's line, for z
+  await page.keyboard.press('j');
+  await page.keyboard.press('j');
+  await expect(page.locator('.row.focused img[alt="huge"]')).toHaveCount(1);
 
-    for (const [toggle, panel] of [
-      ['#outlineToggle', '#outline'],
-      ['#peersToggle', '#peers'],
-    ] as const) {
-      for (const open of [() => huge.click(), () => page.keyboard.press('z')]) {
-        await page.locator(toggle).click();
-        await expect(page.locator(panel)).toBeVisible();
-        await open();
-        await expect(zoom.locator('img')).toBeVisible();
-        await expect(page.locator(panel)).toBeHidden();
-        await page.keyboard.press('Escape');
-        await expect(zoom).toBeHidden();
-      }
-    }
-  } finally {
-    await peer.stop();
+  for (const open of [() => huge.click(), () => page.keyboard.press('z')]) {
+    await page.locator('#outlineToggle').click();
+    await expect(page.locator('#outline')).toBeVisible();
+    await open();
+    await expect(zoom.locator('img')).toBeVisible();
+    await expect(page.locator('#outline')).toBeHidden();
+    await page.keyboard.press('Escape');
+    await expect(zoom).toBeHidden();
   }
 });
