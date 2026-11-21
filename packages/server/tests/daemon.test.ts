@@ -708,9 +708,13 @@ describe('akapen serve', () => {
     await first.stop();
     renameSync(join(home, 'comments'), join(home, 'reviews'));
     const legacy = spawn('bun', ['run', CLI, note('other.md'), '-p', '0'], { env: env(), stdio: 'ignore' });
+    const legacyExited = new Promise<void>((done) => legacy.on('exit', () => done()));
     try {
+      // The record itself, not the temporary file it is written through.
       await until(
-        () => existsSync(join(home, 'instances')) && readdirSync(join(home, 'instances')).length > 0,
+        () =>
+          existsSync(join(home, 'instances')) &&
+          readdirSync(join(home, 'instances')).some((f) => f.endsWith('.json')),
         15_000,
       );
       const d = await serve();
@@ -721,6 +725,7 @@ describe('akapen serve', () => {
       expect(listed.map((c) => c.body)).toEqual(['kept']);
     } finally {
       legacy.kill();
+      await legacyExited;
     }
   });
 
