@@ -699,6 +699,14 @@ describe('akapen serve', () => {
     expect(listed.map((c) => c.body)).toEqual(['kept']);
   });
 
+  it('says so when reviews/ turns up again beside comments/', async () => {
+    mkdirSync(join(home, 'comments'), { recursive: true });
+    mkdirSync(join(home, 'reviews', 'late-0123456789ab'), { recursive: true });
+    const d = await serve();
+    expect(d.output()).toContain('is still there beside');
+    expect(existsSync(join(home, 'reviews', 'late-0123456789ab'))).toBe(true);
+  });
+
   it('keeps reading reviews/ while a one-document akapen from before still writes there', async () => {
     const file = note('note.md');
     const first = await serve();

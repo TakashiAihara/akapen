@@ -184,6 +184,7 @@ A LaunchAgent on macOS, at `~/Library/LaunchAgents/site.akapen.serve.plist`, wit
 ```
 
 ```bash
+mkdir -p ~/.akapen                # launchd does not create the log's directory
 launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/site.akapen.serve.plist
 ```
 
@@ -206,11 +207,13 @@ services:
 ```
 
 ```bash
+# Stop any one-document akapen on the host first (akapen list): from inside the container
+# their processes look gone, and the first start would move ~/.akapen/reviews/ under them.
 mkdir -p ~/.akapen                # created by you, not by Docker as root
 chmod 700 ~/.akapen
 export UID GID="$(id -g)"         # bash keeps UID unexported and has no GID
 docker compose up -d
-export AKAPEN_PORT=4300           # in the shell that runs akapen add / list / channel
+export AKAPEN_PORT=4300           # in the shell that runs akapen add / list, and starts claude (its channel inherits it)
 ```
 
 A registration belongs to the Claude Code session that made it (`CLAUDE_CODE_SESSION_ID`), and lasts as long as the session:
