@@ -18,7 +18,7 @@ Issue #305. One long-lived `akapen serve` on one fixed port hands out every regi
 
 - `akapen channel` holds `/api/sessions/<id>/events` open and reads `/api/sessions/<id>/documents` instead of the store on disk; `akapen comments` reads a registered document through `/d/<id>/api/pending`. A comment or reply wakes the channel as it lands. The session routes take the management secret like `/api/documents`
 - A registration is removed when its session ends (the SessionEnd hook calls `akapen remove --session <id>`), when the session's channel has been disconnected for 30 seconds (only for a session whose channel connected at least once), or by `akapen remove`. There is no dormant state
-- When a session is resumed, its SessionStart hook runs `akapen restore <session id>`, which registers again the documents that session last registered. Which ones is recorded in each document's store (`registration.json`), so it survives the removal. `/clear` gives a new session id and restores nothing
+- When a session is resumed, its SessionStart hook runs `akapen restore <session id>`, which registers again the documents that session last registered, except those removed by hand, and keeps the time each was first added so a comment written while the session was away still reaches it. Which ones is recorded in each document's store (`registration.json`), so it survives the removal. `/clear` gives a new session id and restores nothing
 
 ## Planned in the same major version
 
