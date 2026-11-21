@@ -594,7 +594,7 @@ The name is taken from the rendered heading rather than the source line, so `# T
 
 ### Where comments are stored
 
-The markdown file is never touched. A home from before this version keeps them in `~/.akapen/reviews/` until `akapen serve` renames it; while a one-document akapen from before is running it does not, and `reviews/` is the one to look in or back up.
+The markdown file is never touched. A home from before this version keeps them in `~/.akapen/reviews/` until `akapen serve` renames it; while a one-document akapen from before is running it does not, and `reviews/` is the one to look in or back up. Once `comments/` exists it is the store; a `reviews/` beside it holds only what an akapen from before wrote after the rename (serve says so on start), so back up both.
 
 ```text
 ~/.akapen/comments/<basename>-<hash>/
