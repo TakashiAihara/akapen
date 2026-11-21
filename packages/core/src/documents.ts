@@ -72,8 +72,9 @@ export function writeDocuments(entries: DocumentEntry[]): void {
 }
 
 /**
- * Where the running `akapen serve` listens, so a second one on the same home can find it
- * and refuse to start: two would each write `documents.json` from their own copy.
+ * Where the running `akapen serve` listens. Clients find it here, and a second server on
+ * the same home finds it and refuses to start: two would each write `documents.json` from
+ * their own copy.
  */
 export function servePath(): string {
   return join(akapenHome(), 'serve.json');

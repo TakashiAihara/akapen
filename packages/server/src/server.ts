@@ -334,8 +334,8 @@ export function openDocument(file: string, opts: DocumentOptions, currentSecret:
       onChange('change');
     } catch {
       // Not back yet: the rename has not landed. Look again shortly, for a few seconds. A
-      // file deleted for good is left unwatched; the next save by rename is not seen until
-      // the document is opened again.
+      // file deleted for good is left unwatched until the document is removed and added
+      // again, or the server restarts.
       if (++rearmTries < REARM_TRIES) rearmTimer = setTimeout(rearm, 200);
     }
   };

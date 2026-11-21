@@ -35,7 +35,8 @@ options:
   -p, --port <n>           port (default 4300, or one the OS picks when that is taken;
                            a port given here is never moved off. 0: let the OS pick).
                            serve: $AKAPEN_PORT or 4300, never moved off; add, remove and
-                           list reach it on 127.0.0.1 at the same port
+                           list reach it on 127.0.0.1 at -p, $AKAPEN_PORT, the port the
+                           running server recorded, or 4300
   -A, --advertise <addr>   address to print in the URL, or an interface to take one
                            from ($AKAPEN_ADVERTISE sets it once per host)
   --css <file>             extra stylesheet to load
@@ -59,7 +60,10 @@ function fail(message: string): never {
   process.exit(1);
 }
 
-/** Where `akapen serve` listens, as every command finds it: `$AKAPEN_PORT`, else 4300. */
+/**
+ * Where a command finds `akapen serve`: `-p`, else `$AKAPEN_PORT`, else the port the running
+ * server recorded, else 4300. `serve` picks its own port without the recorded one.
+ */
 function daemonPort(): number {
   try {
     // `-p` on a command that talks to the server names the server's port, as it does on serve.
