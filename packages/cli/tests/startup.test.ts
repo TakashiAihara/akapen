@@ -8,10 +8,11 @@
  * the process starts, serves correctly, and prints an address that opens nothing.
  */
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { networkInterfaces } from 'node:os';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createServer as createHttpServer } from 'node:http';
 import { createServer, type Server } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -388,6 +389,9 @@ describe('a taken port', () => {
   }, 30_000);
 });
 
+/** A 200 answer with `body` as JSON, for the fake akapen in the resolve tests. */
+const json = (body: unknown): [number, string] => [200, JSON.stringify(body)];
+
 // #130: the other half of `akapen comments`, through the akapen serving the file.
 describe('akapen reply and resolve', () => {
   const SESSION = 'fc40ec79-b629-4c08-9be7-721bb0d306a6';
@@ -422,7 +426,9 @@ describe('akapen reply and resolve', () => {
     ]);
     expect((await read()).resolved).toBe(false);
 
-    expect(cli(home, ['resolve', file, comment.id]).status).toBe(0);
+    const resolved = cli(home, ['resolve', file, comment.id]);
+    expect(resolved.status).toBe(0);
+    expect(resolved.stdout.trim()).toBe('resolved');
     expect((await read()).resolved).toBe(true);
 
     // The server toggles, so a second resolve would reopen it. Refused instead.
@@ -612,5 +618,218 @@ describe('akapen reply and resolve', () => {
     expect(split.status).toBe(1);
     expect(split.stderr).toContain('unexpected "words"');
     expect((await read()).replies).toHaveLength(2);
+  }, 60_000);
+
+  // #245: the rest of what #231 fixed without a test.
+  it('finds the file from another directory, says whose the reply is, and refuses a resolve with a text', async () => {
+    const { lines, home, file } = await start(['--no-auth']);
+    const [url] = urlsIn(lines);
+    const posted = await fetch(`${url}/api/comments`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ startLine: 1, endLine: 1, body: 'x' }),
+    });
+    const { comment } = (await posted.json()) as { comment: { id: string } };
+    const read = async () =>
+      ((await (await fetch(`${url}/api/comments`)).json()) as Thread[]).find((c) => c.id === comment.id)!;
+    const run = (cwd: string, session: string | undefined, extra: string[]) => {
+      const env: NodeJS.ProcessEnv = { ...process.env, AKAPEN_HOME: home };
+      if (session === undefined) delete env['CLAUDE_CODE_SESSION_ID'];
+      else env['CLAUDE_CODE_SESSION_ID'] = session;
+      return spawnSync('bun', ['run', CLI, ...extra], { cwd, env, encoding: 'utf8', timeout: 20_000 });
+    };
+
+    // A relative name from the file's own directory names the same document.
+    const dir = join(file, '..');
+    const name = file.slice(dir.length + 1);
+    const asAgent = run(dir, SESSION, ['reply', name, comment.id, 'from the agent']);
+    expect(asAgent.status).toBe(0);
+    expect(asAgent.stdout.trim()).toBe('replied (filed as the agent)');
+    const asPerson = run(dir, undefined, ['reply', name, comment.id, 'from a person']);
+    expect(asPerson.status).toBe(0);
+    expect(asPerson.stdout.trim()).toBe('replied (filed as a person, no CLAUDE_CODE_SESSION_ID)');
+    expect((await read()).replies).toMatchObject([
+      { body: 'from the agent', authorKind: 'agent', sessionId: SESSION },
+      { body: 'from a person', authorKind: 'human' },
+    ]);
+    expect((await read()).replies[1]).not.toHaveProperty('sessionId');
+
+    const withText = cli(home, ['resolve', file, comment.id, 'done']);
+    expect(withText.status).toBe(1);
+    expect(withText.stderr).toContain('resolve: unexpected "done"');
+    expect((await read()).resolved).toBe(false);
+  }, 60_000);
+
+  it('resolves again when someone resolved the comment since it was read, rather than leave it reopened (#245)', async () => {
+    const { lines, home, file } = await start(['--no-auth']);
+    const [url] = urlsIn(lines);
+    const posted = await fetch(`${url}/api/comments`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ startLine: 1, endLine: 1, body: 'x' }),
+    });
+    const { comment } = (await posted.json()) as { comment: { id: string } };
+    const read = async () =>
+      ((await (await fetch(`${url}/api/comments`)).json()) as Thread[]).find((c) => c.id === comment.id)!;
+
+    const second = await fetch(`${url}/api/comments`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ startLine: 1, endLine: 1, body: 'y' }),
+    });
+    const other = ((await second.json()) as { comment: { id: string } }).comment;
+
+    // The CLI reads the comments while they are open, from a copy of the home taken now; the
+    // copy's registry still points at the same server, which is where the resolve goes.
+    const stale = mkdtempSync(join(tmpdir(), 'akapen-stale-'));
+    sandboxes.push(stale);
+    cpSync(home, stale, { recursive: true });
+    // Someone resolves it in the page before the CLI's resolve lands.
+    expect((await fetch(`${url}/api/comments/${comment.id}/resolve`, { method: 'POST' })).ok).toBe(true);
+    expect((await read()).resolved).toBe(true);
+
+    const raced = cli(stale, ['resolve', file, comment.id]);
+    expect(raced.status).toBe(0);
+    expect(raced.stdout.trim()).toBe('resolved (someone resolved it meanwhile, and this toggled it back)');
+    expect((await read()).resolved).toBe(true);
+
+    // The same through reply --resolve: the reply goes, and the resolve is toggled back.
+    expect((await fetch(`${url}/api/comments/${other.id}/resolve`, { method: 'POST' })).ok).toBe(true);
+    const replied = cli(stale, ['reply', file, other.id, 'done', '--resolve']);
+    expect(replied.status).toBe(0);
+    expect(replied.stdout.trim().split('\n')).toEqual([
+      'replied (filed as the agent)',
+      'resolved (someone resolved it meanwhile, and this toggled it back)',
+    ]);
+    const after = ((await (await fetch(`${url}/api/comments`)).json()) as Thread[]).find(
+      (c) => c.id === other.id,
+    )!;
+    expect(after.resolved).toBe(true);
+    expect(after.replies.map((r) => r.body)).toEqual(['done']);
+  }, 60_000);
+
+  it('exits 1 on a resolve that does not end resolved, after one retry at most, and on a reply never answered (#245)', async () => {
+    const { lines, home, file } = await start(['--no-auth']);
+    const [url] = urlsIn(lines);
+    const posted = await fetch(`${url}/api/comments`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ startLine: 1, endLine: 1, body: 'x' }),
+    });
+    const { comment } = (await posted.json()) as { comment: { id: string } };
+
+    // Answers status as the real one does, and the nth resolve (from 1) as `answer` says.
+    let resolves = 0;
+    let answer: (n: number) => [number, string] = () => json({ comment: { id: comment.id } });
+    let replyAnswer: [number, string] | null = null;
+    let replies = 0;
+    const fake = createHttpServer((req, res) => {
+      if (req.url === '/api/status') {
+        void fetch(`${url}/api/status`)
+          .then((r) => r.text())
+          .then((body) => res.writeHead(200, { 'content-type': 'application/json' }).end(body));
+        return;
+      }
+      // Unanswered unless set, to see the CLI give up rather than wait on it.
+      if (req.url?.endsWith('/replies')) {
+        replies++;
+        if (replyAnswer)
+          res.writeHead(replyAnswer[0], { 'content-type': 'application/json' }).end(replyAnswer[1]);
+        return;
+      }
+      const [status, body] = answer(++resolves);
+      res.writeHead(status, { 'content-type': 'application/json' }).end(body);
+    });
+    await new Promise<void>((r) => fake.listen(0, '127.0.0.1', r));
+    const fakePort = (fake.address() as { port: number }).port;
+    try {
+      for (const name of readdirSync(join(home, 'instances'))) {
+        const path = join(home, 'instances', name);
+        const record = JSON.parse(readFileSync(path, 'utf8')) as { host: string; port: number };
+        writeFileSync(path, JSON.stringify({ ...record, host: '127.0.0.1', port: fakePort }));
+      }
+      // Not spawnSync: the fake runs in this process and has to answer while the CLI waits.
+      const run = async (extra: string[]) => {
+        const child = spawn('bun', ['run', CLI, ...extra], {
+          env: { ...process.env, AKAPEN_HOME: home, CLAUDE_CODE_SESSION_ID: SESSION },
+        });
+        let stderr = '';
+        child.stderr.setEncoding('utf8').on('data', (d: string) => (stderr += d));
+        child.stdout.resume();
+        const status = await new Promise<number | null>((r) => child.on('close', r));
+        return { status, stderr };
+      };
+      const odd = await run(['resolve', file, comment.id]);
+      expect(odd.status).toBe(1);
+      expect(odd.stderr).toContain(`the resolve of ${comment.id} answered without its state`);
+      expect(resolves).toBe(1);
+
+      // A null and a body that is not JSON end the same way, rather than as a stack trace.
+      for (const [body, said] of [
+        ['null', `the resolve of ${comment.id} answered without its state`],
+        ['<html>', 'answered 200 with a body that is not JSON'],
+      ] as const) {
+        answer = () => [200, body];
+        resolves = 0;
+        const bad = await run(['resolve', file, comment.id]);
+        expect(bad.status).toBe(1);
+        expect(bad.stderr).toContain(said);
+        expect(bad.stderr).not.toMatch(/TypeError|SyntaxError|\n\s+at /);
+        expect(resolves).toBe(1);
+      }
+
+      // Reopened, and the toggle back answers with no state: the reopening is still said.
+      answer = (n) => json({ comment: n === 1 ? { id: comment.id, resolved: false } : { id: comment.id } });
+      resolves = 0;
+      const blank = await run(['resolve', file, comment.id]);
+      expect(blank.status).toBe(1);
+      expect(blank.stderr).toContain(
+        `reopened ${comment.id}, which someone had resolved meanwhile, and the toggle back answered without its state`,
+      );
+      expect(resolves).toBe(2);
+
+      // Open after the call back too: toggled back once, not until it comes back resolved.
+      answer = () => json({ comment: { id: comment.id, resolved: false } });
+      resolves = 0;
+      const stuck = await run(['resolve', file, comment.id]);
+      expect(stuck.status).toBe(1);
+      expect(stuck.stderr).toContain(
+        `reopened ${comment.id}, which someone had resolved meanwhile, and the toggle back left it open`,
+      );
+      expect(resolves).toBe(2);
+
+      // The toggle back fails: what is said is that this call left it open.
+      answer = (n) => (n === 1 ? json({ comment: { id: comment.id, resolved: false } }) : [500, 'broken']);
+      resolves = 0;
+      const broken = await run(['resolve', file, comment.id]);
+      expect(broken.status).toBe(1);
+      expect(broken.stderr).toContain(
+        `reopened ${comment.id}, which someone had resolved meanwhile, and the toggle back /api/comments/`,
+      );
+      expect(resolves).toBe(2);
+
+      // reply --resolve: the reply landed, and the failure says so, so it is not sent twice.
+      replyAnswer = json({ comment: { id: comment.id } });
+      answer = () => [500, 'broken'];
+      resolves = 0;
+      replies = 0;
+      const halfway = await run(['reply', file, comment.id, 'landed', '--resolve']);
+      expect(halfway.status).toBe(1);
+      expect(halfway.stderr).toContain(`replied, but /api/comments/${comment.id}/resolve answered 500`);
+      expect(resolves).toBe(1);
+      expect(replies).toBe(1);
+      replyAnswer = null;
+
+      const began = Date.now();
+      const silent = await run(['reply', file, comment.id, 'into silence']);
+      expect(silent.status).toBe(1);
+      expect(silent.stderr).toContain('/replies did not answer (TimeoutError)');
+      const waited = Date.now() - began;
+      expect(waited).toBeGreaterThanOrEqual(9_000);
+      expect(waited).toBeLessThan(18_000);
+    } finally {
+      fake.closeAllConnections();
+      await new Promise((r) => fake.close(r));
+    }
   }, 60_000);
 });
