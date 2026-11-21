@@ -148,9 +148,9 @@ function lastOwnReply(c: RoundComment, self: string | undefined): number | undef
  * so a comment written in the first pass interval of an akapen, or while the channel was
  * not running, still arrives. What was written before the start predates the review
  * this session started, is what `akapen comments` hands over, and pushing it would bury
- * the one comment that is new. A file is seen for the first time when this process
- * starts (a resumed session, an MCP reconnect) and when its akapen leaves the registry
- * and comes back, and neither knows what was delivered before. On a thread this session
+ * the one comment that is new. A file is seen for the first time only when this process
+ * starts (a resumed session, an MCP reconnect), which does not know what was delivered
+ * before. On a thread this session
  * has replied on, only what was written at or after its latest reply is pushed, a guess
  * (`lastOwnReply`) that can drop a reply written just before the answer. Anything else
  * delivered before and not answered yet is pushed again. Without `since` everything on
@@ -220,9 +220,12 @@ const DISK: Store = { instances: () => readInstances({ sweep: false }), comments
  * One pass over every document this session is reviewing, oldest event first across all
  * of them.
  *
- * `seen` is replaced rather than added to, so a document whose akapen has stopped takes
- * its ids with it. Keeping them would mean a second akapen on the same file later in the
- * session inherits the first one's memory and stays silent about what is on it.
+ * `seen` keeps what it knew about a file for the life of this process, even across a pass
+ * that does not list it. Forgetting it would seed it again on its return and send its
+ * comments a second time; a file saved by rename, or a server that did not answer once,
+ * drops out of one pass. The cost: whatever was written on a file while it was away is
+ * sent when it comes back, including what another session handled while the file was
+ * registered to it.
  */
 export function collect(
   sessionId: string,
