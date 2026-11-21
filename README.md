@@ -188,7 +188,7 @@ mkdir -p ~/.akapen                # launchd does not create the log's directory
 launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/site.akapen.serve.plist
 ```
 
-A container on Linux, with the binary from the host. The documents are mounted at the same path as on the host, since a registration names a file by its absolute path; host networking keeps the server on `127.0.0.1`, where the CLI on the host reaches it. The CLI cannot see the container's process, so give it the port in `AKAPEN_PORT`:
+A container on Linux, with the binary from the host. The documents are mounted at the same path as on the host, since a registration names a file by its absolute path. Host networking shares the host's addresses, so the CLI on the host reaches the server on `127.0.0.1`, and `--host 0.0.0.0` publishes it to the LAN exactly as it would without a container; use `--host 127.0.0.1` to keep it to this machine. The CLI cannot see the container's process, so give it the port in `AKAPEN_PORT`:
 
 ```yaml
 services:
@@ -594,7 +594,7 @@ The name is taken from the rendered heading rather than the source line, so `# T
 
 ### Where comments are stored
 
-The markdown file is never touched.
+The markdown file is never touched. A home from before this version keeps them in `~/.akapen/reviews/` until `akapen serve` renames it; while a one-document akapen from before is running it does not, and `reviews/` is the one to look in or back up.
 
 ```text
 ~/.akapen/comments/<basename>-<hash>/
