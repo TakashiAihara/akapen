@@ -20,7 +20,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { localAddresses } from '@akapen/core/addresses';
-import { collect, serveStore } from '../../cli/src/channel.ts';
+import { collect, holdServeStream, serveStore } from '../../cli/src/channel.ts';
+import { chosenServePort } from '@akapen/core/documents';
 
 const TOKEN = 'test-token-for-the-daemon-suite';
 const CLI = join(import.meta.dirname, '..', '..', 'cli', 'src', 'cli.ts');
@@ -749,8 +750,6 @@ describe('akapen serve', () => {
   });
 });
 
-const idOf = (url: string): string => /\/d\/([^/]+)\//.exec(url)![1]!;
-
 /** A session's stream, collecting what it carries. */
 function hold(d: Daemon, session: string) {
   const ctl = new AbortController();
@@ -785,6 +784,21 @@ describe('sessions on akapen serve', () => {
     expect(restored.out.trim().split('\n')).toHaveLength(1);
     expect(restored.out).toContain(url);
     expect((await authed(`${url}api/status`)).status).toBe(200);
+  });
+
+  it('says which documents it could not restore, and restores the rest', async () => {
+    const d = await serve();
+    const url = urlIn(cli(d, ['add', note('kept.md')], { CLAUDE_CODE_SESSION_ID: 'session-a' }).out);
+    const gone = note('gone.md');
+    cli(d, ['add', gone], { CLAUDE_CODE_SESSION_ID: 'session-a' });
+    cli(d, ['remove', '--session', 'session-a']);
+    rmSync(gone);
+
+    const restored = cli(d, ['restore', 'session-a']);
+    expect(restored.code).toBe(1);
+    expect(restored.err).toContain(`not restored: ${gone}: no such file`);
+    expect(restored.out).toContain(url);
+    expect(restored.out).not.toContain('nothing to restore');
   });
 
   it('wakes the stream of the session a comment belongs to, and no other', async () => {
@@ -881,6 +895,33 @@ describe('sessions on akapen serve', () => {
         [url.slice(0, -1), true],
       ]);
       expect(collect('session-b', new Map(), await serveStore('session-b'))).toEqual([]);
+
+      // The stream the channel holds: woken by a comment on its session's documents.
+      let woken = 0;
+      const ctl = new AbortController();
+      void holdServeStream('session-a', () => woken++, ctl.signal);
+      try {
+        await new Promise((r) => setTimeout(r, 300));
+        await comment(url, 'woke');
+        await until(() => woken > 0);
+      } finally {
+        ctl.abort();
+      }
+
+      // Without AKAPEN_PORT, only a port this home's live server recorded: never a bare default.
+      delete process.env['AKAPEN_PORT'];
+      mkdirSync(join(sandbox, 'elsewhere'), { recursive: true });
+      expect(chosenServePort()).toBeNull();
+      writeFileSync(
+        join(sandbox, 'elsewhere', 'serve.json'),
+        JSON.stringify({ port: Number(d.port), pid: 2 ** 22 + 1 }),
+      );
+      expect(chosenServePort()).toBeNull();
+      writeFileSync(
+        join(sandbox, 'elsewhere', 'serve.json'),
+        JSON.stringify({ port: Number(d.port), pid: process.pid }),
+      );
+      expect(chosenServePort()).toBe(Number(d.port));
     } finally {
       for (const [k, v] of [
         ['AKAPEN_PORT', saved.port],
@@ -899,6 +940,12 @@ describe('sessions on akapen serve', () => {
     cli(d, ['add', note('note.md')], { CLAUDE_CODE_SESSION_ID: 'session-a' });
     expect((await authed(`${d.base}/api/sessions/session-a/documents`)).status).toBe(403);
     expect((await authed(`${d.base}/api/sessions/session-a/restore`, { method: 'POST' })).status).toBe(403);
+    expect((await authed(`${d.base}/api/sessions/session-a/events`)).status).toBe(403);
+  });
+
+  it('answers a session id that is not one with 400, not a server error', async () => {
+    const d = await serve();
+    expect((await managed(`${d.base}/api/sessions/%E0%A4%A/documents`)).status).toBe(400);
   });
 
   it.skipIf(lanAddress === undefined)('keeps the session streams to this machine', async () => {
@@ -907,9 +954,9 @@ describe('sessions on akapen serve', () => {
     expect((await managed(`http://${lan}:${d.port}/api/sessions/session-a/documents`)).status).toBe(403);
   });
 
-  it('reads comments through the server for akapen comments', async () => {
+  it('reads comments through the server for akapen comments, whatever the file is called', async () => {
     const d = await serve();
-    const file = note('note.md');
+    const file = note('a#b c.md');
     const url = urlIn(cli(d, ['add', file]).out);
     await comment(url, 'listed');
     // From a home that is not the server's, so only the server can have answered.
@@ -923,6 +970,5 @@ describe('sessions on akapen serve', () => {
       id: string;
     }[];
     expect(listed.map((c) => c.body)).toEqual(['listed']);
-    expect(idOf(url)).toMatch(/^note-/);
   });
 });

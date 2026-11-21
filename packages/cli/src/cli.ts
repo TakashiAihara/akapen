@@ -6,7 +6,7 @@ import { resolve } from 'node:path';
 import { AdvertiseError, localAddresses, resolveAdvertised, urlsFor } from '@akapen/core/addresses';
 
 import { isInside } from '@akapen/core/files';
-import { readServePort, readServeRecord } from '@akapen/core/documents';
+import { readServePort, recordedServerAlive } from '@akapen/core/documents';
 import { akapenHome, loadReview, pendingComments } from '@akapen/core/store';
 import { liveInstances, reachableHost, readInstances } from '@akapen/core/instances';
 import { liveEntries, sweep as sweepSessions } from '@akapen/core/sessions';
@@ -103,22 +103,6 @@ function secretMayGo(): boolean {
   if ((portFlagNamesServer ? args?.port : undefined) ?? (process.env['AKAPEN_PORT'] || undefined))
     return true;
   return recordedServerAlive();
-}
-
-/**
- * Whether the server this home recorded is still running. A record a crash left behind
- * names a port anyone may hold now. A pid answering EPERM belongs to another user, which a
- * server of this home never is, so it counts as gone.
- */
-function recordedServerAlive(): boolean {
-  const rec = readServeRecord();
-  if (rec === null || rec.pid === null) return false;
-  try {
-    process.kill(rec.pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 /** Set by `daemon` when it held the management secret back from the port it was asking. */
@@ -633,7 +617,7 @@ if (positional[0] === 'add') {
   process.exit(0);
 }
 
-/** Unregister a document by its path, or by its id or a unique prefix of it. Its comments stay. */
+/** Unregister everything a session registered: its SessionEnd hook runs this. The comments stay. */
 if (positional[0] === 'remove' && args.session !== undefined) {
   if (positional.length > 1)
     fail('remove --session takes no path: it removes everything that session registered');
@@ -669,12 +653,17 @@ if (positional[0] === 'restore') {
     );
     process.exit(1);
   }
-  const restored = (await res.json()) as DaemonDocument[];
+  const { restored, refused } = (await res.json()) as {
+    restored: DaemonDocument[];
+    refused: { file: string; reason: string }[];
+  };
   for (const d of restored) console.log(`${d.url}  ${d.file}`);
-  if (restored.length === 0) console.log('nothing to restore for that session');
-  process.exit(0);
+  for (const r of refused) console.error(`akapen: not restored: ${r.file}: ${r.reason}`);
+  if (restored.length === 0 && refused.length === 0) console.log('nothing to restore for that session');
+  process.exit(refused.length > 0 ? 1 : 0);
 }
 
+/** Unregister a document by its path, or by its id or a unique prefix of it. Its comments stay. */
 if (positional[0] === 'remove') {
   const [, target, ...extra] = positional;
   if (!target) fail('remove: which document? Give its path or its id, as akapen list prints it');
@@ -723,7 +712,7 @@ if (positional[0] === 'comments') {
   let current: number;
   let comments: ReturnType<typeof pendingComments>;
   if (registered) {
-    const res = await daemon(`/d/${registered.id}/api/pending${args.all ? '?all=1' : ''}`);
+    const res = await daemon(`${docPath(registered.id)}/api/pending${args.all ? '?all=1' : ''}`);
     if (res === null || !res.ok) {
       console.error(`akapen: akapen serve did not hand over the comments on ${registered.file}`);
       process.exit(1);

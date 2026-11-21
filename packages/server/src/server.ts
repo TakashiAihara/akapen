@@ -1302,7 +1302,12 @@ export function startDaemon(opts: DaemonOptions & { manageToken: string }) {
       );
     }
     // The wildcard route has no named parameter: the id is the segment after /api/sessions/.
-    const session = decodeURIComponent(new URL(c.req.url).pathname.split('/')[3] ?? '');
+    let session: string;
+    try {
+      session = decodeURIComponent(new URL(c.req.url).pathname.split('/')[3] ?? '');
+    } catch {
+      return c.text('bad session id', 400);
+    }
     if (!SESSION_ID.test(session)) return c.text('bad session id', 400);
     return next();
   });
@@ -1376,11 +1381,14 @@ export function startDaemon(opts: DaemonOptions & { manageToken: string }) {
    */
   app.post('/api/sessions/:session/restore', (c) => {
     const session = c.req.param('session');
-    const restored = registrationsOf(session).flatMap((reg) => {
+    const restored: ReturnType<typeof describe>[] = [];
+    const refused: { file: string; reason: string }[] = [];
+    for (const reg of registrationsOf(session)) {
       const added = register(reg.file, session, reg.root);
-      return 'refused' in added ? [] : [describe(added)];
-    });
-    return c.json(restored);
+      if ('refused' in added) refused.push({ file: reg.file, reason: added.refused });
+      else restored.push(describe(added));
+    }
+    return c.json({ restored, refused });
   });
 
   // The page's switcher asks this. It lists other processes, and every document here is

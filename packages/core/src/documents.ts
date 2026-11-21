@@ -96,6 +96,33 @@ export function readServeRecord(): { port: number; pid: number | null } | null {
   }
 }
 
+/**
+ * Whether the server this home recorded is still running. A record a crash left behind
+ * names a port anyone may hold now. A pid answering EPERM belongs to another user, which a
+ * server of this home never is, so it counts as gone.
+ */
+export function recordedServerAlive(): boolean {
+  const rec = readServeRecord();
+  if (rec === null || rec.pid === null) return false;
+  try {
+    process.kill(rec.pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The port of `akapen serve` that this home may hand its management secret to: one named by
+ * `$AKAPEN_PORT`, else one its running server recorded. Never the bare default, which
+ * another user on the machine could be listening on.
+ */
+export function chosenServePort(): number | null {
+  const asked = Number(process.env['AKAPEN_PORT'] || Number.NaN);
+  if (Number.isInteger(asked) && asked > 0 && asked <= 65_535) return asked;
+  return recordedServerAlive() ? readServePort() : null;
+}
+
 export function writeServePort(port: number): void {
   mkdirSync(akapenHome(), { recursive: true });
   writeAtomic(servePath(), `${JSON.stringify({ port, pid: process.pid })}\n`);

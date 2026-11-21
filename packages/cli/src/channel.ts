@@ -18,6 +18,7 @@
 import { spawnSync } from 'node:child_process';
 import { statSync } from 'node:fs';
 
+import { chosenServePort } from '@akapen/core/documents';
 import { reachableHost, readInstances } from '@akapen/core/instances';
 import { pendingComments } from '@akapen/core/store';
 import { currentToken, readManageToken } from '@akapen/core/token';
@@ -469,10 +470,18 @@ export async function runChannel(): Promise<void> {
   }
 }
 
-/** Where `akapen serve` listens on this machine: `$AKAPEN_PORT`, else 4300. */
-const servePort = (): number => {
-  const asked = Number(process.env['AKAPEN_PORT']);
-  return Number.isInteger(asked) && asked > 0 && asked <= 65_535 ? asked : 4300;
+/** Said once per kind, so a channel that cannot read says why without a line every pass. */
+const said = new Set<string>();
+const sayOnce = (what: string): void => {
+  if (said.has(what)) return;
+  said.add(what);
+  console.error(`akapen: channel: ${what}`);
+};
+
+/** A refusal from akapen serve: the token or the management secret. A channel that gets one reads nothing from it. */
+const noteRefusal = (res: Response): void => {
+  if (res.status === 401 || res.status === 403)
+    sayOnce(`akapen serve refused this session (${res.status}); check AKAPEN_TOKEN and AKAPEN_MANAGE_TOKEN`);
 };
 
 const serveHeaders = (): Record<string, string> => {
@@ -493,12 +502,16 @@ const serveHeaders = (): Record<string, string> => {
 export async function serveStore(sessionId: string): Promise<Store> {
   type Served = { file: string; url: string; added_at: string; comments: RoundComment[] };
   let served: Served[] = [];
+  const port = chosenServePort();
   try {
-    const res = await fetch(
-      `http://127.0.0.1:${servePort()}/api/sessions/${encodeURIComponent(sessionId)}/documents`,
-      { headers: serveHeaders(), signal: AbortSignal.timeout(5_000) },
-    );
-    if (res.ok) served = (await res.json()) as Served[];
+    if (port !== null) {
+      const res = await fetch(
+        `http://127.0.0.1:${port}/api/sessions/${encodeURIComponent(sessionId)}/documents`,
+        { headers: serveHeaders(), signal: AbortSignal.timeout(5_000) },
+      );
+      if (res.ok) served = (await res.json()) as Served[];
+      else noteRefusal(res);
+    }
   } catch {
     /* No server, or one that did not answer: this pass reads the registry only. */
   }
@@ -509,7 +522,7 @@ export async function serveStore(sessionId: string): Promise<Store> {
       ...served.map((d) => ({
         file: d.file,
         host: '127.0.0.1',
-        port: servePort(),
+        port: port ?? 0,
         startedAt: d.added_at,
         origin: { id: sessionId },
         url: d.url.replace(/\/$/, ''),
@@ -527,15 +540,24 @@ let wake: () => void = () => {};
  * session is still there. A stream that drops, or a server that is not running, is tried
  * again after a pass interval.
  */
-async function holdServeStream(sessionId: string): Promise<never> {
+export async function holdServeStream(
+  sessionId: string,
+  onChanged: () => void = () => wake(),
+  signal?: AbortSignal,
+): Promise<void> {
   for (;;) {
+    if (signal?.aborted === true) return;
+    const port = chosenServePort();
     try {
+      if (port === null) throw new Error('no server recorded');
       const res = await fetch(
-        `http://127.0.0.1:${servePort()}/api/sessions/${encodeURIComponent(sessionId)}/events`,
+        `http://127.0.0.1:${port}/api/sessions/${encodeURIComponent(sessionId)}/events`,
         {
           headers: serveHeaders(),
+          ...(signal === undefined ? {} : { signal }),
         },
       );
+      if (!res.ok) noteRefusal(res);
       if (res.ok && res.body !== null) {
         const dec = new TextDecoder();
         let buf = '';
@@ -543,7 +565,7 @@ async function holdServeStream(sessionId: string): Promise<never> {
           buf += dec.decode(chunk, { stream: true });
           let at: number;
           while ((at = buf.indexOf('\n\n')) !== -1) {
-            if (buf.slice(0, at).startsWith('data: changed')) wake();
+            if (buf.slice(0, at).startsWith('data: changed')) onChanged();
             buf = buf.slice(at + 2);
           }
         }
