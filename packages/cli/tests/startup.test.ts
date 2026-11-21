@@ -647,6 +647,7 @@ describe('akapen reply and resolve', () => {
       { body: 'from the agent', authorKind: 'agent', sessionId: SESSION },
       { body: 'from a person', authorKind: 'human' },
     ]);
+    expect((await read()).replies[1]).not.toHaveProperty('sessionId');
 
     const withText = cli(home, ['resolve', file, comment.id, 'done']);
     expect(withText.status).toBe(1);
@@ -669,19 +670,19 @@ describe('akapen reply and resolve', () => {
     // The CLI reads the comment while it is open, from a copy of the home taken now; the
     // copy's registry still points at the same server, which is where the resolve goes.
     const stale = mkdtempSync(join(tmpdir(), 'akapen-stale-'));
+    sandboxes.push(stale);
     cpSync(home, stale, { recursive: true });
     // Someone resolves it in the page before the CLI's resolve lands.
     expect((await fetch(`${url}/api/comments/${comment.id}/resolve`, { method: 'POST' })).ok).toBe(true);
     expect((await read()).resolved).toBe(true);
 
     const raced = cli(stale, ['resolve', file, comment.id]);
-    rmSync(stale, { recursive: true, force: true });
     expect(raced.status).toBe(0);
     expect(raced.stdout.trim()).toBe('resolved (someone resolved it meanwhile, and this toggled it back)');
     expect((await read()).resolved).toBe(true);
   }, 60_000);
 
-  it('exits 1 on a resolve answered without a resolved comment, and on a reply never answered (#245)', async () => {
+  it('exits 1 on a resolve that does not end resolved, after one retry at most, and on a reply never answered (#245)', async () => {
     const { lines, home, file } = await start(['--no-auth']);
     const [url] = urlsIn(lines);
     const posted = await fetch(`${url}/api/comments`, {
@@ -691,8 +692,9 @@ describe('akapen reply and resolve', () => {
     });
     const { comment } = (await posted.json()) as { comment: { id: string } };
 
-    // Answers status as the real one does, and a resolve with no state in it.
+    // Answers status as the real one does, and a resolve with the state set below.
     let resolves = 0;
+    let answer: { id: string; resolved?: boolean } = { id: comment.id };
     const fake = createHttpServer((req, res) => {
       if (req.url === '/api/status') {
         void fetch(`${url}/api/status`)
@@ -703,9 +705,7 @@ describe('akapen reply and resolve', () => {
       // Never answered, to see the CLI give up rather than wait on it.
       if (req.url?.endsWith('/replies')) return;
       if (req.url?.endsWith('/resolve')) resolves++;
-      res
-        .writeHead(200, { 'content-type': 'application/json' })
-        .end(JSON.stringify({ comment: { id: comment.id } }));
+      res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ comment: answer }));
     });
     await new Promise<void>((r) => fake.listen(0, '127.0.0.1', r));
     const fakePort = (fake.address() as { port: number }).port;
@@ -728,14 +728,24 @@ describe('akapen reply and resolve', () => {
       };
       const odd = await run(['resolve', file, comment.id]);
       expect(odd.status).toBe(1);
-      expect(odd.stderr).toContain(`${comment.id} is not resolved after the call`);
+      expect(odd.stderr).toContain(`the resolve of ${comment.id} answered without its state`);
       expect(resolves).toBe(1);
+
+      // Open after the call back too: toggled back once, not until it comes back resolved.
+      answer = { id: comment.id, resolved: false };
+      resolves = 0;
+      const stuck = await run(['resolve', file, comment.id]);
+      expect(stuck.status).toBe(1);
+      expect(stuck.stderr).toContain(`${comment.id} is open after the call`);
+      expect(resolves).toBe(2);
 
       const began = Date.now();
       const silent = await run(['reply', file, comment.id, 'into silence']);
       expect(silent.status).toBe(1);
       expect(silent.stderr).toContain('/replies did not answer (TimeoutError)');
-      expect(Date.now() - began).toBeLessThan(25_000);
+      const waited = Date.now() - began;
+      expect(waited).toBeGreaterThanOrEqual(9_000);
+      expect(waited).toBeLessThan(18_000);
     } finally {
       fake.close();
     }

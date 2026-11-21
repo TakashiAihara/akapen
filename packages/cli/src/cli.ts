@@ -571,12 +571,18 @@ if (positional[0] === 'reply' || positional[0] === 'resolve') {
       ).comment?.resolved;
     let state = await toggle();
     // A toggle: someone else resolved it since the store was read, so this reopened it.
-    // Toggled back once, which leaves it resolved as both meant.
+    // Toggled back once. A third resolve landing in between is undone by it, and shows as open.
     const raced = state === false;
     if (raced) state = await toggle();
+    if (state === false) {
+      console.error(`akapen: ${id} is open after the call; check \`akapen comments\``);
+      process.exit(1);
+    }
     // Not toggled again on an answer of another shape: a second call could just as well reopen it.
     if (state !== true) {
-      console.error(`akapen: ${id} is not resolved after the call; check \`akapen comments\``);
+      console.error(
+        `akapen: the resolve of ${id} answered without its state; check \`akapen comments\` before resolving again`,
+      );
       process.exit(1);
     }
     console.log(raced ? 'resolved (someone resolved it meanwhile, and this toggled it back)' : 'resolved');
