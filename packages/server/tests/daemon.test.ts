@@ -190,6 +190,16 @@ describe('akapen serve', () => {
     }
   });
 
+  it('does not take the server of another home for its own', async () => {
+    const d = await serve();
+    cli(d, ['add', note('note.md')]);
+    const r = spawnSync('bun', ['run', CLI, 'list'], {
+      env: { ...env(), AKAPEN_HOME: join(sandbox, 'other-home'), AKAPEN_PORT: '' },
+      encoding: 'utf8',
+    });
+    expect(r.stdout.trim()).toBe('no akapen is running');
+  });
+
   it('listens on AKAPEN_PORT over the port a crashed server recorded', async () => {
     mkdirSync(home, { recursive: true });
     const free = await new Promise<number>((done) => {

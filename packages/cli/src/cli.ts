@@ -64,14 +64,15 @@ function fail(message: string): never {
  * Where a command finds `akapen serve`: `-p`, else `$AKAPEN_PORT`, else the port the running
  * server recorded, else 4300. `serve` picks its own port without the recorded one.
  */
-function daemonPort(): number {
+function daemonPort(): number | null {
   try {
     // `-p` on a command that talks to the server names the server's port, as it does on serve.
     // Then the port the running server recorded, so `serve -p <n>` alone is found too.
-    return resolvePort(
-      (portFlagNamesServer ? args?.port : undefined) ?? (process.env['AKAPEN_PORT'] || undefined),
-      readServePort() ?? 4300,
-    );
+    const named = (portFlagNamesServer ? args?.port : undefined) ?? (process.env['AKAPEN_PORT'] || undefined);
+    if (named !== undefined) return resolvePort(named, 4300);
+    // The default port belongs to the default home. A server answering there for another
+    // home keeps another store; one in a home set by AKAPEN_HOME is found by what it recorded.
+    return readServePort() ?? (process.env['AKAPEN_HOME'] === undefined ? 4300 : null);
   } catch (err) {
     if (!(err instanceof UsageError)) throw err;
     fail(`AKAPEN_PORT: ${err.message}`);
@@ -110,6 +111,8 @@ async function daemon(
   init: RequestInit = {},
   token: string | null = clientToken(),
 ): Promise<Response | null> {
+  const port = daemonPort();
+  if (port === null) return null;
   const session = process.env['CLAUDE_CODE_SESSION_ID'] ?? '';
   const headers: Record<string, string> = {
     ...(token === null ? {} : { authorization: `Bearer ${token}` }),
@@ -117,7 +120,7 @@ async function daemon(
     ...(init.body === undefined ? {} : { 'content-type': 'application/json' }),
   };
   try {
-    return await fetch(`http://127.0.0.1:${daemonPort()}${path}`, {
+    return await fetch(`http://127.0.0.1:${port}${path}`, {
       ...init,
       headers,
       // A read only finds the server, and whatever holds the port should not hold the command.
@@ -293,7 +296,7 @@ if (positional[0] === 'list') {
           ...served.map((d) => ({
             pid: null,
             host: '127.0.0.1',
-            port: daemonPort(),
+            port: daemonPort() ?? 0,
             url: d.url,
             origin: d.session === null ? null : { kind: 'claude-code', id: d.session },
             file: d.file,
@@ -551,7 +554,7 @@ if (positional[0] === 'add') {
   );
   if (res === null) {
     console.error(
-      `akapen: akapen serve is not answering on 127.0.0.1:${daemonPort()}; start it (akapen serve) and run this again`,
+      `akapen: akapen serve is not answering on 127.0.0.1:${daemonPort() ?? '(no port: set AKAPEN_PORT for this AKAPEN_HOME)'}; start it (akapen serve) and run this again`,
     );
     process.exit(1);
   }
@@ -573,7 +576,7 @@ if (positional[0] === 'remove') {
   if (extra.length > 0) fail(`remove: unexpected ${JSON.stringify(extra.join(' '))}`);
   const documents = await daemonDocuments();
   if (documents === null) {
-    console.error(`akapen: akapen serve is not answering on 127.0.0.1:${daemonPort()}`);
+    console.error(`akapen: akapen serve is not answering on 127.0.0.1:${daemonPort() ?? '(no port)'}`);
     process.exit(1);
   }
   const byPath = documents.find((d) => d.file === resolve(target));
@@ -734,7 +737,9 @@ const file = positional[0]!;
 if (!existsSync(file)) fail(`no such file: ${file}`);
 // The same store held by akapen serve as well would be overwritten by whichever wrote last.
 portFlagNamesServer = false;
-const served = await daemonDocuments();
+// Only the server of this home: one on another home keeps another store, so it cannot hold this
+// file's comments, and a port nobody recorded here is not worth a request on every start.
+const served = readServePort() === null ? null : await daemonDocuments();
 // Refused, it may well hold this file: starting would put a second holder on its store.
 if (serveRefused) {
   fail(`akapen serve is running on port ${daemonPort()} on another token; pass that token, or stop it first`);
