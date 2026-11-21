@@ -1296,7 +1296,10 @@ export function startDaemon(opts: DaemonOptions & { manageToken: string }) {
     if (!fromThisMachine(c)) return c.text('sessions are this machine only', 403);
     const presented = c.req.header('x-akapen-manage');
     if (presented === undefined || !tokensMatch(presented, manageToken)) {
-      return c.text('the management secret is missing or wrong (~/.akapen/manage-token)', 403);
+      return c.text(
+        "the management secret is missing or wrong (manage-token in akapen's home, or AKAPEN_MANAGE_TOKEN)",
+        403,
+      );
     }
     // The wildcard route has no named parameter: the id is the segment after /api/sessions/.
     const session = decodeURIComponent(new URL(c.req.url).pathname.split('/')[3] ?? '');
