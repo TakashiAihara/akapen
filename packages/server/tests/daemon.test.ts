@@ -9,6 +9,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   renameSync,
   rmSync,
   statSync,
@@ -42,7 +43,7 @@ const managed = (url: string, init: RequestInit = {}): Promise<Response> =>
     },
   });
 
-type Daemon = { port: string; base: string; stop: () => Promise<void> };
+type Daemon = { port: string; base: string; stop: () => Promise<void>; output: () => string };
 
 let sandbox: string;
 let home: string;
@@ -88,7 +89,7 @@ async function serve(args: string[] = [], extra: NodeJS.ProcessEnv = {}): Promis
     await kill();
     throw err;
   });
-  const daemon: Daemon = { port, base: `http://127.0.0.1:${port}`, stop: kill };
+  const daemon: Daemon = { port, base: `http://127.0.0.1:${port}`, stop: kill, output: () => out };
   running.push(daemon);
   return daemon;
 }
@@ -681,6 +682,59 @@ describe('akapen serve', () => {
     expect((await image()).status).toBe(200);
     cli(d, ['add', file]);
     expect((await image()).status).toBe(200);
+  });
+
+  it('moves the comments of an earlier home from reviews/ to comments/ when it starts', async () => {
+    const file = note('note.md');
+    const first = await serve();
+    const url = urlIn(cli(first, ['add', file]).out);
+    await comment(url, 'kept');
+    await first.stop();
+    renameSync(join(home, 'comments'), join(home, 'reviews'));
+
+    const d = await serve();
+    expect(existsSync(join(home, 'comments'))).toBe(true);
+    expect(existsSync(join(home, 'reviews'))).toBe(false);
+    const listed = JSON.parse(cli(d, ['comments', file]).out) as { body: string }[];
+    expect(listed.map((c) => c.body)).toEqual(['kept']);
+  });
+
+  it('says so when reviews/ turns up again beside comments/', async () => {
+    mkdirSync(join(home, 'comments'), { recursive: true });
+    mkdirSync(join(home, 'reviews', 'late-0123456789ab'), { recursive: true });
+    const d = await serve();
+    expect(d.output()).toContain('is still there beside');
+    expect(existsSync(join(home, 'reviews', 'late-0123456789ab'))).toBe(true);
+  });
+
+  it('keeps reading reviews/ while a one-document akapen from before still writes there', async () => {
+    const file = note('note.md');
+    const first = await serve();
+    const url = urlIn(cli(first, ['add', file]).out);
+    await comment(url, 'kept');
+    cli(first, ['remove', file]);
+    await first.stop();
+    renameSync(join(home, 'comments'), join(home, 'reviews'));
+    const legacy = spawn('bun', ['run', CLI, note('other.md'), '-p', '0'], { env: env(), stdio: 'ignore' });
+    const legacyExited = new Promise<void>((done) => legacy.on('exit', () => done()));
+    try {
+      // The record itself, not the temporary file it is written through.
+      await until(
+        () =>
+          existsSync(join(home, 'instances')) &&
+          readdirSync(join(home, 'instances')).some((f) => f.endsWith('.json')),
+        15_000,
+      );
+      const d = await serve();
+      expect(d.output()).toContain('still in use by a one-document akapen');
+      expect(existsSync(join(home, 'comments'))).toBe(false);
+      cli(d, ['add', file]);
+      const listed = JSON.parse(cli(d, ['comments', file]).out) as { body: string }[];
+      expect(listed.map((c) => c.body)).toEqual(['kept']);
+    } finally {
+      legacy.kill();
+      await legacyExited;
+    }
   });
 
   it('refuses to register a file a one-document akapen is serving, and the reverse', async () => {

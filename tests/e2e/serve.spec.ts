@@ -110,3 +110,15 @@ test('reads, comments and follows edits on each document under its own path', as
   await expect(page.locator('#round')).toHaveText('R002');
   await expect(page.locator('#doc')).toContainText('Added by the agent.');
 });
+
+test('leads from a document back to the list of documents', async ({ page, served }) => {
+  const file = join(served.sandbox, 'note.md');
+  writeFileSync(file, '# Listed\n\nText.\n');
+  const url = served.add(file);
+
+  await page.goto(url);
+  await expect(page.locator('#doc')).toContainText('Text.');
+  await page.locator('#brand').click();
+  await expect(page).toHaveURL(new URL('/', url).href);
+  await expect(page.locator('body')).toContainText('note.md');
+});

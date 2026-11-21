@@ -8,7 +8,7 @@
 import { mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 
-import { akapenHome, storeDir, writeAtomic } from './store.ts';
+import { akapenHome, commentsRoot, storeDir, writeAtomic } from './store.ts';
 
 export type DocumentEntry = {
   /** The URL segment: `/d/<id>/`. The store directory's name, so it follows from the path. */
@@ -159,7 +159,7 @@ export function forgetRegistration(file: string): void {
 
 /** Every document whose last registration was made by `session`. A store that cannot be read is skipped. */
 export function registrationsOf(session: string): Registration[] {
-  const root = join(akapenHome(), 'reviews');
+  const root = commentsRoot();
   let names: string[];
   try {
     names = readdirSync(root);

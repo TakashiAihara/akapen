@@ -85,7 +85,7 @@ This removes, structurally, the path where a file changes mid-writing and commen
 Storage layout (draft):
 
 ```text
-~/.akapen/reviews/<basename>-<hash>/
+~/.akapen/comments/<basename>-<hash>/
   review.json          # round metadata and the current round number
   rounds/
     001/content.md     # the frozen document

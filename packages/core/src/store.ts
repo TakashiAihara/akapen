@@ -14,15 +14,15 @@ import {
   type RoundMeta,
 } from '@akapen/shared';
 import {
+  copyFileSync,
+  existsSync,
   mkdirSync,
   readFileSync,
   readdirSync,
-  writeFileSync,
   renameSync,
   statSync,
   unlinkSync,
-  existsSync,
-  copyFileSync,
+  writeFileSync,
 } from 'node:fs';
 
 /**
@@ -62,7 +62,37 @@ export type Review = {
 export function storeDir(filePath: string): string {
   const abs = resolve(filePath);
   const hash = createHash('sha1').update(abs).digest('hex').slice(0, 12);
-  return join(akapenHome(), 'reviews', `${basename(abs).replace(/\.md$/, '')}-${hash}`);
+  return join(commentsRoot(), `${basename(abs).replace(/\.md$/, '')}-${hash}`);
+}
+
+/**
+ * Where every document's comments live: `comments/` under the akapen home (#305). A home
+ * from before has them in `reviews/`; it is read there until `akapen serve` renames it,
+ * so nothing written before the rename goes missing.
+ */
+export function commentsRoot(): string {
+  const comments = join(akapenHome(), 'comments');
+  if (existsSync(comments)) return comments;
+  const legacy = join(akapenHome(), 'reviews');
+  return existsSync(legacy) ? legacy : comments;
+}
+
+/**
+ * Rename `reviews/` to `comments/`, once. Refused while a one-document akapen from an
+ * earlier version is still running: it would go on writing into `reviews/`, where nothing
+ * reads any more. Returns why it did not, or null when there was nothing to do or it did.
+ */
+export function renameLegacyStore(oneDocumentRunning: boolean): string | null {
+  const comments = join(akapenHome(), 'comments');
+  const legacy = join(akapenHome(), 'reviews');
+  // Both: something from before wrote reviews/ after the rename, and nothing reads it now.
+  if (existsSync(comments) && existsSync(legacy))
+    return `${legacy} is still there beside ${comments}; an akapen from before wrote into it after the rename, and what it wrote is not read. Move what you need into ${comments}, then remove it`;
+  if (existsSync(comments) || !existsSync(legacy)) return null;
+  if (oneDocumentRunning)
+    return `${legacy} is still in use by a one-document akapen; stop those (akapen list) and start akapen serve again to rename it to ${comments}`;
+  renameSync(legacy, comments);
+  return null;
 }
 
 /**

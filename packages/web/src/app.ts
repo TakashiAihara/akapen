@@ -58,6 +58,12 @@ const showLines = must<HTMLInputElement>('showLines');
 const topbarEl = must('topbar');
 const themeToggleEl = must<HTMLButtonElement>('themeToggle');
 const peersToggleEl = must<HTMLButtonElement>('peersToggle');
+const brandEl = must<HTMLAnchorElement>('brand');
+// Under akapen serve every document lives at /d/<id>/, and / lists them all.
+if (location.pathname.startsWith('/d/')) {
+  brandEl.href = '/';
+  brandEl.title = 'All documents';
+}
 const peersEl = must('peers');
 const peersListEl = must('peersList');
 const outlineToggleEl = must<HTMLButtonElement>('outlineToggle');

@@ -22,7 +22,7 @@ akapen が自分の部品を呼ぶときの言葉と、そのうち二つの意�
 | ドラフト | 書きかけでまだ送っていないコメント（`.bubble.draft`、`startDraft`） | レビュー準備前の GitHub プルリクエスト | プロダクトの中ではドラフト = 未送信のコメント。もう一方はリポジトリの進め方の語であって akapen の語ではない |
 | 文書 / ファイル / スナップショット | 実ファイル — いまディスクにあるもの | スナップショット — そのラウンドの凍結コピー（`rounds/NNN/content.md`） | 画面にあるのは常にスナップショットで、実ファイルではない。`Doc` はスナップショットを解析した形（`/api/doc`）。`#doc` はそれを描画する要素 |
 | doc / 文書 | `Doc` — ブラウザに渡す解析済みスナップショット（`/api/doc`） | 文書 — 画面に描画されたスナップショット（`#doc`）、および広く「レビュー対象の markdown」 | `Doc` はペイロード、文書は読むもの。文中で「文書」を `doc` と縮めない |
-| レビュー | `Review` — `review.json` の中身。ラウンドのメタデータと現在のラウンド番号 | 読んで指摘するという行為 | データを指すときは `review.json` または「レビューストア」（`~/.akapen/reviews/`）と言う |
+| レビュー | `Review` — `review.json` の中身。ラウンドのメタデータと現在のラウンド番号 | 読んで指摘するという行為 | データを指すときは `review.json` または「レビューストア」（`~/.akapen/comments/`）と言う |
 | root | file root — 文書の横の画像を配信してよいディレクトリ (`--root`、`ServeOptions.root`、`/file`)。広げなければ文書自身のディレクトリ。passive モード (#8) も同じ `--root` でツリーを配信する | #191 で提案中の review root (`--review-root`、`AKAPEN_REVIEW_ROOT`) — review の保存キーをどこからの相対パスにするか | 「file root」「review root」と言う。裸の「root」は使わない |
 | インラインレビュー | 文書の場所に紐づいた指摘。akapen の目的そのもの | markdown ファイルの中に直接書き込まれたコメント。akapen は決してしない | 「インライン」なのは読む体験に対してであって、ファイルに対してではない。ファイルは触らない |
 
@@ -89,12 +89,12 @@ row の状態。重なって付く。
 | ラウンドを見る | 過去ラウンドのスナップショットとコメントを読む。スナップショットは変わらず、そこで書いたコメントはそのラウンドに付く | `RoundState.viewing`、`#historyBar` |
 | ラウンドを切る | 実ファイルを次のラウンドとして凍結する。人だけが行い、エージェントの保存では起きない。現在のラウンドのスナップショットと同じファイルでは開かず、現在のラウンドを返す | 「End this round」、`#nextRound`、`openRound` |
 | 繰り越し | 過去ラウンドの未解決コメント。新しいラウンドには何も引き継がれないので、「画面から消えた」が「対応済み」と読まれないよう別枠で見せる | `carriedOver`、`#railCarried` |
-| レビューストア | コメントの置き場所。markdown ファイルの外 | `~/.akapen/reviews/<basename>-<hash>/`、`AKAPEN_HOME` |
+| レビューストア | コメントの置き場所。markdown ファイルの外 | `~/.akapen/comments/<basename>-<hash>/`、`AKAPEN_HOME` |
 | 静止した (settled) | 間隔を空けて 2 回読んだ実ファイルの内容が一致した状態。ラウンドを切るときはこれを待つので、書き込みの途中にあるファイルは中途半端に凍結されず拒否される | `readSettled`、`AKAPEN_SETTLE_MS` |
 | dirty | 実ファイルが現在のラウンドのスナップショットと一致しなくなった状態 | `ChangedState.dirty` |
 
 ```text
-~/.akapen/reviews/<basename>-<hash>/   # ~/.akapen は既定値。AKAPEN_HOME を設定するとそのルートが変わる
+~/.akapen/comments/<basename>-<hash>/   # ~/.akapen は既定値。AKAPEN_HOME を設定するとそのルートが変わる
   review.json          # ラウンドのメタデータと現在のラウンド番号
   rounds/
     001/content.md     # 凍結された文書
