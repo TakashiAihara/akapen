@@ -1417,6 +1417,9 @@ export function startDaemon(opts: DaemonOptions & { manageToken: string }) {
     clearTimeout(gone.get(session));
     gone.delete(session);
     generation.set(session, (generation.get(session) ?? 0) + 1);
+    // Streams from before keep their own set: one opened after starts a fresh one, so an old
+    // stream that is still open cannot hold back the removal when the new one closes.
+    streams.delete(session);
     for (const reg of registrationsOf(session)) {
       try {
         const added = register(reg.file, session, reg.root, reg.addedAt);

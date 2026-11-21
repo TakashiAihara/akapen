@@ -925,6 +925,21 @@ describe('sessions on akapen serve', () => {
     expect((await authed(`${url}api/status`)).status).toBe(200);
   });
 
+  it('still unregisters a resumed session when its new channel goes, whatever its old stream does', async () => {
+    const d = await serve([], { AKAPEN_DISCONNECT_MS: '300' });
+    const url = urlIn(cli(d, ['add', note('a.md')], { CLAUDE_CODE_SESSION_ID: 'session-a' }).out);
+    const old = hold(d, 'session-a');
+    await until(() => old.frames.length > 0);
+    expect(cli(d, ['restore', 'session-a']).code).toBe(0);
+    const fresh = hold(d, 'session-a');
+    await until(() => fresh.frames.length > 0);
+
+    fresh.close();
+    await new Promise((r) => setTimeout(r, 100));
+    old.close();
+    await until(async () => (await authed(`${url}api/status`)).status === 404);
+  });
+
   it("feeds a session's channel the comments on its documents, with the URL they are reached at", async () => {
     const d = await serve();
     const url = urlIn(cli(d, ['add', note('note.md')], { CLAUDE_CODE_SESSION_ID: 'session-a' }).out);

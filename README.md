@@ -139,7 +139,7 @@ akapen remove notes/plan.md          # stops serving it; its comments stay
 
 A registration belongs to the Claude Code session that made it (`CLAUDE_CODE_SESSION_ID`), and lasts as long as the session:
 
-- `akapen channel` connects to the server, so a comment reaches the session as it is written. A session whose channel has been gone for 30 seconds is unregistered; the 30 seconds start when its last connected channel disconnects, so a session that never loaded the channel keeps its documents until its SessionEnd hook removes them
+- `akapen channel` connects to the server, so a comment reaches the session as it is written. A session whose channel has been gone for 30 seconds is unregistered; the 30 seconds start when the last channel connected since its last restore disconnects, so a session that never loaded the channel keeps its documents until its SessionEnd hook removes them
 - The SessionEnd hook unregisters the session's documents, and the SessionStart hook registers them again when the session is resumed. The URLs come back as they were, since they follow from the paths. A hook is handed the session id as `session_id` in the JSON on its stdin:
 
 ```json

@@ -163,6 +163,8 @@ async function daemon(
   try {
     return await fetch(`http://127.0.0.1:${port}${path}`, {
       ...init,
+      // The management secret does not follow a redirect to wherever it points.
+      redirect: 'manual',
       headers,
       // A read only finds the server, and whatever holds the port should not hold the command.
       signal: AbortSignal.timeout(init.method === undefined ? 3_000 : 10_000),
