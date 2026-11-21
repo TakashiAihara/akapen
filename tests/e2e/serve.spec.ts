@@ -130,7 +130,7 @@ test('leads from a document back to the list of documents', async ({ page, serve
   await expect(page.locator('body')).toContainText('note.md');
 });
 
-test('says so, and writes nothing, when the document it shows is removed', async ({ page, served }) => {
+test('says so when the document it shows is removed', async ({ page, served }) => {
   const file = join(served.sandbox, 'note.md');
   writeFileSync(file, '# Removed\n\nText.\n');
   const url = served.add(file);

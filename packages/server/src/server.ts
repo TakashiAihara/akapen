@@ -517,8 +517,8 @@ export function openDocument(file: string, opts: DocumentOptions, currentSecret:
    * What this document is showing. Small on purpose: the page needs only enough to tell
    * which document it is talking to and whether it is waiting on someone.
    *
-   * The basename, never the path. This is read over the LAN with nothing authenticating
-   * a reader (#10), and directory layout is not something to hand out.
+   * The basename, never the path. Anyone on the LAN with the token reads this (and anyone
+   * at all under --no-auth), and directory layout is not something to hand out.
    */
   app.get('/api/status', (c) => {
     const status: StatusPayload = {
@@ -947,7 +947,7 @@ export function startDaemon(opts: DaemonOptions & { manageToken: string }) {
     open.delete(id);
   };
 
-  const documentFor = (id: string): OpenDocument | null => {
+  const documentFor = (id: string): OpenDocument | { heldBy: number } | null => {
     const entry = entries.find((e) => e.id === id);
     if (entry === undefined) return null;
     let doc = open.get(id);
@@ -955,6 +955,10 @@ export function startDaemon(opts: DaemonOptions & { manageToken: string }) {
     // replaces it by delete and create must not turn a comment on the round into a 404.
     if (doc === undefined) {
       if (!existsSync(entry.file)) return null;
+      // Registered before an earlier version's one-document akapen took the same file: two
+      // holders of one store overwrite each other, so it is not opened while that one runs.
+      const holder = readInstances().find((r) => r.file === entry.file);
+      if (holder !== undefined) return { heldBy: holder.pid };
       doc = openDocument(
         entry.file,
         {
@@ -1307,6 +1311,11 @@ export function startDaemon(opts: DaemonOptions & { manageToken: string }) {
     const id = c.req.param('id');
     const doc = documentFor(id);
     if (doc === null) return c.text('not registered here', 404);
+    if ('heldBy' in doc)
+      return c.text(
+        `a one-document akapen from an earlier version (pid ${doc.heldBy}) is serving this file; stop it first`,
+        409,
+      );
     // Cut from the raw path: the id arrives decoded, and its encoded form is longer.
     return forward(c, doc, new URL(c.req.url).pathname.replace(/^\/d\/[^/]*/, '') || '/');
   });

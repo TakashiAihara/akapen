@@ -736,13 +736,29 @@ describe('akapen serve', () => {
     expect(listed.map((c) => c.body)).toEqual(['kept']);
   });
 
+  it('does not open a registered document while a one-document akapen from before serves it', async () => {
+    const d = await serve();
+    const file = note('note.md');
+    const url = urlIn(cli(d, ['add', file]).out);
+    legacyRecord(file);
+    const res = await authed(`${url}api/status`);
+    expect(res.status).toBe(409);
+    expect(await res.text()).toContain(`(pid ${process.pid})`);
+  });
+
+  it('lists nothing for a --session that matches no session', async () => {
+    const d = await serve();
+    cli(d, ['add', note('note.md')]);
+    expect(JSON.parse(cli(d, ['list', '--json', '--session', 'nobody']).out)).toEqual([]);
+  });
+
   it('refuses to register a file a one-document akapen from before is serving', async () => {
     const d = await serve();
     const file = note('note.md');
     legacyRecord(file);
     const r = cli(d, ['add', file]);
     expect(r.code).toBe(1);
-    expect(r.err).toContain('a one-document akapen from an earlier version (pid ');
+    expect(r.err).toContain(`a one-document akapen from an earlier version (pid ${process.pid})`);
     expect(JSON.parse(cli(d, ['list', '--json']).out)).toEqual([]);
     // Only the file it serves: another one registers as usual.
     expect(cli(d, ['add', note('other.md')]).code).toBe(0);

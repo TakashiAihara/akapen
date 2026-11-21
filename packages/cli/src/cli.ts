@@ -269,7 +269,12 @@ if (positional[0] === 'list') {
     if (!(err instanceof UsageError)) throw err;
     fail(err.message);
   }
-  const served = session === undefined ? documents : documents.filter((d) => d.session === session);
+  const served =
+    session === undefined
+      ? documents
+      : session === null
+        ? []
+        : documents.filter((d) => d.session === session);
   if (args.json) {
     console.log(
       JSON.stringify(

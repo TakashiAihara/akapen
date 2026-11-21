@@ -1049,7 +1049,7 @@ describe('replying', () => {
 });
 
 /**
- * What `/api/status` says of a document: the line `akapen list` and the tab are built from.
+ * What `/api/status` says of a document: what the tab is built from.
  */
 describe('the status of a document', () => {
   it('reports what it is showing, by basename', async () => {

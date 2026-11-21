@@ -111,7 +111,11 @@ const added =
   port === 0
     ? null
     : Bun.spawnSync([bin, 'add', note], { cwd: sandbox, env: { ...env, AKAPEN_PORT: String(port) } });
-const id = added === null ? undefined : /^\s+id\s+(\S+)/m.exec(new TextDecoder().decode(added.stdout))?.[1];
+// An id printed by an add that then failed is not a registration to trust.
+const id =
+  added === null || added.exitCode !== 0
+    ? undefined
+    : /^\s+id\s+(\S+)/m.exec(new TextDecoder().decode(added.stdout))?.[1];
 const doc = `${base}/d/${id ?? ''}`;
 
 let up = false;
