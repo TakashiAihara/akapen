@@ -98,15 +98,33 @@ function daemonPort(): number | null {
 function secretMayGo(): boolean {
   if ((portFlagNamesServer ? args?.port : undefined) ?? (process.env['AKAPEN_PORT'] || undefined))
     return true;
+  return recordedServerAlive();
+}
+
+/**
+ * Whether the server this home recorded is still running. A record a crash left behind
+ * names a port anyone may hold now. A pid answering EPERM belongs to another user, which a
+ * server of this home never is, so it counts as gone.
+ */
+function recordedServerAlive(): boolean {
   const rec = readServeRecord();
   if (rec === null || rec.pid === null) return false;
   try {
     process.kill(rec.pid, 0);
     return true;
-  } catch (err) {
-    return (err as NodeJS.ErrnoException).code === 'EPERM';
+  } catch {
+    return false;
   }
 }
+
+/** Set by `daemon` when it held the management secret back from the port it was asking. */
+let secretWithheld = false;
+
+/** Why a refusal happened, when this command held the management secret back itself. */
+const refusalCause = (): string =>
+  secretWithheld
+    ? `the management secret was not sent to port ${daemonPort()}, which no running server of this home recorded; set AKAPEN_PORT to that server's port`
+    : "the token, or the management secret in akapen's home or AKAPEN_MANAGE_TOKEN";
 
 /** The token a command presents to the server: `--token`, else as `currentToken` finds it. */
 function clientToken(): string | null {
@@ -144,14 +162,15 @@ async function daemon(
   if (port === null) return null;
   const manageToken = readManageToken();
   const session = process.env['CLAUDE_CODE_SESSION_ID'] ?? '';
+  // Only to the management API: a document's own routes have no use for it.
+  const management = path.startsWith('/api/') && manageToken !== null;
+  const sendSecret = management && secretMayGo();
+  if (management && !sendSecret) secretWithheld = true;
   const headers: Record<string, string> = {
     ...(token === null ? {} : { authorization: `Bearer ${token}` }),
     ...(session === '' ? {} : { 'x-akapen-session': session }),
     ...(init.body === undefined ? {} : { 'content-type': 'application/json' }),
-    // Only to the management API: a document's own routes have no use for it.
-    ...(path.startsWith('/api/') && manageToken !== null && secretMayGo()
-      ? { 'x-akapen-manage': manageToken }
-      : {}),
+    ...(sendSecret ? { 'x-akapen-manage': manageToken } : {}),
   };
   try {
     return await fetch(`http://127.0.0.1:${port}${path}`, {
@@ -362,7 +381,7 @@ if (positional[0] === 'list') {
     const registered = args.session === undefined ? readInstances().length : 0;
     console.log(
       serveRefused && registered === 0
-        ? `akapen serve is running on port ${daemonPort()} but refused this command (the token, or the management secret in akapen's home or AKAPEN_MANAGE_TOKEN)`
+        ? `akapen serve is running on port ${daemonPort()} but refused this command (${refusalCause()})`
         : args.session === undefined && answered !== null && registered === 0
           ? `akapen serve is running on port ${daemonPort()}; nothing is registered`
           : args.session === undefined
@@ -597,7 +616,10 @@ if (positional[0] === 'add') {
     process.exit(1);
   }
   if (!res.ok) {
-    console.error(`akapen: akapen serve answered ${res.status}: ${await res.text()}`);
+    const why = await res.text();
+    console.error(
+      `akapen: akapen serve answered ${res.status}: ${why}${res.status === 403 && secretWithheld ? ` (${refusalCause()})` : ''}`,
+    );
     process.exit(1);
   }
   const added = (await res.json()) as DaemonDocument;
@@ -614,7 +636,11 @@ if (positional[0] === 'remove') {
   if (extra.length > 0) fail(`remove: unexpected ${JSON.stringify(extra.join(' '))}`);
   const documents = await daemonDocuments();
   if (documents === null) {
-    console.error(`akapen: akapen serve is not answering on 127.0.0.1:${daemonPort() ?? '(no port)'}`);
+    console.error(
+      serveRefused
+        ? `akapen: akapen serve on port ${daemonPort()} refused this command (${refusalCause()})`
+        : `akapen: akapen serve is not answering on 127.0.0.1:${daemonPort() ?? '(no port)'}`,
+    );
     process.exit(1);
   }
   const byPath = documents.find((d) => d.file === resolve(target));
@@ -694,7 +720,9 @@ if (positional[0] === 'comments') {
 if (positional[0] === 'serve') {
   if (positional.length > 1) fail(`serve: unexpected ${JSON.stringify(positional.slice(1).join(' '))}`);
   // One server per home: a second would write documents.json from its own copy.
-  const runningOn = readServePort();
+  // Asked only while the recorded server's process lives: otherwise the port may be anyone's,
+  // and the probe carries the management secret.
+  const runningOn = recordedServerAlive() ? readServePort() : null;
   if (runningOn !== null) {
     const token = clientToken();
     const manage = readManageToken();

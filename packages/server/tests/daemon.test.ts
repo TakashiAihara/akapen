@@ -590,6 +590,20 @@ describe('akapen serve', () => {
       seen.length = 0;
       await listAsync(env({ AKAPEN_PORT: String(port) }));
       expect(seen).toContain('the-secret-that-must-stay');
+
+      // serve's own check for a running server, on the same stale record, sends nothing either.
+      seen.length = 0;
+      const second = spawn('bun', ['run', CLI, 'serve', '-p', '0'], {
+        env: { ...env(), AKAPEN_PORT: '' },
+        stdio: ['ignore', 'pipe', 'ignore'],
+      });
+      const exited = new Promise<void>((done) => second.on('exit', () => done()));
+      await new Promise<void>((done) =>
+        second.stdout.on('data', (c: Buffer) => c.toString().includes('url') && done()),
+      );
+      second.kill();
+      await exited;
+      expect(seen).toEqual([]);
     } finally {
       await new Promise<void>((done) => listener.close(() => done()));
     }
@@ -601,6 +615,7 @@ describe('akapen serve', () => {
     rmSync(join(home, 'manage-token'));
     const r = cli(d, ['list']);
     expect(r.out).toContain('refused this command');
+    expect(r.out).not.toContain('was not sent');
     const second = spawnSync('bun', ['run', CLI, 'serve', '-p', '0'], {
       env: { ...env(), AKAPEN_PORT: '', AKAPEN_MANAGE_TOKEN: 'not-the-running-one' },
       encoding: 'utf8',
