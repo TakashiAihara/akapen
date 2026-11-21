@@ -39,7 +39,7 @@ const USAGE = `akapen — markdown inline review
   akapen token                   print this host's token (--rotate to replace it)
 
 options:
-  --host <addr>            serve: listen address: an IP address or localhost (default 127.0.0.1)
+  --host <addr>            serve: listen address: 127.0.0.1 (default), 0.0.0.0 or ::
   -p, --port <n>           serve: the port (default $AKAPEN_PORT or 4300, never moved off;
                            0: let the OS pick). The other commands reach the server on
                            127.0.0.1 at -p, $AKAPEN_PORT, the port the running server

@@ -284,7 +284,7 @@ describe('akapen list --session', () => {
   const SESSION = 'fc40ec79-b629-4c08-9be7-721bb0d306a6';
   const list = (home: string, extra: string[]) =>
     spawnSync('bun', ['run', CLI, 'list', ...extra], {
-      env: { ...process.env, AKAPEN_HOME: home, CLAUDE_CODE_SESSION_ID: '' },
+      env: { ...process.env, AKAPEN_HOME: home, CLAUDE_CODE_SESSION_ID: '', AKAPEN_PORT: '' },
       encoding: 'utf8',
       timeout: 20_000,
     });
@@ -391,7 +391,7 @@ describe('akapen reply and resolve', () => {
   const SESSION = 'fc40ec79-b629-4c08-9be7-721bb0d306a6';
   const cli = (home: string, extra: string[]) =>
     spawnSync('bun', ['run', CLI, ...extra], {
-      env: { ...process.env, AKAPEN_HOME: home, CLAUDE_CODE_SESSION_ID: SESSION },
+      env: { ...process.env, AKAPEN_HOME: home, CLAUDE_CODE_SESSION_ID: SESSION, AKAPEN_PORT: '' },
       encoding: 'utf8',
       timeout: 20_000,
     });
@@ -629,7 +629,8 @@ describe('akapen reply and resolve', () => {
     const read = async () =>
       ((await (await fetch(`${url}/api/comments`)).json()) as Thread[]).find((c) => c.id === comment.id)!;
     const run = (cwd: string, session: string | undefined, extra: string[]) => {
-      const env: NodeJS.ProcessEnv = { ...process.env, AKAPEN_HOME: home };
+      // The server this home recorded, not one an AKAPEN_PORT exported by the runner names.
+      const env: NodeJS.ProcessEnv = { ...process.env, AKAPEN_HOME: home, AKAPEN_PORT: '' };
       if (session === undefined) delete env['CLAUDE_CODE_SESSION_ID'];
       else env['CLAUDE_CODE_SESSION_ID'] = session;
       return spawnSync('bun', ['run', CLI, ...extra], { cwd, env, encoding: 'utf8', timeout: 20_000 });
