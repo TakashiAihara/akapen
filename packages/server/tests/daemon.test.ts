@@ -795,7 +795,8 @@ describe('sessions on akapen serve', () => {
     rmSync(gone);
 
     const restored = cli(d, ['restore', 'session-a']);
-    expect(restored.code).toBe(1);
+    // A deleted file is reported, not a failure: the resume hook runs this every time.
+    expect(restored.code, restored.err).toBe(0);
     expect(restored.err).toContain(`not restored: ${gone}: no such file`);
     expect(restored.out).toContain(url);
     expect(restored.out).not.toContain('nothing to restore');
@@ -901,9 +902,12 @@ describe('sessions on akapen serve', () => {
       const ctl = new AbortController();
       void holdServeStream('session-a', () => woken++, ctl.signal);
       try {
-        await new Promise((r) => setTimeout(r, 300));
-        await comment(url, 'woke');
-        await until(() => woken > 0);
+        // Commented again on each try: nothing says when the stream has subscribed.
+        await until(async () => {
+          await comment(url, 'woke');
+          await new Promise((r) => setTimeout(r, 200));
+          return woken > 0;
+        });
       } finally {
         ctl.abort();
       }

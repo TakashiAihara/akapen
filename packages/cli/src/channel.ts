@@ -18,7 +18,7 @@
 import { spawnSync } from 'node:child_process';
 import { statSync } from 'node:fs';
 
-import { chosenServePort } from '@akapen/core/documents';
+import { chosenServePort, readServePort } from '@akapen/core/documents';
 import { reachableHost, readInstances } from '@akapen/core/instances';
 import { pendingComments } from '@akapen/core/store';
 import { currentToken, readManageToken } from '@akapen/core/token';
@@ -503,6 +503,10 @@ export async function serveStore(sessionId: string): Promise<Store> {
   type Served = { file: string; url: string; added_at: string; comments: RoundComment[] };
   let served: Served[] = [];
   const port = chosenServePort();
+  if (port === null && readServePort() !== null)
+    sayOnce(
+      'akapen serve recorded a port, but its process is not visible from here; set AKAPEN_PORT to reach it',
+    );
   try {
     if (port !== null) {
       const res = await fetch(

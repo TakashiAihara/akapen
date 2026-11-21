@@ -660,7 +660,8 @@ if (positional[0] === 'restore') {
   for (const d of restored) console.log(`${d.url}  ${d.file}`);
   for (const r of refused) console.error(`akapen: not restored: ${r.file}: ${r.reason}`);
   if (restored.length === 0 && refused.length === 0) console.log('nothing to restore for that session');
-  process.exit(refused.length > 0 ? 1 : 0);
+  // A file deleted since is only reported: a resume hook would otherwise fail for good on it.
+  process.exit(refused.some((r) => !r.reason.startsWith('no such file')) ? 1 : 0);
 }
 
 /** Unregister a document by its path, or by its id or a unique prefix of it. Its comments stay. */
