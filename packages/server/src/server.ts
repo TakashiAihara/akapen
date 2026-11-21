@@ -111,6 +111,9 @@ function isLoopback(host: string): boolean {
 /** The cookie the browser is handed once, so nothing after the first visit carries a token. */
 const COOKIE = 'akapen_token';
 
+/** How many times, 200 ms apart, to look for a file renamed away before giving up on it. */
+const REARM_TRIES = 25;
+
 /** Under the 10-second idle timeout set on the server, so even a tick late by one interval lands in time. */
 const HEARTBEAT_MS = 3_000;
 
@@ -319,15 +322,21 @@ export function openDocument(file: string, opts: DocumentOptions, currentSecret:
    * enough to hide that; one serving for days is not, so it watches the path afresh.
    */
   let rearmTimer: ReturnType<typeof setTimeout> | null = null;
+  let rearmTries = 0;
   const rearm = (): void => {
     rearmTimer = null;
     if (disposed) return;
     watcher.close();
     try {
       watcher = watch(file, onChange);
+      rearmTries = 0;
+      // What changed while nothing was watching has to be read now: no event will say so.
+      onChange('change');
     } catch {
-      // Not back yet: the rename has not landed. Look again shortly.
-      rearmTimer = setTimeout(rearm, 200);
+      // Not back yet: the rename has not landed. Look again shortly, for a few seconds. A
+      // file deleted for good is left unwatched; the next save by rename is not seen until
+      // the document is opened again.
+      if (++rearmTries < REARM_TRIES) rearmTimer = setTimeout(rearm, 200);
     }
   };
   const onChange = (event: string): void => {
@@ -1246,7 +1255,7 @@ export function startDaemon(opts: DaemonOptions) {
   });
 
   // Without the slash, the page's relative requests would resolve one level up.
-  app.get('/d/:id', (c) => c.redirect(`/d/${encodeURIComponent(c.req.param('id'))}/`, 301));
+  app.get('/d/:id', (c) => c.redirect(`${pathOf(c.req.param('id'))}${new URL(c.req.url).search}`, 301));
   app.all('/d/:id/*', (c) => {
     const id = c.req.param('id');
     const doc = documentFor(id);

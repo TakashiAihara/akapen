@@ -158,6 +158,68 @@ describe('akapen serve', () => {
     const res = await authed(url.slice(0, -1), { redirect: 'manual' });
     expect(res.status).toBe(301);
     expect(res.headers.get('location')).toBe(new URL(url).pathname);
+    const withQuery = await authed(`${url.slice(0, -1)}?round=1`, { redirect: 'manual' });
+    expect(withQuery.headers.get('location')).toBe(`${new URL(url).pathname}?round=1`);
+  });
+
+  it('says the server is running when nothing is registered', async () => {
+    const d = await serve();
+    const r = cli(d, ['list']);
+    expect(r.out).toContain(`akapen serve is running on port ${d.port}; nothing is registered`);
+  });
+
+  it('listens on 4300 or AKAPEN_PORT rather than the port a crashed server recorded', async () => {
+    mkdirSync(home, { recursive: true });
+    writeFileSync(join(home, 'serve.json'), JSON.stringify({ port: 1, pid: 1 }));
+    const proc = spawn('bun', ['run', CLI, 'serve'], {
+      env: env({ AKAPEN_PORT: '0' }),
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const exited = new Promise<void>((done) => proc.on('exit', () => done()));
+    try {
+      let out = '';
+      await until(() => {
+        out += proc.stdout.read()?.toString() ?? '';
+        return /url\s+http/.test(out);
+      }, 15_000);
+      expect(out).not.toMatch(/:1\//);
+    } finally {
+      proc.kill();
+      await exited;
+    }
+  });
+
+  it('refuses a second server whose first runs on another token', async () => {
+    await serve();
+    const r = spawnSync('bun', ['run', CLI, 'serve', '-p', '0'], {
+      env: env({ AKAPEN_TOKEN: 'some-other-token' }),
+      encoding: 'utf8',
+      timeout: 15_000,
+    });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('already running');
+  });
+
+  it('tells the page about a file deleted and written back later', async () => {
+    const d = await serve();
+    const file = note('note.md');
+    const url = urlIn(cli(d, ['add', file]).out);
+    const ctl = new AbortController();
+    const frames: string[] = [];
+    void authed(`${url}events`, { signal: ctl.signal }).then(async (res) => {
+      const dec = new TextDecoder();
+      try {
+        for await (const chunk of res.body!) frames.push(dec.decode(chunk));
+      } catch {
+        /* aborted */
+      }
+    });
+    await until(() => frames.length > 0);
+    rmSync(file);
+    await new Promise((r) => setTimeout(r, 500));
+    writeFileSync(file, '# A heading\n\nwritten back\n');
+    await until(() => /"changes":[1-9]/.test(frames.join('')));
+    ctl.abort();
   });
 
   it('stops serving a registered document whose file is gone, and lists it as missing', async () => {
@@ -205,6 +267,8 @@ describe('akapen serve', () => {
     expect((await authed(`${url}api/status`)).status).toBe(200);
     rmSync(file);
     expect((await comment(url, 'while it was gone')).status).toBe(200);
+    const stored = (await (await authed(`${url}api/comments`)).json()) as { body: string }[];
+    expect(stored.map((c) => c.body)).toEqual(['while it was gone']);
   });
 
   it('refuses a second server on the same home while the first answers', async () => {

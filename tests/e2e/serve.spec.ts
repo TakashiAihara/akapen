@@ -97,6 +97,7 @@ test('reads, comments and follows edits on each document under its own path', as
   await row.locator('.add').click();
   await page.locator('#rail .bubble.draft textarea').fill('written on A');
   await page.locator('#rail .bubble.draft button.primary').click();
+  await expect(page.locator('#rail .bubble.draft')).toHaveCount(0);
   await expect(page.locator('#railAnchored .bubble')).toHaveCount(1);
   const stored = (await (await request.get(`${urlA}api/comments`, { headers: AUTH })).json()) as {
     body: string;

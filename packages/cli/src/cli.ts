@@ -212,7 +212,8 @@ if (positional[0] === 'list') {
   // stores a secret as a side effect is a surprise. An instance running on a token this
   // caller does not have simply does not answer, and is reported as not answering.
   // The documents `akapen serve` holds, listed beside the one-document servers (#305).
-  const documents = (await daemonDocuments()) ?? [];
+  const answered = await daemonDocuments();
+  const documents = answered ?? [];
   const all = await liveInstances({ token: currentToken() });
   /**
    * Only what one session started.
@@ -302,13 +303,15 @@ if (positional[0] === 'list') {
     // Why it did not answer is not known here, so no cause is named.
     const registered = args.session === undefined ? readInstances().length : 0;
     console.log(
-      args.session === undefined
-        ? registered === 0
-          ? 'no akapen is running'
-          : `no akapen answered (${registered} registered)`
-        : session === null
-          ? `no akapen running here was started by a session matching ${JSON.stringify(args.session)}`
-          : "that session's akapen did not answer",
+      args.session === undefined && answered !== null && registered === 0
+        ? `akapen serve is running on port ${daemonPort()}; nothing is registered`
+        : args.session === undefined
+          ? registered === 0
+            ? 'no akapen is running'
+            : `no akapen answered (${registered} registered)`
+          : session === null
+            ? `no akapen running here was started by a session matching ${JSON.stringify(args.session)}`
+            : "that session's akapen did not answer",
     );
     process.exit(0);
   }
@@ -638,8 +641,13 @@ if (positional[0] === 'serve') {
       headers: token === null ? {} : { authorization: `Bearer ${token}` },
       signal: AbortSignal.timeout(2_000),
     }).catch(() => null);
-    // Only a listing counts: whatever else took the port after a crash is not a server here.
-    if (answer?.ok === true && Array.isArray(await answer.json().catch(() => null))) {
+    // A listing, or akapen's own refusal (a server on another token). Whatever else took the
+    // port after a crash is not a server here.
+    const text = answer === null ? '' : await answer.text().catch(() => '');
+    if (
+      (answer?.ok === true && text.startsWith('[')) ||
+      (answer?.status === 401 && text.startsWith('unauthenticated. open the URL akapen printed'))
+    ) {
       fail(`akapen serve is already running for ${akapenHome()} on port ${runningOn}`);
     }
   }
@@ -648,10 +656,13 @@ if (positional[0] === 'serve') {
   let port: number;
   try {
     host = resolveHost(args.host);
-    port = daemonPort();
+    // Not the recorded port: that is how clients find a running server, and one left behind
+    // by a crash would move this server off the port its URLs were handed out on.
+    port = resolvePort(args.port ?? (process.env['AKAPEN_PORT'] || undefined), 4300);
     // The CLI reaches the server on 127.0.0.1, and only loopback may manage it, so it has to
     // listen there: loopback itself, or every interface.
-    if (!['127.0.0.1', '::1', 'localhost', '0.0.0.0', '::'].includes(host)) {
+    // Not `::1` or `localhost`: the CLI connects to 127.0.0.1, which neither is sure to answer on.
+    if (!['127.0.0.1', '0.0.0.0', '::'].includes(host)) {
       throw new UsageError(
         `serve: --host ${host} would leave the CLI on this machine unable to reach it; use 0.0.0.0 or 127.0.0.1`,
       );
