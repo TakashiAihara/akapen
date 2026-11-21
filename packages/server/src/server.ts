@@ -1177,6 +1177,8 @@ export function startDaemon(opts: DaemonOptions & { manageToken: string }) {
   const gone = new Map<string, ReturnType<typeof setTimeout>>();
   /** Bumped by restore: a stream opened before it cannot start the removal of the resumed session. */
   const generation = new Map<string, number>();
+  /** How to end each session stream, so restore can close the ones it retires. */
+  const sessionStreamEnds = new WeakMap<(frame: string) => void, () => void>();
   let stopping = false;
   const notifySession = (session: string | undefined): void => {
     if (session === undefined) return;
@@ -1395,6 +1397,13 @@ export function startDaemon(opts: DaemonOptions & { manageToken: string }) {
           }
         };
         set.add(send);
+        sessionStreamEnds.set(send, () => {
+          try {
+            controller.close();
+          } catch {
+            /* Already closed by the reader. */
+          }
+        });
         send(': connected\n\n');
       },
       cancel: drop,
@@ -1419,6 +1428,9 @@ export function startDaemon(opts: DaemonOptions & { manageToken: string }) {
     generation.set(session, (generation.get(session) ?? 0) + 1);
     // Streams from before keep their own set: one opened after starts a fresh one, so an old
     // stream that is still open cannot hold back the removal when the new one closes.
+    // Closed rather than left open: a channel still connected reconnects into the fresh set,
+    // where comments wake it again.
+    for (const send of streams.get(session) ?? []) sessionStreamEnds.get(send)?.();
     streams.delete(session);
     for (const reg of registrationsOf(session)) {
       try {

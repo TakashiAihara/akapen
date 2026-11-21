@@ -925,6 +925,24 @@ describe('sessions on akapen serve', () => {
     expect((await authed(`${url}api/status`)).status).toBe(200);
   });
 
+  it('closes a stream that is still open when its session is restored, so its channel reconnects', async () => {
+    const d = await serve();
+    cli(d, ['add', note('a.md')], { CLAUDE_CODE_SESSION_ID: 'session-a' });
+    const ctl = new AbortController();
+    const res = await managed(`${d.base}/api/sessions/session-a/events`, { signal: ctl.signal });
+    const reader = res.body!.getReader();
+    await reader.read();
+    expect(cli(d, ['restore', 'session-a']).code).toBe(0);
+    const end = await Promise.race([
+      (async () => {
+        for (;;) if ((await reader.read()).done) return 'closed';
+      })(),
+      new Promise((r) => setTimeout(() => r('open'), 3_000)),
+    ]);
+    ctl.abort();
+    expect(end).toBe('closed');
+  });
+
   it('still unregisters a resumed session when its new channel goes, whatever its old stream does', async () => {
     const d = await serve([], { AKAPEN_DISCONNECT_MS: '300' });
     const url = urlIn(cli(d, ['add', note('a.md')], { CLAUDE_CODE_SESSION_ID: 'session-a' }).out);
