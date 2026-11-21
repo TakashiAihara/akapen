@@ -10,6 +10,7 @@ import { buildDoc } from '@akapen/core/blocks';
 import {
   documentId,
   readDocuments,
+  forgetRegistration,
   registrationsOf,
   servePath,
   writeDocuments,
@@ -1222,6 +1223,7 @@ export function startDaemon(opts: DaemonOptions & { manageToken: string }) {
     file: string,
     session: string | undefined,
     root: string | undefined,
+    since?: string,
   ): DocumentEntry | { refused: string; status: 400 | 409 } => {
     if (!statSync(file, { throwIfNoEntry: false })?.isFile()) return bad(`no such file: ${file}`);
     if (root !== undefined) {
@@ -1247,14 +1249,21 @@ export function startDaemon(opts: DaemonOptions & { manageToken: string }) {
       file,
       ...(owner === undefined ? {} : { session: owner }),
       ...(kept === undefined ? {} : { root: kept }),
-      addedAt: prev?.addedAt ?? new Date().toISOString(),
+      // A restored registration keeps when it was first made: the channel takes a comment
+      // written since then as new, including one written while the session was away.
+      addedAt: prev?.addedAt ?? since ?? new Date().toISOString(),
     };
     // Written before anything is closed, so a write that fails leaves the document serving.
     save([...entries.filter((e) => e.id !== id), entry]);
     // A root that changed takes effect by closing the open copy: the next request opens it again with the new root.
     if (prev?.root !== entry.root) close(id);
     if (owner !== undefined)
-      writeRegistration({ file, session: owner, ...(kept === undefined ? {} : { root: kept }) });
+      writeRegistration({
+        file,
+        session: owner,
+        addedAt: entry.addedAt,
+        ...(kept === undefined ? {} : { root: kept }),
+      });
     return entry;
   };
 
@@ -1273,9 +1282,12 @@ export function startDaemon(opts: DaemonOptions & { manageToken: string }) {
 
   app.delete('/api/documents/:id', (c) => {
     const id = c.req.param('id');
-    if (!entries.some((e) => e.id === id)) return c.text('not registered', 404);
+    const entry = entries.find((e) => e.id === id);
+    if (entry === undefined) return c.text('not registered', 404);
     save(entries.filter((e) => e.id !== id));
     close(id);
+    // Removed on purpose: a resume of its session does not bring it back.
+    forgetRegistration(entry.file);
     return c.json({ removed: [id] });
   });
 
@@ -1343,10 +1355,15 @@ export function startDaemon(opts: DaemonOptions & { manageToken: string }) {
     clearTimeout(gone.get(session));
     gone.delete(session);
     let send!: (frame: string) => void;
+    let dropped = false;
     const drop = () => {
+      // A failed send and the stream's cancel both land here for one disconnect.
+      if (dropped) return;
+      dropped = true;
       set.delete(send);
       if (set.size > 0) return;
       streams.delete(session);
+      clearTimeout(gone.get(session));
       gone.set(
         session,
         setTimeout(() => {
@@ -1383,8 +1400,11 @@ export function startDaemon(opts: DaemonOptions & { manageToken: string }) {
     const session = c.req.param('session');
     const restored: ReturnType<typeof describe>[] = [];
     const refused: { file: string; reason: string }[] = [];
+    // The session is back: a removal its old channel's disconnect started no longer applies.
+    clearTimeout(gone.get(session));
+    gone.delete(session);
     for (const reg of registrationsOf(session)) {
-      const added = register(reg.file, session, reg.root);
+      const added = register(reg.file, session, reg.root, reg.addedAt);
       if ('refused' in added) refused.push({ file: reg.file, reason: added.refused });
       else restored.push(describe(added));
     }

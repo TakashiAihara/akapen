@@ -5,7 +5,7 @@
  * server's API, so there is a single writer and no lock. docs/design/multi-document-server.md
  * has the decisions behind it.
  */
-import { mkdirSync, readFileSync, readdirSync } from 'node:fs';
+import { mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 
 import { akapenHome, storeDir, writeAtomic } from './store.ts';
@@ -136,13 +136,18 @@ export function writeServePort(port: number): void {
  * comments, which outlive any registration, rather than in `documents.json`, which only
  * holds what is being served.
  */
-export type Registration = { file: string; session: string; root?: string };
+export type Registration = { file: string; session: string; root?: string; addedAt?: string };
 
 const registrationFile = (file: string): string => join(storeDir(resolve(file)), 'registration.json');
 
 export function writeRegistration(reg: Registration): void {
   mkdirSync(storeDir(reg.file), { recursive: true });
   writeAtomic(registrationFile(reg.file), `${JSON.stringify(reg, null, 2)}\n`);
+}
+
+/** Forget who registered a document, so `akapen restore` leaves it out. */
+export function forgetRegistration(file: string): void {
+  rmSync(registrationFile(file), { force: true });
 }
 
 /** Every document whose last registration was made by `session`. A store that cannot be read is skipped. */

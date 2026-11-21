@@ -460,13 +460,20 @@ export async function runChannel(): Promise<void> {
       console.error(`akapen: channel pass failed: ${err instanceof Error ? err.message : String(err)}`);
     }
     // Woken early by `akapen serve` when a comment lands on one of this session's documents.
-    await new Promise<void>((r) => {
-      const timer = setTimeout(r, INTERVAL_MS);
-      wake = () => {
-        clearTimeout(timer);
-        r();
-      };
-    });
+    // A wake that came during the pass is kept, so the next pass starts at once.
+    if (!wokenDuringPass) {
+      await new Promise<void>((r) => {
+        const timer = setTimeout(r, INTERVAL_MS);
+        wake = () => {
+          clearTimeout(timer);
+          r();
+        };
+      });
+    }
+    wokenDuringPass = false;
+    wake = () => {
+      wokenDuringPass = true;
+    };
   }
 }
 
@@ -536,7 +543,10 @@ export async function serveStore(sessionId: string): Promise<Store> {
   };
 }
 
-let wake: () => void = () => {};
+let wokenDuringPass = false;
+let wake: () => void = () => {
+  wokenDuringPass = true;
+};
 
 /**
  * Hold this session's stream on `akapen serve` open for the life of the process, and

@@ -786,6 +786,28 @@ describe('sessions on akapen serve', () => {
     expect((await authed(`${url}api/status`)).status).toBe(200);
   });
 
+  it('does not bring back on resume a document removed by hand, and keeps when the others were added', async () => {
+    const d = await serve();
+    const kept = note('kept.md');
+    const url = urlIn(cli(d, ['add', kept], { CLAUDE_CODE_SESSION_ID: 'session-a' }).out);
+    const dropped = note('dropped.md');
+    cli(d, ['add', dropped], { CLAUDE_CODE_SESSION_ID: 'session-a' });
+    const addedAt = async () =>
+      (
+        (await (await managed(`${d.base}/api/documents`)).json()) as { file: string; added_at: string }[]
+      ).find((e) => e.file === kept)?.added_at;
+    const before = await addedAt();
+
+    expect(cli(d, ['remove', dropped]).code).toBe(0);
+    cli(d, ['remove', '--session', 'session-a']);
+    await new Promise((r) => setTimeout(r, 20));
+    const restored = cli(d, ['restore', 'session-a']);
+    expect(restored.code, restored.err).toBe(0);
+    expect(restored.out).toContain(url);
+    expect(restored.out).not.toContain(dropped);
+    expect(await addedAt()).toBe(before);
+  });
+
   it('says which documents it could not restore, and restores the rest', async () => {
     const d = await serve();
     const url = urlIn(cli(d, ['add', note('kept.md')], { CLAUDE_CODE_SESSION_ID: 'session-a' }).out);
@@ -950,6 +972,7 @@ describe('sessions on akapen serve', () => {
   it('answers a session id that is not one with 400, not a server error', async () => {
     const d = await serve();
     expect((await managed(`${d.base}/api/sessions/%E0%A4%A/documents`)).status).toBe(400);
+    expect((await managed(`${d.base}/api/sessions/not%20one/documents`)).status).toBe(400);
   });
 
   it.skipIf(lanAddress === undefined)('keeps the session streams to this machine', async () => {
