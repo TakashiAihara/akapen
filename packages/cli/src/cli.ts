@@ -479,7 +479,12 @@ async function reachInstance(file: string): Promise<{
       console.error(`akapen: ${done}${path} answered ${res.status}: ${await res.text()}`);
       process.exit(1);
     }
-    return res.json();
+    return res.json().catch(() => {
+      console.error(
+        `akapen: ${done}${path} answered ${res.status} with a body that is not JSON; check ${check}`,
+      );
+      process.exit(1);
+    });
   };
   return { post, session };
 }
@@ -565,8 +570,8 @@ if (positional[0] === 'reply' || positional[0] === 'resolve') {
       (
         (await post(`/api/comments/${encodeURIComponent(id)}/resolve`, done, '`akapen comments`')) as {
           comment?: { resolved?: boolean };
-        }
-      ).comment?.resolved;
+        } | null
+      )?.comment?.resolved;
     let state = await toggle(verb === 'reply' ? 'replied, but ' : '');
     // A toggle: someone else resolved it since the store was read, so this reopened it.
     // Toggled back once. A third resolve landing in between is undone by it, and shows as open.
@@ -580,8 +585,11 @@ if (positional[0] === 'reply' || positional[0] === 'resolve') {
     }
     // Not toggled again on an answer of another shape: a second call could just as well reopen it.
     if (state !== true) {
+      const what = raced
+        ? `reopened ${id}, which someone had resolved meanwhile, and the toggle back`
+        : `the resolve of ${id}`;
       console.error(
-        `akapen: the resolve of ${id} answered without its state; check \`akapen comments\` before resolving again`,
+        `akapen: ${what} answered without its state; check \`akapen comments\` before resolving again`,
       );
       process.exit(1);
     }

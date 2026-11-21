@@ -389,6 +389,9 @@ describe('a taken port', () => {
   }, 30_000);
 });
 
+/** A 200 answer with `body` as JSON, for the fake akapen in the resolve tests. */
+const json = (body: unknown): [number, string] => [200, JSON.stringify(body)];
+
 // #130: the other half of `akapen comments`, through the akapen serving the file.
 describe('akapen reply and resolve', () => {
   const SESSION = 'fc40ec79-b629-4c08-9be7-721bb0d306a6';
@@ -715,10 +718,9 @@ describe('akapen reply and resolve', () => {
     });
     const { comment } = (await posted.json()) as { comment: { id: string } };
 
-    // Answers status as the real one does, and a resolve with the state set below.
+    // Answers status as the real one does, and the nth resolve (from 1) as `answer` says.
     let resolves = 0;
-    let answer: { id: string; resolved?: boolean } = { id: comment.id };
-    let failSecond = false;
+    let answer: (n: number) => [number, string] = () => json({ comment: { id: comment.id } });
     const fake = createHttpServer((req, res) => {
       if (req.url === '/api/status') {
         void fetch(`${url}/api/status`)
@@ -728,12 +730,8 @@ describe('akapen reply and resolve', () => {
       }
       // Never answered, to see the CLI give up rather than wait on it.
       if (req.url?.endsWith('/replies')) return;
-      if (req.url?.endsWith('/resolve')) resolves++;
-      if (req.url?.endsWith('/resolve') && failSecond && resolves === 2) {
-        res.writeHead(500).end('broken');
-        return;
-      }
-      res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ comment: answer }));
+      const [status, body] = answer(++resolves);
+      res.writeHead(status, { 'content-type': 'application/json' }).end(body);
     });
     await new Promise<void>((r) => fake.listen(0, '127.0.0.1', r));
     const fakePort = (fake.address() as { port: number }).port;
@@ -759,8 +757,32 @@ describe('akapen reply and resolve', () => {
       expect(odd.stderr).toContain(`the resolve of ${comment.id} answered without its state`);
       expect(resolves).toBe(1);
 
+      // A null and a body that is not JSON end the same way, rather than as a stack trace.
+      for (const [body, said] of [
+        ['null', `the resolve of ${comment.id} answered without its state`],
+        ['<html>', 'answered 200 with a body that is not JSON'],
+      ] as const) {
+        answer = () => [200, body];
+        resolves = 0;
+        const bad = await run(['resolve', file, comment.id]);
+        expect(bad.status).toBe(1);
+        expect(bad.stderr).toContain(said);
+        expect(bad.stderr).not.toMatch(/TypeError|SyntaxError|\n\s+at /);
+        expect(resolves).toBe(1);
+      }
+
+      // Reopened, and the toggle back answers with no state: the reopening is still said.
+      answer = (n) => json({ comment: n === 1 ? { id: comment.id, resolved: false } : { id: comment.id } });
+      resolves = 0;
+      const blank = await run(['resolve', file, comment.id]);
+      expect(blank.status).toBe(1);
+      expect(blank.stderr).toContain(
+        `reopened ${comment.id}, which someone had resolved meanwhile, and the toggle back answered without its state`,
+      );
+      expect(resolves).toBe(2);
+
       // Open after the call back too: toggled back once, not until it comes back resolved.
-      answer = { id: comment.id, resolved: false };
+      answer = () => json({ comment: { id: comment.id, resolved: false } });
       resolves = 0;
       const stuck = await run(['resolve', file, comment.id]);
       expect(stuck.status).toBe(1);
@@ -768,7 +790,7 @@ describe('akapen reply and resolve', () => {
       expect(resolves).toBe(2);
 
       // The toggle back fails: what is said is that this call left it open.
-      failSecond = true;
+      answer = (n) => (n === 1 ? json({ comment: { id: comment.id, resolved: false } }) : [500, 'broken']);
       resolves = 0;
       const broken = await run(['resolve', file, comment.id]);
       expect(broken.status).toBe(1);
@@ -776,7 +798,6 @@ describe('akapen reply and resolve', () => {
         `reopened ${comment.id}, which someone had resolved meanwhile, and the toggle back /api/comments/`,
       );
       expect(resolves).toBe(2);
-      failSecond = false;
 
       const began = Date.now();
       const silent = await run(['reply', file, comment.id, 'into silence']);
