@@ -598,9 +598,13 @@ describe('akapen serve', () => {
         stdio: ['ignore', 'pipe', 'ignore'],
       });
       const exited = new Promise<void>((done) => second.on('exit', () => done()));
-      await new Promise<void>((done) =>
-        second.stdout.on('data', (c: Buffer) => c.toString().includes('url') && done()),
-      );
+      // Started, or refused as "already running": either way the probe has happened.
+      await Promise.race([
+        exited,
+        new Promise<void>((done) =>
+          second.stdout.on('data', (c: Buffer) => c.toString().includes('url') && done()),
+        ),
+      ]);
       second.kill();
       await exited;
       expect(seen).toEqual([]);
@@ -616,6 +620,9 @@ describe('akapen serve', () => {
     const r = cli(d, ['list']);
     expect(r.out).toContain('refused this command');
     expect(r.out).not.toContain('was not sent');
+    const removed = cli(d, ['remove', 'anything']);
+    expect(removed.code).toBe(1);
+    expect(removed.err).toContain('refused this command');
     const second = spawnSync('bun', ['run', CLI, 'serve', '-p', '0'], {
       env: { ...env(), AKAPEN_PORT: '', AKAPEN_MANAGE_TOKEN: 'not-the-running-one' },
       encoding: 'utf8',
