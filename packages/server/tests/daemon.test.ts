@@ -51,6 +51,8 @@ const env = (extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv => ({
   CLAUDE_CODE_SESSION_ID: '',
   AKAPEN_HOME: home,
   AKAPEN_TOKEN: TOKEN,
+  // Cleared, so a value exported by whoever runs the suite does not stand in for the file.
+  AKAPEN_MANAGE_TOKEN: '',
   ...extra,
 });
 
@@ -599,14 +601,24 @@ describe('akapen serve', () => {
       });
       const exited = new Promise<void>((done) => second.on('exit', () => done()));
       // Started, or refused as "already running": either way the probe has happened.
-      await Promise.race([
-        exited,
-        new Promise<void>((done) =>
-          second.stdout.on('data', (c: Buffer) => c.toString().includes('url') && done()),
-        ),
-      ]);
-      second.kill();
-      await exited;
+      let printed = '';
+      try {
+        await Promise.race([
+          exited,
+          new Promise<void>((done) =>
+            second.stdout.on('data', (c: Buffer) => {
+              printed += c.toString();
+              if (/url\s+http/.test(printed)) done();
+            }),
+          ),
+          new Promise<void>((_, fail) =>
+            setTimeout(() => fail(new Error('serve neither started nor refused')), 15_000),
+          ),
+        ]);
+      } finally {
+        second.kill();
+        await exited;
+      }
       expect(seen).toEqual([]);
     } finally {
       await new Promise<void>((done) => listener.close(() => done()));
