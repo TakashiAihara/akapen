@@ -503,11 +503,35 @@ describe('collect', () => {
     expect(events.map((e) => e.meta['comment_id'])).toEqual(['a1', 'b1', 'b2', 'a2']);
   });
 
-  it('forgets a document whose akapen has stopped', () => {
+  it("does not send a document's comments again when it is missing from a pass and comes back", () => {
     const seen = new Map<string, Set<string>>();
-    collect('S1', seen, store(['/n/a.md'], { '/n/a.md': [comment('c1')] }));
-    collect('S1', seen, store([], {}));
-    expect([...seen.keys()]).toEqual([]);
+    const first = collect(
+      'S1',
+      seen,
+      store(['/n/a.md'], { '/n/a.md': [comment('c1', { createdAt: '2026-09-18T00:01:00.000Z' })] }),
+    );
+    expect(first).toHaveLength(1);
+    for (const e of first) markSent(seen, e);
+    // Saved by rename, or a server that did not answer this once.
+    expect(collect('S1', seen, store([], {}))).toEqual([]);
+    expect(
+      collect(
+        'S1',
+        seen,
+        store(['/n/a.md'], { '/n/a.md': [comment('c1', { createdAt: '2026-09-18T00:01:00.000Z' })] }),
+      ),
+    ).toEqual([]);
+    const later = collect(
+      'S1',
+      seen,
+      store(['/n/a.md'], {
+        '/n/a.md': [
+          comment('c1', { createdAt: '2026-09-18T00:01:00.000Z' }),
+          comment('c2', { createdAt: '2026-09-18T00:02:00.000Z' }),
+        ],
+      }),
+    );
+    expect(later.map((e) => e.meta['comment_id'])).toEqual(['c2']);
   });
 
   it('keeps what it knew when a store cannot be read, rather than seeding over it', () => {

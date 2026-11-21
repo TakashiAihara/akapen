@@ -275,7 +275,9 @@ export function collect(
       out.push(e);
     }
   }
-  seen.clear();
+  // A file missing from this pass is kept, not forgotten: one saved by rename, or a server
+  // that did not answer once, comes back on the next pass, and a forgotten file would be
+  // seeded again and send its comments a second time.
   for (const [file, ids] of next) seen.set(file, ids);
   return out.toSorted(byWritten).map((e) => e.event);
 }
