@@ -600,20 +600,20 @@ describe('akapen serve', () => {
         stdio: ['ignore', 'pipe', 'ignore'],
       });
       const exited = new Promise<void>((done) => second.on('exit', () => done()));
-      // Started, or refused as "already running": either way the probe has happened.
+      // The recorded process is gone, so this serve has to start; exiting is a failure.
       let printed = '';
       try {
         await Promise.race([
-          exited,
+          exited.then(() => {
+            throw new Error(`serve exited instead of starting:\n${printed}`);
+          }),
           new Promise<void>((done) =>
             second.stdout.on('data', (c: Buffer) => {
               printed += c.toString();
               if (/url\s+http/.test(printed)) done();
             }),
           ),
-          new Promise<void>((_, fail) =>
-            setTimeout(() => fail(new Error('serve neither started nor refused')), 15_000),
-          ),
+          new Promise<void>((_, fail) => setTimeout(() => fail(new Error('serve did not start')), 15_000)),
         ]);
       } finally {
         second.kill();
