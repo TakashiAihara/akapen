@@ -5,7 +5,7 @@
  * server's API, so there is a single writer and no lock. docs/design/multi-document-server.md
  * has the decisions behind it.
  */
-import { mkdirSync, readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 
 import { akapenHome, storeDir, writeAtomic } from './store.ts';
@@ -96,7 +96,86 @@ export function readServeRecord(): { port: number; pid: number | null } | null {
   }
 }
 
+/**
+ * Whether the server this home recorded is still running. A record a crash left behind
+ * names a port anyone may hold now. A pid answering EPERM belongs to another user, which a
+ * server of this home never is, so it counts as gone.
+ */
+export function recordedServerAlive(): boolean {
+  return liveServeRecord() !== null;
+}
+
+/** The recorded port, read once with the pid it was checked against. */
+function liveServeRecord(): number | null {
+  const rec = readServeRecord();
+  if (rec === null || rec.pid === null) return null;
+  try {
+    process.kill(rec.pid, 0);
+    return rec.port;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The port of `akapen serve` that this home may hand its management secret to: one named by
+ * `$AKAPEN_PORT`, else one its running server recorded. Never the bare default, which
+ * another user on the machine could be listening on.
+ */
+export function chosenServePort(): number | null {
+  // Decimal digits only, as the CLI reads it: `1e3` is not a port.
+  const given = process.env['AKAPEN_PORT'] ?? '';
+  const asked = /^\d{1,5}$/.test(given) ? Number(given) : Number.NaN;
+  if (asked > 0 && asked <= 65_535) return asked;
+  return liveServeRecord();
+}
+
 export function writeServePort(port: number): void {
   mkdirSync(akapenHome(), { recursive: true });
   writeAtomic(servePath(), `${JSON.stringify({ port, pid: process.pid })}\n`);
+}
+
+/**
+ * Who registered a document last, kept in its store (#305).
+ *
+ * The registration itself is removed when the session ends; this is what is left for
+ * `akapen restore` to find when the same session is resumed. It lives beside the
+ * comments, which outlive any registration, rather than in `documents.json`, which only
+ * holds what is being served.
+ */
+export type Registration = { file: string; session: string; root?: string; addedAt?: string };
+
+const registrationFile = (file: string): string => join(storeDir(resolve(file)), 'registration.json');
+
+export function writeRegistration(reg: Registration): void {
+  mkdirSync(storeDir(reg.file), { recursive: true });
+  writeAtomic(registrationFile(reg.file), `${JSON.stringify(reg, null, 2)}\n`);
+}
+
+/** Forget who registered a document, so `akapen restore` leaves it out. */
+export function forgetRegistration(file: string): void {
+  rmSync(registrationFile(file), { force: true });
+}
+
+/** Every document whose last registration was made by `session`. A store that cannot be read is skipped. */
+export function registrationsOf(session: string): Registration[] {
+  const root = join(akapenHome(), 'reviews');
+  let names: string[];
+  try {
+    names = readdirSync(root);
+  } catch (err) {
+    // No store yet is nothing to restore; one that cannot be read is a failed restore.
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw err;
+  }
+  const out: Registration[] = [];
+  for (const name of names) {
+    try {
+      const reg = JSON.parse(readFileSync(join(root, name, 'registration.json'), 'utf8')) as Registration;
+      if (reg.session === session && typeof reg.file === 'string') out.push(reg);
+    } catch {
+      /* No registration recorded for this store, or one that cannot be read. */
+    }
+  }
+  return out;
 }

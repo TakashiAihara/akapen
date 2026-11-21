@@ -135,7 +135,21 @@ akapen remove notes/plan.md          # stops serving it; its comments stay
 - `add` does not start a server. With none answering it says so and exits 1
 - Registrations are kept in `~/.akapen/documents.json`, which only the server writes. Registering and listing take a second secret, `~/.akapen/manage-token` (created by the first `serve`, readable only by its user), on top of coming from this machine: whoever holds the token can read what is registered, and registering would let them read any file. A request relayed by a proxy in front does not have that secret. A server or CLI that does not share the home (a container) is handed the same value in `AKAPEN_MANAGE_TOKEN`, and the CLI the server's port in `AKAPEN_PORT`. The CLI sends that secret only to a port chosen that way or recorded by a server that is still running, never to a bare 4300 another user could be listening on (the token goes there as before)
 - `--root <dir>` belongs to `add`, per document. `--css`, `--keymap`, `--author` and the authentication options belong to `serve`
-- `reply`, `resolve` and `rounds cut` find a registered document through the server, as they find a one-document server
+- `reply`, `resolve`, `rounds cut` and `comments` find a registered document through the server, as they find a one-document server
+
+A registration belongs to the Claude Code session that made it (`CLAUDE_CODE_SESSION_ID`), and lasts as long as the session:
+
+- `akapen channel` connects to the server, so a comment reaches the session as it is written. A session whose channel has been gone for 30 seconds is unregistered; the 30 seconds start when the last channel connected since its last restore disconnects, so a session that never loaded the channel keeps its documents until its SessionEnd hook removes them
+- The SessionEnd hook unregisters the session's documents, and the SessionStart hook registers them again when the session is resumed. The URLs come back as they were, since they follow from the paths. A hook is handed the session id as `session_id` in the JSON on its stdin:
+
+```json
+{
+  "hooks": {
+    "SessionEnd": [{ "hooks": [{ "type": "command", "command": "akapen remove --session \"$(jq -r .session_id)\"" }] }],
+    "SessionStart": [{ "matcher": "resume", "hooks": [{ "type": "command", "command": "akapen restore \"$(jq -r .session_id)\"" }] }]
+  }
+}
+```
 
 ### Pushing comments into a Claude Code session
 
@@ -151,7 +165,7 @@ Register it, and start the session with the flag that admits it. Channels are a 
 claude --dangerously-load-development-channels server:akapen
 ```
 
-It reports only the documents that session started — `CLAUDE_CODE_SESSION_ID` is stamped on an instance when it starts, and the same id reaches the channel — so a host running several sessions does not tell all of them about each comment. When the channel first sees a document, what was written on it before its akapen started is not reported: that backlog is what `akapen comments` already hands over, and pushing it would bury whatever is new. What was written after the start is pushed, so a comment typed in the first seconds, or while the channel was not running, still arrives. A channel that restarts (a resumed session, a reconnect), or sees a document's akapen leave the registry and come back, does not know what was delivered before. On a thread the session has replied on, it pushes only what was written at or after the session's latest reply; anything else written since the start arrives again. That is a guess, and it can lose a reply: one written in the few seconds before the session's answer, which the stopped channel had not delivered yet, is taken as read and not pushed. A batch arrives in the order it was written, not in line order.
+It reports only the documents that session started — `CLAUDE_CODE_SESSION_ID` is stamped on an instance when it starts, and the same id reaches the channel — so a host running several sessions does not tell all of them about each comment. When the channel first sees a document, what was written on it before its akapen started is not reported: that backlog is what `akapen comments` already hands over, and pushing it would bury whatever is new. What was written after the start is pushed, so a comment typed in the first seconds, or while the channel was not running, still arrives. A channel that restarts (a resumed session, a reconnect) does not know what was delivered before; one that keeps running remembers a document across a moment it is not listed, and on its return reports only what is new. On a thread the session has replied on, it pushes only what was written at or after the session's latest reply; anything else written since the start arrives again. That is a guess, and it can lose a reply: one written in the few seconds before the session's answer, which the stopped channel had not delivered yet, is taken as read and not pushed. A batch arrives in the order it was written, not in line order.
 
 For a session that loads the channel, it replaces anything that waits on `akapen comments` and wakes the session, such as `akapen-wait-comment`. Run one or the other: with both, every comment arrives twice.
 

@@ -10,8 +10,11 @@ import { buildDoc } from '@akapen/core/blocks';
 import {
   documentId,
   readDocuments,
+  forgetRegistration,
+  registrationsOf,
   servePath,
   writeDocuments,
+  writeRegistration,
   writeServePort,
   type DocumentEntry,
 } from '@akapen/core/documents';
@@ -171,6 +174,8 @@ type DocumentOptions = {
   author: string;
   /** See ServeOptions.root. */
   root?: string;
+  /** Told when a comment or a reply has been stored, so a waiting channel can look now. */
+  onWrite?: () => void;
 };
 
 /**
@@ -421,6 +426,7 @@ export function openDocument(file: string, opts: DocumentOptions, currentSecret:
     // and the next successful save persists the one that was refused.
     const next = [...(current ? comments : loadComments(file, n)), comment];
     saveComments(file, n, next);
+    opts.onWrite?.();
     if (current) comments = next;
     // Just answer. The author's own screen updates locally.
     return c.json({ comment, comments, carried: carriedOver(file) });
@@ -459,6 +465,7 @@ export function openDocument(file: string, opts: DocumentOptions, currentSecret:
     const kind = session === undefined ? 'human' : 'agent';
     const added = addReply(file, c.req.param('id'), c.req.valid('json').body, opts.author, kind, session);
     if (!added) return c.text('not found', 404);
+    opts.onWrite?.();
     if (added.comment.round === review.currentRound) comments = loadComments(file, review.currentRound);
     return c.json({ comment: added.comment, comments, carried: carriedOver(file) });
   });
@@ -531,6 +538,11 @@ export function openDocument(file: string, opts: DocumentOptions, currentSecret:
   };
 
   app.get('/api/rounds', (c) => c.json({ current: review.currentRound, rounds: review.rounds }));
+
+  /** What `akapen comments` prints: every round's unresolved comments (`?all=1`: resolved too). */
+  app.get('/api/pending', (c) =>
+    c.json({ current: review.currentRound, comments: pendingComments(file, c.req.query('all') === '1') }),
+  );
 
   /**
    * What this instance is showing. Small on purpose: it is answered on every liveness
@@ -1050,6 +1062,15 @@ export function startServer(opts: ServeOptions) {
 
 export type DaemonOptions = Omit<ServeOptions, 'file' | 'root' | 'fallBackIfTaken'>;
 
+/**
+ * How long a session's channel may be gone before its registrations are removed (#305).
+ * Long enough to ride out a channel restarting; `AKAPEN_DISCONNECT_MS` is for the tests.
+ */
+const DISCONNECT_MS = ((): number => {
+  const asked = Number(process.env['AKAPEN_DISCONNECT_MS']);
+  return Number.isInteger(asked) && asked > 0 ? asked : 30_000;
+})();
+
 const AddDocumentSchema = v.object({
   file: v.pipe(v.string(), v.minLength(1)),
   root: v.optional(v.pipe(v.string(), v.minLength(1))),
@@ -1071,6 +1092,9 @@ const fromThisMachine = (c: Context): boolean =>
 
 /** The URL path of a document. The id is a file name, which may hold `#`, `%` or a space. */
 const pathOf = (id: string): string => `/d/${encodeURIComponent(id)}/`;
+
+/** A registration refused for something wrong with what was asked. */
+const bad = (refused: string) => ({ refused, status: 400 as const });
 
 const escapeHtml = (s: string): string => s.replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
 
@@ -1105,7 +1129,12 @@ export function startDaemon(opts: DaemonOptions & { manageToken: string }) {
       if (!existsSync(entry.file)) return null;
       doc = openDocument(
         entry.file,
-        { author: opts.author, ...(entry.root === undefined ? {} : { root: entry.root }) },
+        {
+          author: opts.author,
+          ...(entry.root === undefined ? {} : { root: entry.root }),
+          // Looked up when it fires: registering again may have handed the document to another session.
+          onWrite: () => notifySession(entries.find((e) => e.id === id)?.session),
+        },
         currentSecret,
       );
       open.set(id, doc);
@@ -1143,6 +1172,31 @@ export function startDaemon(opts: DaemonOptions & { manageToken: string }) {
     entries = next;
   };
 
+  /** Each session's open channel streams, and the timer that removes its registrations once they are all gone. */
+  const streams = new Map<string, Set<(frame: string) => void>>();
+  const gone = new Map<string, ReturnType<typeof setTimeout>>();
+  /** Bumped by restore: a stream opened before it cannot start the removal of the resumed session. */
+  const generation = new Map<string, number>();
+  /** How to end each session stream, so restore can close the ones it retires. */
+  const sessionStreamEnds = new WeakMap<(frame: string) => void, () => void>();
+  let stopping = false;
+  const notifySession = (session: string | undefined): void => {
+    if (session === undefined) return;
+    for (const send of streams.get(session) ?? []) send('data: changed\n\n');
+  };
+  const heartbeat = setInterval(() => {
+    for (const set of streams.values()) for (const send of set) send(': ping\n\n');
+  }, HEARTBEAT_MS);
+
+  /** Unregister everything a session registered. Its registration records stay, for `restore`. */
+  const forget = (session: string): string[] => {
+    const removed = entries.filter((e) => e.session === session).map((e) => e.id);
+    // Written before anything is closed, so a write that fails leaves the documents serving.
+    if (removed.length > 0) save(entries.filter((e) => e.session !== session));
+    for (const id of removed) close(id);
+    return removed;
+  };
+
   /**
    * Registering a file hands out its contents, so only the CLI on this machine may do it.
    * Whoever holds the token on the LAN can read and comment on what is registered; letting
@@ -1170,26 +1224,23 @@ export function startDaemon(opts: DaemonOptions & { manageToken: string }) {
    * Register a document, or update the registration it already has. The same path always
    * gets the same id, so registering again is how a resumed session gets its URL back.
    */
-  app.post('/api/documents', vValidator('json', AddDocumentSchema), (c) => {
-    const session = c.req.header('x-akapen-session');
-    if (session !== undefined && !SESSION_ID.test(session)) return c.text('bad x-akapen-session', 400);
-    const body = c.req.valid('json');
-    const file = resolve(body.file);
-    if (!statSync(file, { throwIfNoEntry: false })?.isFile()) return c.text(`no such file: ${file}`, 400);
-    let root: string | undefined;
-    if (body.root !== undefined) {
-      root = resolve(body.root);
-      if (!statSync(root, { throwIfNoEntry: false })?.isDirectory()) {
-        return c.text(`root is not a directory: ${root}`, 400);
-      }
-      if (!isInside(realpathSync(root), realpathSync(file))) {
-        return c.text(`root does not contain the document: ${root}`, 400);
-      }
+  const register = (
+    file: string,
+    session: string | undefined,
+    root: string | undefined,
+    since?: string,
+  ): DocumentEntry | { refused: string; status: 400 | 409 } => {
+    if (!statSync(file, { throwIfNoEntry: false })?.isFile()) return bad(`no such file: ${file}`);
+    if (root !== undefined) {
+      if (!statSync(root, { throwIfNoEntry: false })?.isDirectory())
+        return bad(`root is not a directory: ${root}`);
+      if (!isInside(realpathSync(root), realpathSync(file)))
+        return bad(`root does not contain the document: ${root}`);
     }
     // A one-document akapen on the same file holds the round and comments in memory and
     // writes them back, as this server would: two holders of one store overwrite each other.
     if (readInstances({ sweep: false }).some((r) => r.file === file)) {
-      return c.text(`a one-document akapen is serving ${file}; stop it first`, 409);
+      return { refused: `a one-document akapen is serving ${file}; stop it first`, status: 409 };
     }
     const id = documentId(file);
     const prev = entries.find((e) => e.id === id);
@@ -1203,20 +1254,45 @@ export function startDaemon(opts: DaemonOptions & { manageToken: string }) {
       file,
       ...(owner === undefined ? {} : { session: owner }),
       ...(kept === undefined ? {} : { root: kept }),
-      addedAt: prev?.addedAt ?? new Date().toISOString(),
+      // A restored registration keeps when it was first made: the channel takes a comment
+      // written since then as new, including one written while the session was away.
+      addedAt: prev?.addedAt ?? since ?? new Date().toISOString(),
     };
     // Written before anything is closed, so a write that fails leaves the document serving.
     save([...entries.filter((e) => e.id !== id), entry]);
     // A root that changed takes effect by closing the open copy: the next request opens it again with the new root.
     if (prev?.root !== entry.root) close(id);
-    return c.json(describe(entry));
+    if (owner !== undefined)
+      writeRegistration({
+        file,
+        session: owner,
+        addedAt: entry.addedAt,
+        ...(kept === undefined ? {} : { root: kept }),
+      });
+    return entry;
+  };
+
+  app.post('/api/documents', vValidator('json', AddDocumentSchema), (c) => {
+    const session = c.req.header('x-akapen-session');
+    if (session !== undefined && !SESSION_ID.test(session)) return c.text('bad x-akapen-session', 400);
+    const body = c.req.valid('json');
+    const added = register(
+      resolve(body.file),
+      session,
+      body.root === undefined ? undefined : resolve(body.root),
+    );
+    if ('refused' in added) return c.text(added.refused, added.status);
+    return c.json(describe(added));
   });
 
   app.delete('/api/documents/:id', (c) => {
     const id = c.req.param('id');
-    if (!entries.some((e) => e.id === id)) return c.text('not registered', 404);
+    const entry = entries.find((e) => e.id === id);
+    if (entry === undefined) return c.text('not registered', 404);
     save(entries.filter((e) => e.id !== id));
     close(id);
+    // Removed on purpose: a resume of its session does not bring it back.
+    forgetRegistration(entry.file);
     return c.json({ removed: [id] });
   });
 
@@ -1225,10 +1301,148 @@ export function startDaemon(opts: DaemonOptions & { manageToken: string }) {
     const session = c.req.query('session');
     if (session === undefined || !SESSION_ID.test(session))
       return c.text('name a session: ?session=<id>', 400);
-    const removed = entries.filter((e) => e.session === session).map((e) => e.id);
-    if (removed.length > 0) save(entries.filter((e) => e.session !== session));
-    for (const id of removed) close(id);
-    return c.json({ removed });
+    return c.json({ removed: forget(session) });
+  });
+
+  /**
+   * A session's channel, on this machine: what it may read, and the stream that wakes it.
+   * Held to the same rule as `/api/documents`: these carry full paths and every comment,
+   * and `restore` registers files.
+   */
+  app.use('/api/sessions/*', async (c, next) => {
+    if (!fromThisMachine(c)) return c.text('sessions are this machine only', 403);
+    const presented = c.req.header('x-akapen-manage');
+    if (presented === undefined || !tokensMatch(presented, manageToken)) {
+      return c.text(
+        "the management secret is missing or wrong (manage-token in akapen's home, or AKAPEN_MANAGE_TOKEN)",
+        403,
+      );
+    }
+    // The wildcard route has no named parameter: the id is the segment after /api/sessions/.
+    let session: string;
+    try {
+      session = decodeURIComponent(new URL(c.req.url).pathname.split('/')[3] ?? '');
+    } catch {
+      return c.text('bad session id', 400);
+    }
+    if (!SESSION_ID.test(session)) return c.text('bad session id', 400);
+    return next();
+  });
+
+  /**
+   * What a session's channel reads on each pass: its documents and their unresolved
+   * comments, as `akapen channel` read them off disk before the server owned the store.
+   */
+  app.get('/api/sessions/:session/documents', (c) => {
+    const session = c.req.param('session');
+    return c.json(
+      entries
+        .filter((e) => e.session === session && existsSync(e.file))
+        .map((e) => Object.assign(describe(e), { comments: pendingComments(e.file) })),
+    );
+  });
+
+  /**
+   * Held open by a session's channel. It carries `changed` whenever a comment or a reply
+   * lands on one of the session's documents, so the channel looks at once instead of on
+   * its next pass.
+   *
+   * It is also how the server knows the session is still there. When its last stream has
+   * been closed for DISCONNECT_MS, its registrations are removed: a session killed without
+   * its SessionEnd hook running would otherwise keep its documents served for ever. Only a
+   * session whose channel connected at least once is ever removed this way, so one that
+   * never loads the channel keeps its registrations until something removes them.
+   */
+  app.get('/api/sessions/:session/events', (c) => {
+    const session = c.req.param('session');
+    const set = streams.get(session) ?? new Set<(frame: string) => void>();
+    streams.set(session, set);
+    clearTimeout(gone.get(session));
+    gone.delete(session);
+    const openedIn = generation.get(session) ?? 0;
+    let send!: (frame: string) => void;
+    let dropped = false;
+    const drop = () => {
+      // A failed send and the stream's cancel both land here for one disconnect.
+      if (dropped) return;
+      dropped = true;
+      set.delete(send);
+      if (set.size > 0) return;
+      if (streams.get(session) === set) streams.delete(session);
+      // A server shutting down keeps what is registered, as a crash would, for restore.
+      if (stopping || (generation.get(session) ?? 0) !== openedIn) return;
+      clearTimeout(gone.get(session));
+      gone.set(
+        session,
+        setTimeout(() => {
+          gone.delete(session);
+          try {
+            forget(session);
+          } catch (err) {
+            console.error(
+              `akapen: could not unregister session ${session}: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+        }, DISCONNECT_MS),
+      );
+    };
+    const stream = new ReadableStream({
+      start(controller) {
+        const enc = new TextEncoder();
+        send = (frame: string) => {
+          try {
+            controller.enqueue(enc.encode(frame));
+          } catch {
+            drop();
+          }
+        };
+        set.add(send);
+        sessionStreamEnds.set(send, () => {
+          try {
+            controller.close();
+          } catch {
+            /* Already closed by the reader. */
+          }
+        });
+        send(': connected\n\n');
+      },
+      cancel: drop,
+    });
+    return new Response(stream, {
+      headers: { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' },
+    });
+  });
+
+  /**
+   * Register again what a session registered last, for its SessionStart hook on resume.
+   * The URLs come back as they were, since they follow from the paths.
+   */
+  app.post('/api/sessions/:session/restore', (c) => {
+    const session = c.req.param('session');
+    const restored: ReturnType<typeof describe>[] = [];
+    const refused: { file: string; reason: string }[] = [];
+    // The session is back: a removal its old channel's disconnect started, or will start
+    // when that stream closes, no longer applies.
+    clearTimeout(gone.get(session));
+    gone.delete(session);
+    generation.set(session, (generation.get(session) ?? 0) + 1);
+    // Streams from before keep their own set: one opened after starts a fresh one, so an old
+    // stream that is still open cannot hold back the removal when the new one closes.
+    // Closed rather than left open: a channel still connected reconnects into the fresh set,
+    // where comments wake it again.
+    for (const send of streams.get(session) ?? []) sessionStreamEnds.get(send)?.();
+    streams.delete(session);
+    for (const reg of registrationsOf(session)) {
+      try {
+        const added = register(reg.file, session, reg.root, reg.addedAt);
+        if ('refused' in added) refused.push({ file: reg.file, reason: added.refused });
+        else restored.push(describe(added));
+      } catch (err) {
+        // One file that cannot be read does not stop the others.
+        refused.push({ file: reg.file, reason: err instanceof Error ? err.message : String(err) });
+      }
+    }
+    return c.json({ restored, refused });
   });
 
   // The page's switcher asks this. It lists other processes, and every document here is
@@ -1282,6 +1496,9 @@ export function startDaemon(opts: DaemonOptions & { manageToken: string }) {
 
   const stop = async (): Promise<void> => {
     for (const id of open.keys()) close(id);
+    clearInterval(heartbeat);
+    stopping = true;
+    for (const timer of gone.values()) clearTimeout(timer);
     rmSync(servePath(), { force: true });
     await server.stop(true);
   };

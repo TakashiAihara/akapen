@@ -18,8 +18,10 @@
 import { spawnSync } from 'node:child_process';
 import { statSync } from 'node:fs';
 
+import { chosenServePort, readServePort } from '@akapen/core/documents';
 import { reachableHost, readInstances } from '@akapen/core/instances';
 import { pendingComments } from '@akapen/core/store';
+import { currentToken, readManageToken } from '@akapen/core/token';
 import type { Reply, RoundComment } from '@akapen/shared';
 
 /**
@@ -146,9 +148,9 @@ function lastOwnReply(c: RoundComment, self: string | undefined): number | undef
  * so a comment written in the first pass interval of an akapen, or while the channel was
  * not running, still arrives. What was written before the start predates the review
  * this session started, is what `akapen comments` hands over, and pushing it would bury
- * the one comment that is new. A file is seen for the first time when this process
- * starts (a resumed session, an MCP reconnect) and when its akapen leaves the registry
- * and comes back, and neither knows what was delivered before. On a thread this session
+ * the one comment that is new. A file is seen for the first time only when this process
+ * starts (a resumed session, an MCP reconnect), which does not know what was delivered
+ * before. On a thread this session
  * has replied on, only what was written at or after its latest reply is pushed, a guess
  * (`lastOwnReply`) that can drop a reply written just before the answer. Anything else
  * delivered before and not answered yet is pushed again. Without `since` everything on
@@ -206,6 +208,8 @@ export type Store = {
     port: number;
     startedAt: string;
     origin?: { id?: string };
+    /** Where the document is reached, when it is not the root of `host:port` (`akapen serve`). */
+    url?: string;
   }[];
   comments: (file: string) => RoundComment[];
 };
@@ -216,9 +220,12 @@ const DISK: Store = { instances: () => readInstances({ sweep: false }), comments
  * One pass over every document this session is reviewing, oldest event first across all
  * of them.
  *
- * `seen` is replaced rather than added to, so a document whose akapen has stopped takes
- * its ids with it. Keeping them would mean a second akapen on the same file later in the
- * session inherits the first one's memory and stays silent about what is on it.
+ * `seen` keeps what it knew about a file for the life of this process, even across a pass
+ * that does not list it. Forgetting it would seed it again on its return and send its
+ * comments a second time; a file saved by rename, or a server that did not answer once,
+ * drops out of one pass. The cost: whatever was written on a file while it was away is
+ * sent when it comes back, including what another session handled while the file was
+ * registered to it.
  */
 export function collect(
   sessionId: string,
@@ -236,7 +243,7 @@ export function collect(
     for (const r of records) {
       if (r.origin?.id !== sessionId) continue;
       // Loopback is enough: whoever reads this runs on the host that serves the file.
-      urls.set(r.file, `http://${reachableHost(r.host)}:${r.port}`);
+      urls.set(r.file, r.url ?? `http://${reachableHost(r.host)}:${r.port}`);
       // The earliest of this session's instances on a file, so a comment written on an
       // older one is not taken for history because a newer one started later.
       const at = Date.parse(r.startedAt);
@@ -271,7 +278,9 @@ export function collect(
       out.push(e);
     }
   }
-  seen.clear();
+  // A file missing from this pass is kept, not forgotten: one saved by rename, or a server
+  // that did not answer once, comes back on the next pass, and a forgotten file would be
+  // seeded again and send its comments a second time.
   for (const [file, ids] of next) seen.set(file, ids);
   return out.toSorted(byWritten).map((e) => e.event);
 }
@@ -435,6 +444,7 @@ export async function runChannel(): Promise<void> {
   const ask = compiled ? ['channel', 'instructions'] : [Bun.main, 'channel', 'instructions'];
   const readInstructions = (): string | null => askInstructions([process.execPath, ...ask]);
   let loaded: Loaded = { files: fingerprint(self), instructions: INSTRUCTIONS };
+  void holdServeStream(sessionId);
   for (;;) {
     try {
       const checked = instructionsEvent(loaded, fingerprint(self), readInstructions);
@@ -443,7 +453,7 @@ export async function runChannel(): Promise<void> {
       }
       // After the send, so one that fails is made again on the next pass.
       loaded = checked.loaded;
-      for (const event of collect(sessionId, seen)) {
+      for (const event of collect(sessionId, seen, await serveStore(sessionId))) {
         await mcp.notification({ method: 'notifications/claude/channel', params: event });
         markSent(seen, event);
       }
@@ -453,6 +463,150 @@ export async function runChannel(): Promise<void> {
       // nothing: the session goes on believing it is being told about comments. stderr
       // is where Claude Code keeps an MCP server's output.
       console.error(`akapen: channel pass failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    // Woken early by `akapen serve` when a comment lands on one of this session's documents.
+    // A wake that came during the pass is kept, so the next pass starts at once.
+    if (!wokenDuringPass) {
+      await new Promise<void>((r) => {
+        const timer = setTimeout(r, INTERVAL_MS);
+        wake = () => {
+          clearTimeout(timer);
+          r();
+        };
+      });
+    }
+    wokenDuringPass = false;
+    wake = () => {
+      wokenDuringPass = true;
+    };
+  }
+}
+
+/** Said once per kind, so a channel that cannot read says why without a line every pass. */
+const said = new Set<string>();
+const sayOnce = (what: string): void => {
+  if (said.has(what)) return;
+  said.add(what);
+  console.error(`akapen: channel: ${what}`);
+};
+
+/** A refusal from akapen serve: the token or the management secret. A channel that gets one reads nothing from it. */
+const noteRefusal = (res: Response): void => {
+  if (res.status === 401 || res.status === 403)
+    sayOnce(`akapen serve refused this session (${res.status}); check AKAPEN_TOKEN and AKAPEN_MANAGE_TOKEN`);
+};
+
+const serveHeaders = (): Record<string, string> => {
+  const token = currentToken();
+  const manage = readManageToken();
+  return {
+    ...(token === null ? {} : { authorization: `Bearer ${token}` }),
+    // The session routes are management: they carry every comment and full paths.
+    ...(manage === null ? {} : { 'x-akapen-manage': manage }),
+  };
+};
+
+/**
+ * The store a pass reads: the one-document servers' registry off disk, and this
+ * session's documents as `akapen serve` holds them (#305). With no server answering,
+ * only the first.
+ */
+export async function serveStore(sessionId: string): Promise<Store> {
+  type Served = { file: string; url: string; added_at: string; comments: RoundComment[] };
+  let served: Served[] = [];
+  const port = chosenServePort();
+  if (port === null && readServePort() !== null)
+    sayOnce(
+      'akapen serve recorded a port, but its process is not visible from here; set AKAPEN_PORT to reach it',
+    );
+  try {
+    if (port !== null) {
+      const res = await fetch(
+        `http://127.0.0.1:${port}/api/sessions/${encodeURIComponent(sessionId)}/documents`,
+        { headers: serveHeaders(), redirect: 'manual', signal: AbortSignal.timeout(5_000) },
+      );
+      if (res.ok) {
+        const body: unknown = await res.json();
+        // Anything else answering there is not taken for this session's documents.
+        if (
+          Array.isArray(body) &&
+          body.every(
+            (d) =>
+              typeof d === 'object' &&
+              d !== null &&
+              typeof (d as Served).file === 'string' &&
+              typeof (d as Served).url === 'string' &&
+              typeof (d as Served).added_at === 'string' &&
+              Array.isArray((d as Served).comments),
+          )
+        )
+          served = body as Served[];
+      } else noteRefusal(res);
+    }
+  } catch {
+    /* No server, or one that did not answer: this pass reads the registry only. */
+  }
+  const byFile = new Map(served.map((d) => [d.file, d]));
+  return {
+    instances: () => [
+      ...DISK.instances(),
+      ...served.map((d) => ({
+        file: d.file,
+        host: '127.0.0.1',
+        port: port ?? 0,
+        startedAt: d.added_at,
+        origin: { id: sessionId },
+        url: d.url.replace(/\/$/, ''),
+      })),
+    ],
+    comments: (f) => byFile.get(f)?.comments ?? DISK.comments(f),
+  };
+}
+
+let wokenDuringPass = false;
+let wake: () => void = () => {
+  wokenDuringPass = true;
+};
+
+/**
+ * Hold this session's stream on `akapen serve` open for the life of the process, and
+ * wake the loop on each `changed`. The open stream is also what tells the server the
+ * session is still there. A stream that drops, or a server that is not running, is tried
+ * again after a pass interval.
+ */
+export async function holdServeStream(
+  sessionId: string,
+  onChanged: () => void = () => wake(),
+  signal?: AbortSignal,
+): Promise<void> {
+  for (;;) {
+    if (signal?.aborted === true) return;
+    const port = chosenServePort();
+    try {
+      if (port === null) throw new Error('no server recorded');
+      const res = await fetch(
+        `http://127.0.0.1:${port}/api/sessions/${encodeURIComponent(sessionId)}/events`,
+        {
+          headers: serveHeaders(),
+          redirect: 'manual',
+          ...(signal === undefined ? {} : { signal }),
+        },
+      );
+      if (!res.ok) noteRefusal(res);
+      if (res.ok && res.body !== null) {
+        const dec = new TextDecoder();
+        let buf = '';
+        for await (const chunk of res.body) {
+          buf += dec.decode(chunk, { stream: true });
+          let at: number;
+          while ((at = buf.indexOf('\n\n')) !== -1) {
+            if (buf.slice(0, at).startsWith('data: changed')) onChanged();
+            buf = buf.slice(at + 2);
+          }
+        }
+      }
+    } catch {
+      /* Not running, or gone: tried again below. */
     }
     await new Promise((r) => setTimeout(r, INTERVAL_MS));
   }

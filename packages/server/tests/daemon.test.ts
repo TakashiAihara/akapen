@@ -20,6 +20,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { localAddresses } from '@akapen/core/addresses';
+import { collect, holdServeStream, serveStore } from '../../cli/src/channel.ts';
+import { chosenServePort, documentId } from '@akapen/core/documents';
 
 const TOKEN = 'test-token-for-the-daemon-suite';
 const CLI = join(import.meta.dirname, '..', '..', 'cli', 'src', 'cli.ts');
@@ -56,9 +58,9 @@ const env = (extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv => ({
   ...extra,
 });
 
-async function serve(args: string[] = []): Promise<Daemon> {
+async function serve(args: string[] = [], extra: NodeJS.ProcessEnv = {}): Promise<Daemon> {
   const proc: ChildProcess = spawn('bun', ['run', CLI, 'serve', '-p', '0', ...args], {
-    env: env(),
+    env: env(extra),
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   // Before anything can fail, so a server that never prints its URL is still stopped.
@@ -134,6 +136,8 @@ afterEach(async () => {
   running = [];
   rmSync(sandbox, { recursive: true, force: true });
 });
+
+const lanAddress = localAddresses().find((a) => a !== '127.0.0.1' && !a.includes(':'));
 
 describe('akapen serve', () => {
   it('hands out the same URL for the same path, and another for the same name elsewhere', async () => {
@@ -632,6 +636,9 @@ describe('akapen serve', () => {
     const r = cli(d, ['list']);
     expect(r.out).toContain('refused this command');
     expect(r.out).not.toContain('was not sent');
+    const comments = cli(d, ['comments', note('note.md')]);
+    expect(comments.code).toBe(1);
+    expect(comments.err).toContain('refused this command');
     const removed = cli(d, ['remove', 'anything']);
     expect(removed.code).toBe(1);
     expect(removed.err).toContain('refused this command');
@@ -728,7 +735,6 @@ describe('akapen serve', () => {
     expect(r.stderr).toContain('unable to reach it');
   });
 
-  const lanAddress = localAddresses().find((a) => a !== '127.0.0.1' && !a.includes(':'));
   it.skipIf(lanAddress === undefined)('keeps the management API to this machine', async () => {
     const lan = lanAddress!;
     const d = await serve(['--host', '0.0.0.0']);
@@ -746,5 +752,322 @@ describe('akapen serve', () => {
       documents: unknown[];
     };
     expect(registered.documents).toHaveLength(1);
+  });
+});
+
+/** A session's stream, collecting what it carries. */
+function hold(d: Daemon, session: string) {
+  const ctl = new AbortController();
+  const frames: string[] = [];
+  const opened = managed(`${d.base}/api/sessions/${session}/events`, { signal: ctl.signal }).then(
+    async (res) => {
+      const dec = new TextDecoder();
+      try {
+        for await (const chunk of res.body!) frames.push(dec.decode(chunk));
+      } catch {
+        /* aborted */
+      }
+    },
+  );
+  return { frames, close: () => ctl.abort(), opened };
+}
+
+describe('sessions on akapen serve', () => {
+  it('gives a resumed session its documents back at the same URLs', async () => {
+    const d = await serve();
+    const url = urlIn(cli(d, ['add', note('note.md')], { CLAUDE_CODE_SESSION_ID: 'session-a' }).out);
+    cli(d, ['add', note('other.md')], { CLAUDE_CODE_SESSION_ID: 'session-b' });
+
+    const removed = cli(d, ['remove', '--session', 'session-a']);
+    expect(removed.code, removed.err).toBe(0);
+    expect((await authed(`${url}api/status`)).status).toBe(404);
+
+    const restored = cli(d, ['restore', 'session-a']);
+    expect(restored.code, restored.err).toBe(0);
+    expect(restored.out.trim().split('\n')).toHaveLength(1);
+    expect(restored.out).toContain(url);
+    expect((await authed(`${url}api/status`)).status).toBe(200);
+  });
+
+  it('does not bring back on resume a document removed by hand, and keeps when the others were added', async () => {
+    const d = await serve();
+    const kept = note('kept.md');
+    const url = urlIn(cli(d, ['add', kept], { CLAUDE_CODE_SESSION_ID: 'session-a' }).out);
+    const dropped = note('dropped.md');
+    cli(d, ['add', dropped], { CLAUDE_CODE_SESSION_ID: 'session-a' });
+    const addedAt = async () =>
+      (
+        (await (await managed(`${d.base}/api/documents`)).json()) as { file: string; added_at: string }[]
+      ).find((e) => e.file === kept)?.added_at;
+    const before = await addedAt();
+
+    expect(cli(d, ['remove', dropped]).code).toBe(0);
+    const droppedUrl = `${url.split('/d/')[0]}/d/${encodeURIComponent(documentId(dropped))}/`;
+    cli(d, ['remove', '--session', 'session-a']);
+    expect((await authed(`${url}api/status`)).status).toBe(404);
+    await new Promise((r) => setTimeout(r, 20));
+    const restored = cli(d, ['restore', 'session-a']);
+    expect(restored.code, restored.err).toBe(0);
+    expect(restored.out).toContain(url);
+    expect(restored.out).not.toContain(dropped);
+    expect((await authed(`${droppedUrl}api/status`)).status).toBe(404);
+    expect(await addedAt()).toBe(before);
+  });
+
+  it('says which documents it could not restore, and restores the rest', async () => {
+    const d = await serve();
+    const url = urlIn(cli(d, ['add', note('kept.md')], { CLAUDE_CODE_SESSION_ID: 'session-a' }).out);
+    const gone = note('gone.md');
+    cli(d, ['add', gone], { CLAUDE_CODE_SESSION_ID: 'session-a' });
+    cli(d, ['remove', '--session', 'session-a']);
+    rmSync(gone);
+
+    const restored = cli(d, ['restore', 'session-a']);
+    // A deleted file is reported, not a failure: the resume hook runs this every time.
+    expect(restored.code, restored.err).toBe(0);
+    expect(restored.err).toContain(`not restored: ${gone}: no such file`);
+    expect(restored.out).toContain(url);
+    expect(restored.out).not.toContain('nothing to restore');
+  });
+
+  it('wakes the stream of the session a comment belongs to, and no other', async () => {
+    const d = await serve();
+    const mine = urlIn(cli(d, ['add', note('a.md')], { CLAUDE_CODE_SESSION_ID: 'session-a' }).out);
+    const theirs = urlIn(cli(d, ['add', note('b.md')], { CLAUDE_CODE_SESSION_ID: 'session-b' }).out);
+    const a = hold(d, 'session-a');
+    const b = hold(d, 'session-b');
+    await until(() => a.frames.length > 0 && b.frames.length > 0);
+
+    await comment(mine, 'for a');
+    await until(() => a.frames.some((f) => f.includes('data: changed')));
+    await new Promise((r) => setTimeout(r, 200));
+    expect(b.frames.some((f) => f.includes('data: changed'))).toBe(false);
+
+    await comment(theirs, 'for b');
+    await until(() => b.frames.some((f) => f.includes('data: changed')));
+
+    const before = a.frames.filter((f) => f.includes('data: changed')).length;
+    const [posted] = (await (await authed(`${mine}api/comments`)).json()) as { id: string }[];
+    await authed(`${mine}api/comments/${posted!.id}/replies`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ body: 'a reply wakes it too' }),
+    });
+    await until(() => a.frames.filter((f) => f.includes('data: changed')).length > before);
+    a.close();
+    b.close();
+  });
+
+  it("hands a session's channel its documents with their comments", async () => {
+    const d = await serve();
+    const file = note('note.md');
+    const url = urlIn(cli(d, ['add', file], { CLAUDE_CODE_SESSION_ID: 'session-a' }).out);
+    cli(d, ['add', note('other.md')], { CLAUDE_CODE_SESSION_ID: 'session-b' });
+    await comment(url, 'pending');
+
+    const docs = (await (await managed(`${d.base}/api/sessions/session-a/documents`)).json()) as {
+      file: string;
+      comments: { body: string }[];
+    }[];
+    expect(docs.map((x) => [x.file, x.comments.map((c) => c.body)])).toEqual([[file, ['pending']]]);
+  });
+
+  it('removes the registrations of a session whose channel has gone, and keeps those of one that never came', async () => {
+    const d = await serve([], { AKAPEN_DISCONNECT_MS: '300' });
+    const gone = urlIn(cli(d, ['add', note('a.md')], { CLAUDE_CODE_SESSION_ID: 'session-a' }).out);
+    const never = urlIn(cli(d, ['add', note('b.md')], { CLAUDE_CODE_SESSION_ID: 'session-b' }).out);
+    const a = hold(d, 'session-a');
+    await until(() => a.frames.length > 0);
+
+    a.close();
+    await until(async () => (await authed(`${gone}api/status`)).status === 404);
+    expect((await authed(`${never}api/status`)).status).toBe(200);
+  });
+
+  it('keeps the registrations of a session whose channel came back in time', async () => {
+    const d = await serve([], { AKAPEN_DISCONNECT_MS: '600' });
+    const url = urlIn(cli(d, ['add', note('a.md')], { CLAUDE_CODE_SESSION_ID: 'session-a' }).out);
+    const first = hold(d, 'session-a');
+    await until(() => first.frames.length > 0);
+    first.close();
+    const second = hold(d, 'session-a');
+    await until(() => second.frames.length > 0);
+
+    await new Promise((r) => setTimeout(r, 1_000));
+    expect((await authed(`${url}api/status`)).status).toBe(200);
+    second.close();
+  });
+
+  it("keeps a resumed session's documents past the removal its old channel's disconnect started", async () => {
+    const d = await serve([], { AKAPEN_DISCONNECT_MS: '600' });
+    const url = urlIn(cli(d, ['add', note('a.md')], { CLAUDE_CODE_SESSION_ID: 'session-a' }).out);
+    const old = hold(d, 'session-a');
+    await until(() => old.frames.length > 0);
+    old.close();
+    await new Promise((r) => setTimeout(r, 100));
+    // The session ended and was resumed inside the window; its new channel has not connected yet.
+    cli(d, ['remove', '--session', 'session-a']);
+    expect(cli(d, ['restore', 'session-a']).code).toBe(0);
+
+    await new Promise((r) => setTimeout(r, 1_000));
+    expect((await authed(`${url}api/status`)).status).toBe(200);
+  });
+
+  it("keeps a resumed session's documents when its old channel's stream closes after the restore", async () => {
+    const d = await serve([], { AKAPEN_DISCONNECT_MS: '300' });
+    const url = urlIn(cli(d, ['add', note('a.md')], { CLAUDE_CODE_SESSION_ID: 'session-a' }).out);
+    const old = hold(d, 'session-a');
+    await until(() => old.frames.length > 0);
+    expect(cli(d, ['restore', 'session-a']).code).toBe(0);
+    old.close();
+
+    await new Promise((r) => setTimeout(r, 800));
+    expect((await authed(`${url}api/status`)).status).toBe(200);
+  });
+
+  it('closes a stream that is still open when its session is restored, so its channel reconnects', async () => {
+    const d = await serve();
+    cli(d, ['add', note('a.md')], { CLAUDE_CODE_SESSION_ID: 'session-a' });
+    const ctl = new AbortController();
+    const res = await managed(`${d.base}/api/sessions/session-a/events`, { signal: ctl.signal });
+    const reader = res.body!.getReader();
+    await reader.read();
+    expect(cli(d, ['restore', 'session-a']).code).toBe(0);
+    const end = await Promise.race([
+      (async () => {
+        for (;;) if ((await reader.read()).done) return 'closed';
+      })(),
+      new Promise((r) => setTimeout(() => r('open'), 3_000)),
+    ]);
+    ctl.abort();
+    expect(end).toBe('closed');
+  });
+
+  it('still unregisters a resumed session when its new channel goes, whatever its old stream does', async () => {
+    const d = await serve([], { AKAPEN_DISCONNECT_MS: '300' });
+    const url = urlIn(cli(d, ['add', note('a.md')], { CLAUDE_CODE_SESSION_ID: 'session-a' }).out);
+    const old = hold(d, 'session-a');
+    await until(() => old.frames.length > 0);
+    expect(cli(d, ['restore', 'session-a']).code).toBe(0);
+    const fresh = hold(d, 'session-a');
+    await until(() => fresh.frames.length > 0);
+
+    fresh.close();
+    await new Promise((r) => setTimeout(r, 100));
+    old.close();
+    await until(async () => (await authed(`${url}api/status`)).status === 404);
+  });
+
+  it("feeds a session's channel the comments on its documents, with the URL they are reached at", async () => {
+    const d = await serve();
+    const url = urlIn(cli(d, ['add', note('note.md')], { CLAUDE_CODE_SESSION_ID: 'session-a' }).out);
+    const saved = {
+      port: process.env['AKAPEN_PORT'],
+      home: process.env['AKAPEN_HOME'],
+      token: process.env['AKAPEN_TOKEN'],
+      manage: process.env['AKAPEN_MANAGE_TOKEN'],
+    };
+    // A home of its own, as a channel beside a server in a container has: what it reports
+    // has to come from the server, not from a store it happens to share.
+    Object.assign(process.env, {
+      AKAPEN_PORT: d.port,
+      AKAPEN_HOME: join(sandbox, 'elsewhere'),
+      AKAPEN_MANAGE_TOKEN: readFileSync(join(home, 'manage-token'), 'utf8').trim(),
+      AKAPEN_TOKEN: TOKEN,
+    });
+    try {
+      const seen = new Map<string, Set<string>>();
+      expect(collect('session-a', seen, await serveStore('session-a'))).toEqual([]);
+      await comment(url, 'pushed');
+      const events = collect('session-a', seen, await serveStore('session-a'));
+      expect(events.map((e) => [e.meta['url'], e.content.includes('pushed')])).toEqual([
+        [url.slice(0, -1), true],
+      ]);
+      expect(collect('session-b', new Map(), await serveStore('session-b'))).toEqual([]);
+
+      // The stream the channel holds: woken by a comment on its session's documents.
+      let woken = 0;
+      const ctl = new AbortController();
+      void holdServeStream('session-a', () => woken++, ctl.signal);
+      try {
+        // Commented again on each try: nothing says when the stream has subscribed.
+        await until(async () => {
+          await comment(url, 'woke');
+          await new Promise((r) => setTimeout(r, 200));
+          return woken > 0;
+        });
+      } finally {
+        ctl.abort();
+      }
+
+      // Without AKAPEN_PORT, only a port this home's live server recorded: never a bare default.
+      process.env['AKAPEN_PORT'] = '1e3';
+      mkdirSync(join(sandbox, 'elsewhere'), { recursive: true });
+      // Not decimal digits: not a port, and nothing is recorded to fall back on.
+      expect(chosenServePort()).toBeNull();
+      delete process.env['AKAPEN_PORT'];
+      expect(chosenServePort()).toBeNull();
+      writeFileSync(
+        join(sandbox, 'elsewhere', 'serve.json'),
+        JSON.stringify({ port: Number(d.port), pid: 2 ** 22 + 1 }),
+      );
+      expect(chosenServePort()).toBeNull();
+      writeFileSync(
+        join(sandbox, 'elsewhere', 'serve.json'),
+        JSON.stringify({ port: Number(d.port), pid: process.pid }),
+      );
+      expect(chosenServePort()).toBe(Number(d.port));
+    } finally {
+      for (const [k, v] of [
+        ['AKAPEN_PORT', saved.port],
+        ['AKAPEN_HOME', saved.home],
+        ['AKAPEN_TOKEN', saved.token],
+        ['AKAPEN_MANAGE_TOKEN', saved.manage],
+      ] as const) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+  });
+
+  it('refuses the session routes without the management secret', async () => {
+    const d = await serve();
+    cli(d, ['add', note('note.md')], { CLAUDE_CODE_SESSION_ID: 'session-a' });
+    expect((await authed(`${d.base}/api/sessions/session-a/documents`)).status).toBe(403);
+    expect((await authed(`${d.base}/api/sessions/session-a/restore`, { method: 'POST' })).status).toBe(403);
+    expect((await authed(`${d.base}/api/sessions/session-a/events`)).status).toBe(403);
+  });
+
+  it('answers a session id that is not one with 400, not a server error', async () => {
+    const d = await serve();
+    expect((await managed(`${d.base}/api/sessions/%E0%A4%A/documents`)).status).toBe(400);
+    expect((await managed(`${d.base}/api/sessions/not%20one/documents`)).status).toBe(400);
+  });
+
+  it.skipIf(lanAddress === undefined)('keeps the session streams to this machine', async () => {
+    const lan = lanAddress!;
+    const d = await serve(['--host', '0.0.0.0']);
+    expect((await managed(`http://${lan}:${d.port}/api/sessions/session-a/documents`)).status).toBe(403);
+    const events = await managed(`http://${lan}:${d.port}/api/sessions/session-a/events`);
+    expect(events.status).toBe(403);
+    expect(await events.text()).toBe('sessions are this machine only');
+  });
+
+  it('reads comments through the server for akapen comments, whatever the file is called', async () => {
+    const d = await serve();
+    const file = note('a#b c.md');
+    const url = urlIn(cli(d, ['add', file]).out);
+    await comment(url, 'listed');
+    // From a home that is not the server's, so only the server can have answered.
+    const listed = JSON.parse(
+      cli(d, ['comments', file], {
+        AKAPEN_HOME: join(sandbox, 'elsewhere'),
+        AKAPEN_MANAGE_TOKEN: readFileSync(join(home, 'manage-token'), 'utf8').trim(),
+      }).out,
+    ) as {
+      body: string;
+      id: string;
+    }[];
+    expect(listed.map((c) => c.body)).toEqual(['listed']);
   });
 });

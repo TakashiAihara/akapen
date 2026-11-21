@@ -16,11 +16,12 @@ Issue #305. One long-lived `akapen serve` on one fixed port hands out every regi
 - Registrations live in `~/.akapen/documents.json`. Only the server writes it; the CLI goes through `/api/documents`. One writer on one event loop is what keeps two sessions registering at once from losing one of the registrations, without a lock
 - `/api/documents` answers loopback peers only, and only with the management secret in `X-Akapen-Manage`. The secret is `~/.akapen/manage-token`, 0600, created by the first `serve`, or `AKAPEN_MANAGE_TOKEN` where the home is not shared. A token holder on the LAN can read what is registered; letting them register would let them read any file the server's user can. Loopback alone is not enough: a proxy on the same host relays the LAN from loopback, and need not say so in any header
 
+- `akapen channel` holds `/api/sessions/<id>/events` open and reads `/api/sessions/<id>/documents` instead of the store on disk; `akapen comments` reads a registered document through `/d/<id>/api/pending`. A comment or reply wakes the channel as it lands. The session routes take the management secret like `/api/documents`
+- A registration is removed when its session ends (the SessionEnd hook calls `akapen remove --session <id>`), when the session's channel has been disconnected for 30 seconds (only for a session whose channel connected at least once), or by `akapen remove`. There is no dormant state
+- When a session is resumed, its SessionStart hook runs `akapen restore <session id>`, which registers again the documents that session last registered, except those removed by hand, and keeps the time each was first added so a comment written while the session was away still reaches it. Which ones is recorded in each document's store (`registration.json`), so it survives the removal. `/clear` gives a new session id and restores nothing
+
 ## Planned in the same major version
 
-- `akapen channel` connects to the server's event stream under its session id instead of reading the store from disk, and `akapen comments` reads through the API. The server is then the only reader and writer of `~/.akapen`, which is what lets it run in a container next to the sessions it serves
-- A registration is removed when its session ends (the SessionEnd hook calls `akapen remove --session`), when the session's channel has been disconnected for 30 seconds, or by `akapen remove`. There is no dormant state
-- When a session is resumed, its SessionStart hook runs `akapen restore <session id>`, which registers again the documents that session last registered. Which ones is recorded in each document's store, so it survives the removal. `/clear` gives a new session id and restores nothing
 - `~/.akapen/reviews/` becomes `~/.akapen/comments/`, renamed in place on the first start of the new version
 - `akapen <file.md>`, one process for one document, is removed
 - The README shows how to run the server: a systemd user unit, a LaunchAgent, and a compose file for Linux (host networking, documents mounted at the same path as on the host)
