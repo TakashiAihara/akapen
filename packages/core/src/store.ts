@@ -90,7 +90,7 @@ export function renameLegacyStore(oneDocumentRunning: boolean): string | null {
     return `${legacy} is still there beside ${comments}; an akapen from before wrote into it after the rename, and what it wrote is not read. Move what you need into ${comments}, then remove it`;
   if (existsSync(comments) || !existsSync(legacy)) return null;
   if (oneDocumentRunning)
-    return `${legacy} is still in use by a one-document akapen; stop those (akapen list) and start akapen serve again to rename it to ${comments}`;
+    return `${legacy} is still in use by a one-document akapen; stop those (their records are in ${join(akapenHome(), 'instances')}) and start akapen serve again to rename it to ${comments}`;
   renameSync(legacy, comments);
   return null;
 }
