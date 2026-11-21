@@ -18,7 +18,7 @@ import {
 import { createServer as createHttpServer } from 'node:http';
 import { createServer as createNetServer } from 'node:net';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { localAddresses } from '@akapen/core/addresses';
 import { collect, holdServeStream, serveStore } from '../../cli/src/channel.ts';
@@ -741,12 +741,18 @@ describe('akapen serve', () => {
     const d = await serve();
     const file = note('note.md');
     const url = urlIn(cli(d, ['add', file]).out);
-    legacyRecord(file);
+    const record = legacyRecord(file);
     const res = await authed(`${url}api/status`);
     expect(res.status).toBe(409);
     expect(await res.text()).toContain(`(pid ${process.pid})`);
-    // Not opened at all: opening would have written the first round into the store.
-    expect(existsSync(join(storeDir(file), 'rounds'))).toBe(false);
+    // Not opened at all: opening would have written the first round into the store. Looked up
+    // under the server's home, which this process does not have in its environment.
+    const rounds = join(home, 'comments', basename(storeDir(file)), 'rounds');
+    expect(existsSync(rounds)).toBe(false);
+    // And the same lookup does find it once that process is gone and the document opens.
+    rmSync(join(home, 'instances', record));
+    expect((await authed(`${url}api/status`)).status).toBe(200);
+    expect(existsSync(rounds)).toBe(true);
   });
 
   it('lists nothing for a --session that matches no session', async () => {
