@@ -519,7 +519,8 @@ if (positional[0] === 'rounds') {
  * its next write. The file is identified as the store identifies it (the resolved path),
  * for both the comment lookup and the instance. A reply carries `X-Akapen-Session` when
  * there is a session to name, so it is filed as the agent's. Resolving toggles on the
- * server, so a comment already resolved is not sent, and the answer is checked.
+ * server, so a comment already resolved is not sent, and the answer is checked: one that
+ * comes back open was resolved by someone else meanwhile, and is toggled back once.
  */
 if (positional[0] === 'reply' || positional[0] === 'resolve') {
   const verb = positional[0];
@@ -560,19 +561,25 @@ if (positional[0] === 'reply' || positional[0] === 'resolve') {
     console.log(`replied (filed as ${session === '' ? 'a person, no CLAUDE_CODE_SESSION_ID' : 'the agent'})`);
   }
   if (resolving) {
-    const answer = (await post(
-      `/api/comments/${encodeURIComponent(id)}/resolve`,
-      verb === 'reply' ? 'replied, but ' : '',
-      '`akapen comments`',
-    )) as {
-      comment?: { resolved?: boolean };
-    };
-    // A toggle: someone else may have resolved it since the store was read, and this reopened it.
-    if (answer.comment?.resolved !== true) {
-      console.error(`akapen: ${id} is open after the call; it was resolved meanwhile, and this reopened it`);
+    const toggle = async () =>
+      (
+        (await post(
+          `/api/comments/${encodeURIComponent(id)}/resolve`,
+          verb === 'reply' ? 'replied, but ' : '',
+          '`akapen comments`',
+        )) as { comment?: { resolved?: boolean } }
+      ).comment?.resolved;
+    let state = await toggle();
+    // A toggle: someone else resolved it since the store was read, so this reopened it.
+    // Toggled back once, which leaves it resolved as both meant.
+    const raced = state === false;
+    if (raced) state = await toggle();
+    // Not toggled again on an answer of another shape: a second call could just as well reopen it.
+    if (state !== true) {
+      console.error(`akapen: ${id} is not resolved after the call; check \`akapen comments\``);
       process.exit(1);
     }
-    console.log('resolved');
+    console.log(raced ? 'resolved (someone resolved it meanwhile, and this toggled it back)' : 'resolved');
   } else if (alreadyResolved) console.log(`${id} was already resolved; left as it is`);
   process.exit(0);
 }
