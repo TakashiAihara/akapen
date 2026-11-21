@@ -31,6 +31,7 @@ import {
   openRound,
   pendingComments,
   roundContent,
+  renameLegacyStore,
   saveComments,
   storeDir,
   updateComment,
@@ -1109,6 +1110,9 @@ const escapeHtml = (s: string): string => s.replace(/[&<>"']/g, (ch) => `&#${ch.
  */
 export function startDaemon(opts: DaemonOptions & { manageToken: string }) {
   const { manageToken } = opts;
+  // Before anything reads a store: the documents' comments move to comments/ (#305).
+  const notRenamed = renameLegacyStore(readInstances({ sweep: false }).length > 0);
+  if (notRenamed !== null) console.error(`akapen: ${notRenamed}`);
   const { app, currentSecret } = guardedApp(opts, () => {});
   let entries: DocumentEntry[] = readDocuments();
   const open = new Map<string, OpenDocument>();

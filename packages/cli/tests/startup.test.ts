@@ -544,10 +544,10 @@ describe('akapen reply and resolve', () => {
     };
 
     // Stored comments from before replies existed have no such key.
-    const stored = readdirSync(join(home, 'reviews'), { recursive: true, encoding: 'utf8' }).find((p) =>
+    const stored = readdirSync(join(home, 'comments'), { recursive: true, encoding: 'utf8' }).find((p) =>
       p.endsWith('comments.json'),
     )!;
-    const path = join(home, 'reviews', stored);
+    const path = join(home, 'comments', stored);
     const original = readFileSync(path, 'utf8');
     const bare = JSON.parse(original) as Record<string, unknown>[];
     for (const c of bare) delete c['replies'];

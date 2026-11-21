@@ -23,7 +23,7 @@ apart. Use the qualified form; the bare word is the one that causes the confusio
 | draft | a comment being written and not yet sent (`.bubble.draft`, `startDraft`) | a GitHub pull request that is not ready for review | Inside the product, a draft is an unsent comment. The other belongs to how the repository is worked on, not to akapen. |
 | document / file / snapshot | the live file — what is on disk right now | the snapshot — the round's frozen copy (`rounds/NNN/content.md`) | What is on screen is the snapshot, never the live file. `Doc` is the parsed form of the snapshot (`/api/doc`); `#doc` is the element it is rendered into. |
 | doc / document | `Doc` — the parsed snapshot handed to the browser (`/api/doc`) | the document — the rendered snapshot on screen (`#doc`), and, loosely, the markdown being reviewed | `Doc` is the payload, the document is what is read. Do not shorten "document" to "doc" in prose. |
-| review | `Review` — the contents of `review.json`: round metadata and the current round number | the activity of reading and leaving feedback | Say "review.json" or "the review store" (`~/.akapen/reviews/`) for the data. |
+| review | `Review` — the contents of `review.json`: round metadata and the current round number | the activity of reading and leaving feedback | Say "review.json" or "the review store" (`~/.akapen/comments/`) for the data. |
 | root | the file root — the directory images beside the document may be served from (`--root`, `ServeOptions.root`, `/file`), the document's own directory unless widened. Passive mode (#8) serves its tree from the same `--root` | the review root proposed in #191 (`--review-root`, `AKAPEN_REVIEW_ROOT`) — what a review's store key is made relative to | Say "file root" and "review root". Never bare "root". |
 | inline review | feedback attached to a place in the document, which is what akapen is for | comments written inline into the markdown file, which akapen never does | The comments are inline with respect to the reading, not to the file. The file is never touched. |
 
@@ -90,12 +90,12 @@ Row states, which stack:
 | viewing a round | reading an earlier round's snapshot and comments. The snapshot never changes; a comment written there is filed on that round | `RoundState.viewing`, `#historyBar` |
 | cutting a round | freezing the live file as the next round. Only a person does this; an agent's save never does. A file that matches the current round's snapshot opens none, and the current round is the answer | the "End this round" control, `#nextRound`, `openRound` |
 | carried over | unresolved comments from earlier rounds. Nothing carries into a new round; they are shown apart so that gone from the screen does not read as dealt with | `carriedOver`, `#railCarried` |
-| review store | where comments live, outside the markdown file | `~/.akapen/reviews/<basename>-<hash>/`, `AKAPEN_HOME` |
+| review store | where comments live, outside the markdown file | `~/.akapen/comments/<basename>-<hash>/`, `AKAPEN_HOME` |
 | settled | the live file read twice, a gap apart, the same both times. Cutting a round waits for this, so a file in the middle of being written is refused rather than frozen half-written | `readSettled`, `AKAPEN_SETTLE_MS` |
 | dirty | the live file no longer matches the current round's snapshot | `ChangedState.dirty` |
 
 ```text
-~/.akapen/reviews/<basename>-<hash>/   # ~/.akapen is the default; AKAPEN_HOME replaces that root
+~/.akapen/comments/<basename>-<hash>/   # ~/.akapen is the default; AKAPEN_HOME replaces that root
   review.json          # round metadata and the current round number
   rounds/
     001/content.md     # the frozen document

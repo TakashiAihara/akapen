@@ -2,7 +2,7 @@
 
 A tool for leaving inline feedback on rendered markdown, and handing that feedback — its position and the text it points at — to an agent in a structured form.
 
-Comments are never written into the markdown file. They live in a sidecar under `~/.akapen/reviews/`. When the markdown itself is the deliverable, as it is in a vault, this removes by design the path by which review notes end up in a commit.
+Comments are never written into the markdown file. They live in a sidecar under `~/.akapen/comments/`. When the markdown itself is the deliverable, as it is in a vault, this removes by design the path by which review notes end up in a commit.
 
 ![A design note rendered by akapen, with comments in the right rail and an agent's reply under the first](docs/images/review.png)
 
@@ -137,6 +137,78 @@ akapen remove notes/plan.md          # stops serving it; its comments stay
 - `--root <dir>` belongs to `add`, per document. `--css`, `--keymap`, `--author` and the authentication options belong to `serve`
 - `reply`, `resolve`, `rounds cut` and `comments` find a registered document through the server, as they find a one-document server
 
+#### Running the server
+
+`akapen serve` is an ordinary server: start it the way services are started on the host. `install.sh` puts the binary at `~/.local/bin/akapen`.
+
+A systemd user unit, at `~/.config/systemd/user/akapen.service`:
+
+```ini
+[Unit]
+Description=akapen serve
+
+[Service]
+ExecStart=%h/.local/bin/akapen serve --host 0.0.0.0
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+```
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now akapen.service
+loginctl enable-linger "$USER"    # keep it running while you are logged out
+```
+
+A LaunchAgent on macOS, at `~/Library/LaunchAgents/site.akapen.serve.plist`, with `/Users/me` replaced by your home:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>site.akapen.serve</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/me/.local/bin/akapen</string>
+    <string>serve</string>
+    <string>--host</string>
+    <string>0.0.0.0</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardErrorPath</key><string>/Users/me/.akapen/serve.log</string>
+</dict>
+</plist>
+```
+
+```bash
+launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/site.akapen.serve.plist
+```
+
+A container on Linux, with the binary from the host. The documents are mounted at the same path as on the host, since a registration names a file by its absolute path; host networking keeps the server on `127.0.0.1`, where the CLI on the host reaches it. The CLI cannot see the container's process, so give it the port in `AKAPEN_PORT`:
+
+```yaml
+services:
+  akapen:
+    image: debian:stable-slim
+    command: ["/usr/local/bin/akapen", "serve", "--host", "0.0.0.0"]
+    network_mode: host
+    user: "${UID:-1000}:${GID:-1000}"
+    environment:
+      AKAPEN_HOME: /akapen
+    volumes:
+      - ${HOME}/.local/bin/akapen:/usr/local/bin/akapen:ro
+      - ${HOME}/.akapen:/akapen
+      - ${HOME}/notes:${HOME}/notes:ro
+    restart: unless-stopped
+```
+
+```bash
+export AKAPEN_PORT=4300           # in the shell that runs akapen add / list / channel
+```
+
 A registration belongs to the Claude Code session that made it (`CLAUDE_CODE_SESSION_ID`), and lasts as long as the session:
 
 - `akapen channel` connects to the server, so a comment reaches the session as it is written. A session whose channel has been gone for 30 seconds is unregistered; the 30 seconds start when the last channel connected since its last restore disconnects, so a session that never loaded the channel keeps its documents until its SessionEnd hook removes them
@@ -235,7 +307,7 @@ akapen  /home/me/notes/design.md
   url     http://192.168.1.20:4300/?token=<token>…
   also    http://172.17.0.1:4300/?token=<token>…
   round   001
-  store   /home/me/.akapen/reviews/design-ab12cd34ef56
+  store   /home/me/.akapen/comments/design-ab12cd34ef56
 ```
 
 A concrete `--host` is printed unchanged. Ordering by the default route reads `/proc/net/route`, so on a platform without it the addresses come out in whatever order the OS reports them.
@@ -518,7 +590,7 @@ The name is taken from the rendered heading rather than the source line, so `# T
 The markdown file is never touched.
 
 ```text
-~/.akapen/reviews/<basename>-<hash>/
+~/.akapen/comments/<basename>-<hash>/
   review.json          # round metadata and the current round number
   rounds/
     001/content.md     # the frozen document

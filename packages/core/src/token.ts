@@ -21,7 +21,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { akapenHome, writeAtomic } from './store.ts';
 
-/** Where the token is kept. Beside the reviews, so `AKAPEN_HOME` moves both together. */
+/** Where the token is kept. Beside the comments, so `AKAPEN_HOME` moves both together. */
 export function tokenPath(): string {
   return join(akapenHome(), 'token');
 }

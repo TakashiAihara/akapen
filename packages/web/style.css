@@ -196,7 +196,8 @@ body {
   border-bottom: 1px solid var(--ak-border-strong);
   font-size: 13px;
 }
-.brand { font-weight: 700; letter-spacing: 0.02em; }
+.brand { font-weight: 700; letter-spacing: 0.02em; color: inherit; text-decoration: none; }
+a.brand[href]:hover { color: var(--ak-mark); }
 .file {
   font-family: var(--ak-mono);
   color: var(--ak-fg-muted);
