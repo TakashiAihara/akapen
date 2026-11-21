@@ -81,9 +81,16 @@ export function servePath(): string {
 }
 
 export function readServePort(): number | null {
+  return readServeRecord()?.port ?? null;
+}
+
+/** What the running server recorded: its port, and its pid when the record has one. */
+export function readServeRecord(): { port: number; pid: number | null } | null {
   try {
-    const port = (JSON.parse(readFileSync(servePath(), 'utf8')) as { port?: unknown }).port;
-    return typeof port === 'number' && Number.isInteger(port) && port > 0 && port <= 65_535 ? port : null;
+    const rec = JSON.parse(readFileSync(servePath(), 'utf8')) as { port?: unknown; pid?: unknown };
+    const { port, pid } = rec;
+    if (typeof port !== 'number' || !Number.isInteger(port) || port <= 0 || port > 65_535) return null;
+    return { port, pid: typeof pid === 'number' && Number.isInteger(pid) && pid > 0 ? pid : null };
   } catch {
     return null;
   }

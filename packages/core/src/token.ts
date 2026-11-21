@@ -177,7 +177,8 @@ export function manageTokenPath(): string {
 }
 
 export function readManageToken(): string | null {
-  const given = process.env['AKAPEN_MANAGE_TOKEN'];
+  // Trimmed as the file is: a blank value is not a secret, and falls through to the file.
+  const given = process.env['AKAPEN_MANAGE_TOKEN']?.trim();
   if (given !== undefined && given !== '') return given;
   try {
     const raw = readFileSync(manageTokenPath(), 'utf8').trim();

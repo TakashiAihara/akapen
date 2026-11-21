@@ -14,6 +14,7 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
+import { createServer as createHttpServer } from 'node:http';
 import { createServer as createNetServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -249,14 +250,14 @@ describe('akapen serve', () => {
   it('says a server on another token is running, and a one-document start refuses beside it', async () => {
     const d = await serve();
     const other = { AKAPEN_TOKEN: 'some-other-token' };
-    expect(cli(d, ['list'], other).out).toContain('refused this token');
+    expect(cli(d, ['list'], other).out).toContain('refused this command');
     const r = spawnSync('bun', ['run', CLI, note('note.md'), '-p', '0'], {
       env: env({ ...other, AKAPEN_PORT: d.port }),
       encoding: 'utf8',
       timeout: 15_000,
     });
     expect(r.status).toBe(1);
-    expect(r.stderr).toContain('on another token');
+    expect(r.stderr).toContain('refused this command');
   });
 
   it('refuses a second server whose first runs on another token', async () => {
@@ -560,6 +561,53 @@ describe('akapen serve', () => {
     expect((await authed(`${d.base}/api/documents`)).status).toBe(403);
     expect(existsSync(join(home, 'documents.json'))).toBe(false);
     expect(statSync(join(home, 'manage-token')).mode & 0o777).toBe(0o600);
+  });
+
+  it('does not hand the management secret to whatever holds a port this home never chose', async () => {
+    mkdirSync(home, { recursive: true });
+    writeFileSync(join(home, 'manage-token'), 'the-secret-that-must-stay\n', { mode: 0o600 });
+    const seen: (string | undefined)[] = [];
+    const listener = createHttpServer((req, res) => {
+      const h = req.headers['x-akapen-manage'];
+      seen.push(typeof h === 'string' ? h : undefined);
+      res.writeHead(200, { 'content-type': 'application/json' }).end('[]');
+    });
+    await new Promise<void>((done) => listener.listen(0, '127.0.0.1', () => done()));
+    const port = (listener.address() as { port: number }).port;
+    try {
+      // A record left by a server whose process is gone: the port may now belong to anyone.
+      // Not spawnSync: the listener lives in this process, and a blocked loop answers nobody.
+      const listAsync = (e: NodeJS.ProcessEnv) =>
+        new Promise<void>((done) =>
+          spawn('bun', ['run', CLI, 'list'], { env: e, stdio: 'ignore' }).on('exit', () => done()),
+        );
+      writeFileSync(join(home, 'serve.json'), JSON.stringify({ port, pid: 2 ** 22 + 1 }));
+      await listAsync({ ...env(), AKAPEN_PORT: '' });
+      expect(seen.length).toBeGreaterThan(0);
+      expect(seen.every((h) => h === undefined)).toBe(true);
+
+      // Named by AKAPEN_PORT, it is the caller's choice and the secret goes.
+      seen.length = 0;
+      await listAsync(env({ AKAPEN_PORT: String(port) }));
+      expect(seen).toContain('the-secret-that-must-stay');
+    } finally {
+      await new Promise<void>((done) => listener.close(() => done()));
+    }
+  });
+
+  it('says the server refused when the management secret is missing, and a second server still refuses', async () => {
+    const d = await serve();
+    cli(d, ['add', note('note.md')]);
+    rmSync(join(home, 'manage-token'));
+    const r = cli(d, ['list']);
+    expect(r.out).toContain('refused this command');
+    const second = spawnSync('bun', ['run', CLI, 'serve', '-p', '0'], {
+      env: { ...env(), AKAPEN_PORT: '', AKAPEN_MANAGE_TOKEN: 'not-the-running-one' },
+      encoding: 'utf8',
+      timeout: 15_000,
+    });
+    expect(second.status).toBe(1);
+    expect(second.stderr).toContain('already running');
   });
 
   it('refuses the management API to a request a proxy on this machine forwarded', async () => {

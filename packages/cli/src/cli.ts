@@ -6,7 +6,7 @@ import { resolve } from 'node:path';
 import { AdvertiseError, localAddresses, resolveAdvertised, urlsFor } from '@akapen/core/addresses';
 
 import { isInside } from '@akapen/core/files';
-import { readServePort } from '@akapen/core/documents';
+import { readServePort, readServeRecord } from '@akapen/core/documents';
 import { akapenHome, loadReview, pendingComments } from '@akapen/core/store';
 import { liveInstances, reachableHost, readInstances } from '@akapen/core/instances';
 import { liveEntries, sweep as sweepSessions } from '@akapen/core/sessions';
@@ -87,6 +87,27 @@ function daemonPort(): number | null {
   }
 }
 
+/**
+ * Whether the management secret may go to the port `daemonPort` picked.
+ *
+ * Only to a port somebody chose for this home (`-p`, `AKAPEN_PORT`) or one its running
+ * server recorded, while that server's process is alive. Not to the bare default: another
+ * user on this machine can listen on 4300 before akapen does, and would be handed the one
+ * secret that lets a request register any file.
+ */
+function secretMayGo(): boolean {
+  if ((portFlagNamesServer ? args?.port : undefined) ?? (process.env['AKAPEN_PORT'] || undefined))
+    return true;
+  const rec = readServeRecord();
+  if (rec === null || rec.pid === null) return false;
+  try {
+    process.kill(rec.pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
 /** The token a command presents to the server: `--token`, else as `currentToken` finds it. */
 function clientToken(): string | null {
   return args?.token !== undefined && args.token !== '' ? args.token : currentToken();
@@ -128,7 +149,9 @@ async function daemon(
     ...(session === '' ? {} : { 'x-akapen-session': session }),
     ...(init.body === undefined ? {} : { 'content-type': 'application/json' }),
     // Only to the management API: a document's own routes have no use for it.
-    ...(path.startsWith('/api/') && manageToken !== null ? { 'x-akapen-manage': manageToken } : {}),
+    ...(path.startsWith('/api/') && manageToken !== null && secretMayGo()
+      ? { 'x-akapen-manage': manageToken }
+      : {}),
   };
   try {
     return await fetch(`http://127.0.0.1:${port}${path}`, {
@@ -143,20 +166,24 @@ async function daemon(
 }
 
 /**
- * What `akapen serve` has registered, or null when it is not running — or when whatever
- * answers on its port is not it, which is told by the shape of the answer.
- */
-/**
- * Set by `daemonDocuments` when akapen serve answered but refused the token: running, on
- * another one. Kept apart from "not running", which the same null would otherwise mean.
+ * Set by `daemonDocuments` when akapen serve answered but refused this command (its token
+ * or management secret): running all the same. Kept apart from "not running", which the
+ * same null would otherwise mean.
  */
 let serveRefused = false;
 
+/**
+ * What `akapen serve` has registered, or null when it is not running — or when whatever
+ * answers on its port is not it, which is told by the shape of the answer.
+ */
 async function daemonDocuments(token: string | null = clientToken()): Promise<DaemonDocument[] | null> {
   const res = await daemon('/api/documents', {}, token);
+  // akapen's own refusals: the token (401), or the management secret / this machine (403).
+  const refusal = res?.status === 401 || res?.status === 403 ? await res.text().catch(() => '') : '';
   if (
-    res?.status === 401 &&
-    (await res.text().catch(() => '')).startsWith('unauthenticated. open the URL akapen printed')
+    (res?.status === 401 && refusal.startsWith('unauthenticated. open the URL akapen printed')) ||
+    (res?.status === 403 &&
+      (refusal.startsWith('the management secret') || refusal.startsWith('documents are managed')))
   ) {
     serveRefused = true;
     return null;
@@ -335,7 +362,7 @@ if (positional[0] === 'list') {
     const registered = args.session === undefined ? readInstances().length : 0;
     console.log(
       serveRefused && registered === 0
-        ? `akapen serve is running on port ${daemonPort()} but refused this token; pass --token or set AKAPEN_TOKEN`
+        ? `akapen serve is running on port ${daemonPort()} but refused this command (the token, or the management secret in akapen's home or AKAPEN_MANAGE_TOKEN)`
         : args.session === undefined && answered !== null && registered === 0
           ? `akapen serve is running on port ${daemonPort()}; nothing is registered`
           : args.session === undefined
@@ -683,7 +710,9 @@ if (positional[0] === 'serve') {
     const text = answer === null ? '' : await answer.text().catch(() => '');
     if (
       (answer?.ok === true && text.startsWith('[')) ||
-      (answer?.status === 401 && text.startsWith('unauthenticated. open the URL akapen printed'))
+      (answer?.status === 401 && text.startsWith('unauthenticated. open the URL akapen printed')) ||
+      (answer?.status === 403 &&
+        (text.startsWith('the management secret') || text.startsWith('documents are managed')))
     ) {
       fail(`akapen serve is already running for ${akapenHome()} on port ${runningOn}`);
     }
@@ -758,7 +787,9 @@ portFlagNamesServer = false;
 const served = readServePort() === null ? null : await daemonDocuments();
 // Refused, it may well hold this file: starting would put a second holder on its store.
 if (serveRefused) {
-  fail(`akapen serve is running on port ${daemonPort()} on another token; pass that token, or stop it first`);
+  fail(
+    `akapen serve is running on port ${daemonPort()} but refused this command (another token, or no management secret); give it those, or stop it first`,
+  );
 }
 if (served?.some((d) => d.file === resolve(file))) {
   fail(

@@ -1156,7 +1156,10 @@ export function startDaemon(opts: DaemonOptions & { manageToken: string }) {
     }
     const presented = c.req.header('x-akapen-manage');
     if (presented === undefined || !tokensMatch(presented, manageToken)) {
-      return c.text('the management secret is missing or wrong (~/.akapen/manage-token)', 403);
+      return c.text(
+        "the management secret is missing or wrong (manage-token in akapen's home, or AKAPEN_MANAGE_TOKEN)",
+        403,
+      );
     }
     return next();
   });
