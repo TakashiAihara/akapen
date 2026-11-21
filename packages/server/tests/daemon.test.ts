@@ -18,11 +18,12 @@ import {
 import { createServer as createHttpServer } from 'node:http';
 import { createServer as createNetServer } from 'node:net';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { localAddresses } from '@akapen/core/addresses';
 import { collect, holdServeStream, serveStore } from '../../cli/src/channel.ts';
 import { chosenServePort, documentId } from '@akapen/core/documents';
+import { storeDir } from '@akapen/core/store';
 
 const TOKEN = 'test-token-for-the-daemon-suite';
 const CLI = join(import.meta.dirname, '..', '..', 'cli', 'src', 'cli.ts');
@@ -125,6 +126,20 @@ function note(rel: string, text = '# A heading\n\nA paragraph.\n'): string {
   mkdirSync(join(path, '..'), { recursive: true });
   writeFileSync(path, text);
   return path;
+}
+
+/**
+ * The record a one-document akapen of an earlier version left under `instances/`, named after
+ * a process: this one, alive, unless another pid is given. Returns the file name.
+ */
+function legacyRecord(file: string, pid = process.pid): string {
+  mkdirSync(join(home, 'instances'), { recursive: true });
+  const name = `${pid}.json`;
+  writeFileSync(
+    join(home, 'instances', name),
+    JSON.stringify({ pid, host: '127.0.0.1', port: 4399, file, startedAt: new Date().toISOString() }),
+  );
+  return name;
 }
 
 beforeEach(() => {
@@ -254,17 +269,13 @@ describe('akapen serve', () => {
     }
   });
 
-  it('says a server on another token is running, and a one-document start refuses beside it', async () => {
+  it('says a server on another token is running, and refuses a command that holds the wrong one', async () => {
     const d = await serve();
     const other = { AKAPEN_TOKEN: 'some-other-token' };
     expect(cli(d, ['list'], other).out).toContain('refused this command');
-    const r = spawnSync('bun', ['run', CLI, note('note.md'), '-p', '0'], {
-      env: env({ ...other, AKAPEN_PORT: d.port }),
-      encoding: 'utf8',
-      timeout: 15_000,
-    });
-    expect(r.status).toBe(1);
-    expect(r.stderr).toContain('refused this command');
+    const added = cli(d, ['add', note('note.md')], other);
+    expect(added.code).toBe(1);
+    expect(added.err).toContain('answered 401');
   });
 
   it('refuses a second server whose first runs on another token', async () => {
@@ -715,57 +726,60 @@ describe('akapen serve', () => {
     cli(first, ['remove', file]);
     await first.stop();
     renameSync(join(home, 'comments'), join(home, 'reviews'));
-    const legacy = spawn('bun', ['run', CLI, note('other.md'), '-p', '0'], { env: env(), stdio: 'ignore' });
-    const legacyExited = new Promise<void>((done) => legacy.on('exit', () => done()));
-    try {
-      // The record itself, not the temporary file it is written through.
-      await until(
-        () =>
-          existsSync(join(home, 'instances')) &&
-          readdirSync(join(home, 'instances')).some((f) => f.endsWith('.json')),
-        15_000,
-      );
-      const d = await serve();
-      expect(d.output()).toContain('still in use by a one-document akapen');
-      expect(existsSync(join(home, 'comments'))).toBe(false);
-      cli(d, ['add', file]);
-      const listed = JSON.parse(cli(d, ['comments', file]).out) as { body: string }[];
-      expect(listed.map((c) => c.body)).toEqual(['kept']);
-    } finally {
-      legacy.kill();
-      await legacyExited;
-    }
+    // What the one-document akapen of an earlier version left: a record naming a live process.
+    // Nothing writes these any more, so the record is written here as that version wrote it.
+    legacyRecord(note('other.md'));
+    const d = await serve();
+    expect(d.output()).toContain('still in use by a one-document akapen');
+    expect(existsSync(join(home, 'comments'))).toBe(false);
+    cli(d, ['add', file]);
+    const listed = JSON.parse(cli(d, ['comments', file]).out) as { body: string }[];
+    expect(listed.map((c) => c.body)).toEqual(['kept']);
   });
 
-  it('refuses to register a file a one-document akapen is serving, and the reverse', async () => {
+  it('does not open a registered document while a one-document akapen from before serves it', async () => {
     const d = await serve();
     const file = note('note.md');
-    cli(d, ['add', file]);
-    const legacy = spawnSync('bun', ['run', CLI, file, '-p', '0'], {
-      env: env({ AKAPEN_PORT: d.port }),
-      encoding: 'utf8',
-      timeout: 15_000,
-    });
-    expect(legacy.status).toBe(1);
-    expect(legacy.stderr).toContain('akapen serve already serves');
+    const url = urlIn(cli(d, ['add', file]).out);
+    const record = legacyRecord(file);
+    const res = await authed(`${url}api/status`);
+    expect(res.status).toBe(409);
+    expect(await res.text()).toContain(`(pid ${process.pid})`);
+    // Not opened at all: opening would have written the first round into the store. Looked up
+    // under the server's home, which this process does not have in its environment.
+    const rounds = join(home, 'comments', basename(storeDir(file)), 'rounds');
+    expect(existsSync(rounds)).toBe(false);
+    // And the same lookup does find it once that process is gone and the document opens.
+    rmSync(join(home, 'instances', record));
+    expect((await authed(`${url}api/status`)).status).toBe(200);
+    expect(existsSync(rounds)).toBe(true);
+  });
 
-    const other = note('other.md');
-    const proc = spawn('bun', ['run', CLI, other, '-p', '0'], {
-      env: env({ AKAPEN_PORT: d.port }),
-      stdio: ['ignore', 'pipe', 'ignore'],
-    });
-    const exited = new Promise<void>((done) => proc.on('exit', () => done()));
-    try {
-      await new Promise<void>((resolve) =>
-        proc.stdout.on('data', (c: Buffer) => c.toString().includes('url') && resolve()),
-      );
-      const r = cli(d, ['add', other]);
-      expect(r.code).toBe(1);
-      expect(r.err).toContain('a one-document akapen is serving');
-    } finally {
-      proc.kill();
-      await exited;
-    }
+  it('lists nothing for a --session that matches no session', async () => {
+    const d = await serve();
+    cli(d, ['add', note('note.md')]);
+    expect(JSON.parse(cli(d, ['list', '--json', '--session', 'nobody']).out)).toEqual([]);
+  });
+
+  it('refuses to register a file a one-document akapen from before is serving', async () => {
+    const d = await serve();
+    const file = note('note.md');
+    legacyRecord(file);
+    const r = cli(d, ['add', file]);
+    expect(r.code).toBe(1);
+    expect(r.err).toContain(`a one-document akapen from an earlier version (pid ${process.pid})`);
+    expect(JSON.parse(cli(d, ['list', '--json']).out)).toEqual([]);
+    // Only the file it serves: another one registers as usual.
+    expect(cli(d, ['add', note('other.md')]).code).toBe(0);
+  });
+
+  it('leaves the records of one-document akapen where they are, whether their process is there or not', async () => {
+    const d = await serve();
+    const gone = legacyRecord(note('gone.md'), 2_147_483_646);
+    const alive = legacyRecord(note('alive.md'));
+    cli(d, ['add', note('other.md')]);
+    cli(d, ['list']);
+    expect(readdirSync(join(home, 'instances')).toSorted()).toEqual([gone, alive].toSorted());
   });
 
   it('finds a server started on its own port through what it recorded', async () => {
@@ -1123,5 +1137,136 @@ describe('sessions on akapen serve', () => {
       id: string;
     }[];
     expect(listed.map((c) => c.body)).toEqual(['listed']);
+  });
+});
+
+describe('the commands that name a document', () => {
+  it('say so, and send nothing, when the document is not registered', async () => {
+    const d = await serve();
+    const file = note('note.md');
+    for (const args of [
+      ['comments', file],
+      ['reply', file, 'c_1', 'a reply'],
+      ['resolve', file, 'c_1'],
+      ['rounds', 'cut', file],
+    ]) {
+      const r = cli(d, args);
+      expect(r.code, args[0]).toBe(1);
+      expect(r.err, args[0]).toContain(`${file} is not registered with akapen serve`);
+      expect(r.err, args[0]).toContain(`akapen add ${file}`);
+    }
+    expect(JSON.parse(cli(d, ['list', '--json']).out)).toEqual([]);
+  });
+
+  it('say that akapen serve is not answering when nothing is', () => {
+    const file = note('note.md');
+    for (const args of [
+      ['comments', file],
+      ['reply', file, 'c_1', 'a reply'],
+      ['resolve', file, 'c_1'],
+      ['rounds', 'cut', file],
+    ]) {
+      const r = cli(null, args);
+      expect(r.code, args[0]).toBe(1);
+      expect(r.err, args[0]).toContain('akapen serve is not answering on 127.0.0.1:1');
+    }
+  });
+});
+
+describe('akapen list', () => {
+  it('lists the round and the open comments a document has reached, as JSON and as a table', async () => {
+    const d = await serve();
+    const file = note('note.md');
+    const url = urlIn(cli(d, ['add', file]).out);
+    await comment(url, 'one');
+    await comment(url, 'two');
+    writeFileSync(file, '# A heading\n\nChanged.\n');
+    expect(cli(d, ['rounds', 'cut', file]).code).toBe(0);
+    await comment(url, 'three');
+
+    const [row] = JSON.parse(cli(d, ['list', '--json']).out) as { round: number; unresolved: number }[];
+    expect(row).toMatchObject({ round: 2, unresolved: 3 });
+    const table = cli(d, ['list']).out;
+    expect(table).toMatch(/R002\s+3\s/);
+
+    // Only the comments of the current round are marked as such.
+    const listed = JSON.parse(cli(d, ['comments', file]).out) as { body: string; current_round: boolean }[];
+    expect(listed.map((c) => [c.body, c.current_round]).toSorted()).toEqual([
+      ['one', false],
+      ['three', true],
+      ['two', false],
+    ]);
+  });
+
+  it('refuses the options of akapen serve on add, rather than dropping them', async () => {
+    const d = await serve();
+    const r = cli(d, ['add', note('note.md'), '--css', 'x.css', '--author', 'me']);
+    expect(r.code).toBe(1);
+    expect(r.err).toContain('--css, --author belong to akapen serve');
+  });
+
+  it('prints what is registered as JSON, with the path in full', async () => {
+    const d = await serve();
+    const file = note('note.md');
+    // Read from the store, so a document is listed with its round once something has opened it.
+    expect((await authed(`${urlIn(cli(d, ['add', file]).out)}api/status`)).status).toBe(200);
+
+    expect(JSON.parse(cli(d, ['list', '--json']).out)).toEqual([
+      {
+        pid: null,
+        host: '127.0.0.1',
+        port: Number(d.port),
+        url: expect.stringMatching(new RegExp(`^http://127\\.0\\.0\\.1:${d.port}/d/note-[0-9a-f]{12}/$`)),
+        // Registered from no session, so there is nothing to attribute it to. Null rather
+        // than absent: a consumer filtering on it should not have to tell the two apart.
+        origin: null,
+        file,
+        id: expect.stringMatching(/^note-[0-9a-f]{12}$/),
+        title: 'A heading',
+        round: 1,
+        unresolved: 0,
+        missing: false,
+        started_at: expect.any(String),
+      },
+    ]);
+  });
+
+  it('prints a table with the round, the url to open and the file in full', async () => {
+    const d = await serve();
+    const file = note('note.md');
+    expect((await authed(`${urlIn(cli(d, ['add', file]).out)}api/status`)).status).toBe(200);
+
+    const out = cli(d, ['list']).out;
+    expect(out).toContain('R001');
+    expect(out).toContain(file);
+    expect(out).toContain('URL');
+    expect(out).toContain(`http://127.0.0.1:${d.port}/d/note-`);
+  });
+
+  it('says so when no server is running', () => {
+    const r = cli(null, ['list']);
+    expect(r.out.trim()).toBe('no akapen is running');
+    expect(JSON.parse(cli(null, ['list', '--json']).out)).toEqual([]);
+  });
+});
+
+describe('akapen <file.md>', () => {
+  it('is not a way to run akapen: it exits 2 and names akapen serve and akapen add', () => {
+    const file = note('note.md');
+    for (const args of [[file], [file, '-p', '0'], ['no-such-command']]) {
+      const r = cli(null, args);
+      expect(r.code, args.join(' ')).toBe(2);
+      expect(r.err).toContain('akapen serve');
+      expect(r.err).toContain('akapen add <file.md>');
+      expect(r.out).toBe('');
+    }
+  });
+
+  it('starts nothing: no port is bound and nothing is written to the home', async () => {
+    const d = await serve();
+    const before = readdirSync(home).toSorted();
+    cli(d, [note('note.md')]);
+    expect(readdirSync(home).toSorted()).toEqual(before);
+    expect(JSON.parse(cli(d, ['list', '--json']).out)).toEqual([]);
   });
 });

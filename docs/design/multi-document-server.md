@@ -24,9 +24,18 @@ Issue #305. One long-lived `akapen serve` on one fixed port hands out every regi
 - The README shows how to run the server: a systemd user unit, a LaunchAgent, and a compose file for Linux (host networking, documents mounted at the same path as on the host)
 - A document page served under `/d/` links back to the list at `/` from the name in its header
 
-## Planned in the same major version
+## Removing the one-document mode
 
-- `akapen <file.md>`, one process for one document, is removed
+`akapen <file.md>`, one process for one document, is removed. What goes and what stays:
+
+- `akapen <file.md>` exits 2 with a message that names the replacement: start `akapen serve`, then `akapen add <file.md>`
+- The one-document server goes: `startServer` and what only it did (writing and removing an instance record, the per-session URL index under `~/.akapen/sessions/`, the `/api/instances` switcher of other processes). `openDocument`, which `akapen serve` mounts per document, stays
+- The page's switcher of other processes goes; the name in the header already leads to the list at `/`
+- The CLI talks to `akapen serve` only: `list` shows its registrations (`--session` filters them), `reply`, `resolve`, `rounds cut` and `comments` reach a registered document through it, and say so when the document is not registered
+- The channel reads `akapen serve` only; the one-document registry is no longer a source
+- Records an earlier version's one-document akapen left under `~/.akapen/instances/` are still read, never written: `akapen serve` keeps refusing to register a file such a process serves, and keeps holding back the `reviews/` rename while one runs. Nothing else reads them
+- `--advertise` and `--host` stay, as options of `akapen serve`
+- Tests that started a one-document server start `akapen serve` and `add` the file instead, and reach it under `/d/<id>/`. Tests of what only the one-document server did go with it
 
 ## Options not taken
 

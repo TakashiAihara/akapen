@@ -9,7 +9,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import type { Page } from '@playwright/test';
-import { expect, startPeer, test, TOKEN } from './fixtures.ts';
+import { expect, startServed, test, TOKEN } from './fixtures.ts';
 
 /** Serve `source` with the sheet `css` writes into the sandbox, then open it. */
 async function open(page: Page, css: (dir: string) => string, source: string, run: () => Promise<void>) {
@@ -17,12 +17,12 @@ async function open(page: Page, css: (dir: string) => string, source: string, ru
   try {
     const file = join(dir, 'note.md');
     writeFileSync(file, source);
-    const peer = await startPeer(join(dir, 'home'), file, { extra: ['--css', css(dir)] });
+    const served = await startServed(join(dir, 'home'), file, { extra: ['--css', css(dir)] });
     try {
-      await page.goto(`http://127.0.0.1:${peer.port}/?token=${TOKEN}`);
+      await page.goto(`${served.url}/?token=${TOKEN}`);
       await run();
     } finally {
-      await peer.stop();
+      await served.stop();
     }
   } finally {
     rmSync(dir, { recursive: true, force: true });

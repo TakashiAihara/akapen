@@ -33,19 +33,11 @@ import {
   roundContent,
   renameLegacyStore,
   saveComments,
-  storeDir,
   updateComment,
   type Comment,
   type Review,
 } from '@akapen/core/store';
-import {
-  detectOrigin,
-  liveInstances,
-  readInstances,
-  registerInstance,
-  removeInstance,
-} from '@akapen/core/instances';
-import { forgetUrl, liveEntries, recordUrl, sweep as sweepSessions } from '@akapen/core/sessions';
+import { readInstances } from '@akapen/core/instances';
 import { urlsFor } from '@akapen/core/addresses';
 import {
   CreateCommentSchema,
@@ -54,39 +46,20 @@ import {
   type ChangedEvent,
   type ChangedState,
   type DocPayload,
-  type InstancesPayload,
   type RoundEvent,
   type RoundState,
   type StatusPayload,
 } from '@akapen/shared';
 import { documentTitle } from '@akapen/shared/title';
 
-export type ServeOptions = {
-  file: string;
+export type DaemonOptions = {
   host: string;
   port: number;
-  /**
-   * Listen on a port the OS picks when `port` is taken, instead of failing (#107). For
-   * the default port only: a port asked for by name that is moved off silently is worse
-   * than one that fails. The result's `movedFrom` says it happened.
-   */
-  fallBackIfTaken?: boolean;
   author: string;
-  /**
-   * The address `--advertise` pinned, when one was pinned.
-   *
-   * Only used to decide what to record as this instance's url. The startup line derives
-   * the same answer from the same value, and a registry that disagreed with the line
-   * printed a moment earlier would be worse than no registry.
-   */
+  /** The address `--advertise` pinned, when one was pinned: what the URLs this server hands out are built on. */
   advertised?: string | null;
   cssPath?: string;
   keymapPath?: string;
-  /**
-   * The directory images beside the document may be served from (#81). Absent means
-   * the document's own directory, the narrowest root that makes ordinary documents work.
-   */
-  root?: string;
   /**
    * The shared secret every request must present, or null for `--no-auth`.
    *
@@ -102,15 +75,10 @@ export type ServeOptions = {
    * True for one handed in with `--token` or `AKAPEN_TOKEN`, which belongs to whoever
    * handed it in. False for one read from the store, where `akapen token --rotate` has
    * to take effect on the servers that are already running — otherwise the only
-   * revocation there is revokes nothing until every instance is restarted.
+   * revocation there is revokes nothing until the server is restarted.
    */
   tokenPinned: boolean;
 };
-
-/** Addresses that only the host itself can reach. `::1` also arrives bracketed. */
-function isLoopback(host: string): boolean {
-  return host === '127.0.0.1' || host === 'localhost' || host === '::1' || host === '[::1]';
-}
 
 /** The cookie the browser is handed once, so nothing after the first visit carries a token. */
 const COOKIE = 'akapen_token';
@@ -173,7 +141,7 @@ type DocEnv = { Bindings: { checkedSecret: string | null } };
 
 type DocumentOptions = {
   author: string;
-  /** See ServeOptions.root. */
+  /** The directory images beside the document may be served from (#81); absent means the document's own directory. */
   root?: string;
   /** Told when a comment or a reply has been stored, so a waiting channel can look now. */
   onWrite?: () => void;
@@ -324,8 +292,8 @@ export function openDocument(file: string, opts: DocumentOptions, currentSecret:
   let timer: ReturnType<typeof setTimeout> | null = null;
   /**
    * A save that writes a new file and renames it over the old one leaves the watcher on
-   * the old inode, which never fires again. A one-document server is restarted often
-   * enough to hide that; one serving for days is not, so it watches the path afresh.
+   * the old inode, which never fires again. A server that is restarted often would not
+   * notice; one serving for days would, so it watches the path afresh.
    */
   let rearmTimer: ReturnType<typeof setTimeout> | null = null;
   let rearmTries = 0;
@@ -546,12 +514,11 @@ export function openDocument(file: string, opts: DocumentOptions, currentSecret:
   );
 
   /**
-   * What this instance is showing. Small on purpose: it is answered on every liveness
-   * check another instance makes, and a row only needs enough to recognise a document
-   * and see whether it is waiting on someone.
+   * What this document is showing. Small on purpose: the page needs only enough to tell
+   * which document it is talking to and whether it is waiting on someone.
    *
-   * The basename, never the path. The switcher is read over the LAN with nothing
-   * authenticating a reader (#10), and directory layout is not something to hand out.
+   * The basename, never the path. Anyone on the LAN with the token reads this (and anyone
+   * at all under --no-auth), and directory layout is not something to hand out.
    */
   app.get('/api/status', (c) => {
     const status: StatusPayload = {
@@ -673,15 +640,13 @@ export function openDocument(file: string, opts: DocumentOptions, currentSecret:
 
 export type OpenDocument = ReturnType<typeof openDocument>;
 
-type GuardOptions = Pick<ServeOptions, 'host' | 'token' | 'tokenPinned' | 'cssPath' | 'keymapPath'>;
+type GuardOptions = Pick<DaemonOptions, 'host' | 'token' | 'tokenPinned' | 'cssPath' | 'keymapPath'>;
 
 /**
  * The parts of a server that are not about any one document: the Host, site and token
  * checks in front of everything, and the stylesheet and keymap hooks.
- *
- * `rememberUrl` is told the origin a browser logged in on.
  */
-function guardedApp(opts: GuardOptions, rememberUrl: (url: string) => void) {
+function guardedApp(opts: GuardOptions) {
   /**
    * `checkedSecret` is the secret this request was checked against, or null when nothing
    * is checked. A handler only runs once it has matched, so there it is the secret the
@@ -834,16 +799,6 @@ function guardedApp(opts: GuardOptions, rememberUrl: (url: string) => void) {
      */
     if (presented !== null && (cookieOk || queryOk) && SAFE_METHODS.has(c.req.method)) {
       if (queryOk) {
-        /**
-         * The authority the cookie is about to be scoped to, which is the one this
-         * browser can come back on. Taken from the request rather than derived: what
-         * was bound, what `--advertise` named and what the reader typed are three
-         * different things, and only the last one is what the cookie will follow.
-         *
-         * Already checked — a `Host` this server does not serve was refused above — so
-         * what is recorded here is a name it answers to.
-         */
-        if (host !== undefined) rememberUrl(`http://${host}`);
         setCookie(c, COOKIE, active, {
           httpOnly: true,
           sameSite: 'Lax',
@@ -932,137 +887,6 @@ function serveAssets(app: GuardedApp): void {
   });
 }
 
-export function startServer(opts: ServeOptions) {
-  const file = resolve(opts.file);
-  // Read once. It cannot change while the process runs, and the login handler below
-  // needs it on a path that should not be touching the environment.
-  const origin = detectOrigin();
-
-  /**
-   * Say where this instance can be reached, if anybody is going to look.
-   *
-   * Written twice over a life. Once when the socket is listening, with the address the
-   * startup line printed — so a session that has just started one has something to show
-   * before anybody has opened it. Again when a browser logs in, with the origin that
-   * browser now holds a cookie for.
-   *
-   * The second is what makes the first safe. The recorded url is a guess at which of
-   * this machine's addresses the reader will use, and a cookie is scoped to scheme, host
-   * and port together — so a wrong guess is one a bare url cannot come back on. But a
-   * wrong guess is also, precisely, one whose cookie will not be sent, which forces a
-   * login, which rewrites it. It repairs itself in the case it is wrong, and only then.
-   *
-   * Guarded on the value because a bookmark carrying `?token=` logs in on every visit,
-   * and rewriting an identical file on every reload is a write nobody asked for.
-   */
-  let recordedUrl: string | null = null;
-  const rememberUrl = (url: string): void => {
-    if (origin.id === undefined || url === recordedUrl) return;
-    // Cached only once it is on disk. Caching the attempt would mean a write that failed
-    // — a directory removed underneath it, a full disk — is never tried again, and the
-    // login that would have repaired a wrong guess returns early instead.
-    if (recordUrl(origin.id, process.pid, url)) recordedUrl = url;
-  };
-
-  const { app, currentSecret } = guardedApp(opts, rememberUrl);
-  const document = openDocument(
-    file,
-    { author: opts.author, ...(opts.root === undefined ? {} : { root: opts.root }) },
-    currentSecret,
-  );
-
-  /**
-   * The other akapen running for this user, built here rather than in the browser.
-   *
-   * The browser cannot do it. Every instance is a different origin, so it would need
-   * CORS on an endpoint that has none, and one bound to `127.0.0.1` is not reachable
-   * from the reader's machine at all while being perfectly reachable from here.
-   *
-   * Without sweeping: a server outlives an upgrade as a channel does, and this runs on
-   * every focus of the page, so an old one would delete what a newer one registers (#184).
-   */
-  app.get('/api/instances', async (c) => {
-    const live = await liveInstances({ sweep: false, excludePid: process.pid, token: currentSecret() });
-    const payload: InstancesPayload = {
-      instances: live.map(({ record, status }) => ({
-        pid: record.pid,
-        host: record.host,
-        port: record.port,
-        file: status.file,
-        round: status.round,
-        unresolved: status.unresolved,
-        // A loopback bind answers here, next to it, and nowhere the reader's browser
-        // can reach. Saying so beats a link that times out.
-        reachable: !isLoopback(record.host),
-      })),
-    };
-    return c.json(payload);
-  });
-  // The document is mounted at the root: one process, one document.
-  app.get('/', (c) => forward(c, document, '/'));
-  app.all('/api/*', (c) => forward(c, document, new URL(c.req.url).pathname));
-  app.get('/events', (c) => forward(c, document, '/events'));
-  app.get(FILE_ROUTE, (c) => forward(c, document, FILE_ROUTE));
-  serveAssets(app);
-
-  // One process, as before. Hono only replaces the routing inside the same fetch
-  // handler; there is no second server and nothing to proxy.
-  const serve = (port: number) =>
-    Bun.serve({ hostname: opts.host, port, idleTimeout: IDLE_TIMEOUT_S, fetch: app.fetch });
-  let server: ReturnType<typeof serve>;
-  let movedFrom: number | null = null;
-  try {
-    server = serve(opts.port);
-  } catch (err) {
-    if (!opts.fallBackIfTaken || (err as { code?: unknown }).code !== 'EADDRINUSE') throw err;
-    server = serve(0);
-    movedFrom = opts.port;
-  }
-
-  // Announced only once it is listening, and with the port the socket actually got —
-  // `-p 0` means the number in opts is 0, which nothing can be reached on.
-  //
-  // Bun leaves the port undefined for a server listening on a unix socket. This one
-  // never is, and an entry without a port is an entry nothing can be reached through,
-  // so there would be nothing to write.
-  if (server.port !== undefined) {
-    registerInstance({
-      pid: process.pid,
-      host: opts.host,
-      port: server.port,
-      file,
-      startedAt: new Date().toISOString(),
-      origin,
-    });
-    // The same derivation the startup line prints, so the two never disagree.
-    rememberUrl(urlsFor(opts.advertised ?? opts.host, server.port)[0]);
-    // A crash leaves a file behind that nothing will ever remove on its own, and one
-    // that never looks wrong: whoever reads it checks the pid and skips it. Starting is
-    // when the registry has just been read anyway, so it is the cheapest moment to look.
-    sweepSessions(liveEntries());
-  }
-
-  /**
-   * Shut everything this started, not just the socket.
-   *
-   * The CLI never needs it — the process exits and takes the watcher with it. Anything
-   * that starts a server and keeps running does need it: `server.stop()` alone leaves
-   * the FSWatcher and a pending debounce timer holding the event loop open.
-   */
-  const stop = async () => {
-    document.stop();
-    // Before the socket closes: an entry left pointing at a port nobody is listening on
-    // is what every reader then has to spend a timeout discovering.
-    removeInstance();
-    if (origin.id !== undefined) forgetUrl(origin.id, process.pid);
-    await server.stop(true);
-  };
-
-  return { server, stop, storeDir: storeDir(file), round: document.round(), movedFrom };
-}
-
-export type DaemonOptions = Omit<ServeOptions, 'file' | 'root' | 'fallBackIfTaken'>;
-
 /**
  * How long a session's channel may be gone before its registrations are removed (#305).
  * Long enough to ride out a channel restarting; `AKAPEN_DISCONNECT_MS` is for the tests.
@@ -1111,9 +935,9 @@ const escapeHtml = (s: string): string => s.replace(/[&<>"']/g, (ch) => `&#${ch.
 export function startDaemon(opts: DaemonOptions & { manageToken: string }) {
   const { manageToken } = opts;
   // Before anything reads a store: the documents' comments move to comments/ (#305).
-  const notRenamed = renameLegacyStore(readInstances({ sweep: false }).length > 0);
+  const notRenamed = renameLegacyStore(readInstances().length > 0);
   if (notRenamed !== null) console.error(`akapen: ${notRenamed}`);
-  const { app, currentSecret } = guardedApp(opts, () => {});
+  const { app, currentSecret } = guardedApp(opts);
   let entries: DocumentEntry[] = readDocuments();
   const open = new Map<string, OpenDocument>();
   let base = '';
@@ -1123,7 +947,7 @@ export function startDaemon(opts: DaemonOptions & { manageToken: string }) {
     open.delete(id);
   };
 
-  const documentFor = (id: string): OpenDocument | null => {
+  const documentFor = (id: string): OpenDocument | { heldBy: number } | null => {
     const entry = entries.find((e) => e.id === id);
     if (entry === undefined) return null;
     let doc = open.get(id);
@@ -1131,6 +955,10 @@ export function startDaemon(opts: DaemonOptions & { manageToken: string }) {
     // replaces it by delete and create must not turn a comment on the round into a 404.
     if (doc === undefined) {
       if (!existsSync(entry.file)) return null;
+      // Registered before an earlier version's one-document akapen took the same file: two
+      // holders of one store overwrite each other, so it is not opened while that one runs.
+      const holder = readInstances().find((r) => r.file === entry.file);
+      if (holder !== undefined) return { heldBy: holder.pid };
       doc = openDocument(
         entry.file,
         {
@@ -1243,8 +1071,12 @@ export function startDaemon(opts: DaemonOptions & { manageToken: string }) {
     }
     // A one-document akapen on the same file holds the round and comments in memory and
     // writes them back, as this server would: two holders of one store overwrite each other.
-    if (readInstances({ sweep: false }).some((r) => r.file === file)) {
-      return { refused: `a one-document akapen is serving ${file}; stop it first`, status: 409 };
+    const holder = readInstances().find((r) => r.file === file);
+    if (holder !== undefined) {
+      return {
+        refused: `a one-document akapen from an earlier version (pid ${holder.pid}) is serving ${file}; stop it first`,
+        status: 409,
+      };
     }
     const id = documentId(file);
     const prev = entries.find((e) => e.id === id);
@@ -1449,10 +1281,6 @@ export function startDaemon(opts: DaemonOptions & { manageToken: string }) {
     return c.json({ restored, refused });
   });
 
-  // The page's switcher asks this. It lists other processes, and every document here is
-  // in this one, so it stays empty; the index at `/` is where the others are listed.
-  app.get('/api/instances', (c) => c.json({ instances: [] } satisfies InstancesPayload));
-
   /**
    * What is registered, for a browser. The basename and the title, never the path: this
    * page is read over the LAN, and directory layout is not something to hand out.
@@ -1483,6 +1311,11 @@ export function startDaemon(opts: DaemonOptions & { manageToken: string }) {
     const id = c.req.param('id');
     const doc = documentFor(id);
     if (doc === null) return c.text('not registered here', 404);
+    if ('heldBy' in doc)
+      return c.text(
+        `a one-document akapen from an earlier version (pid ${doc.heldBy}) is serving this file; stop it first`,
+        409,
+      );
     // Cut from the raw path: the id arrives decoded, and its encoded form is longer.
     return forward(c, doc, new URL(c.req.url).pathname.replace(/^\/d\/[^/]*/, '') || '/');
   });

@@ -13,7 +13,6 @@
  */
 import { execFileSync, execSync, spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import {
-  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -26,11 +25,10 @@ import {
 import { connect } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   CommentsPayloadSchema,
   DocPayloadSchema,
-  InstancesPayloadSchema,
   ServerEventSchema,
   StatusPayloadSchema,
 } from '@akapen/shared';
@@ -66,9 +64,11 @@ const fetch = (input: string | URL, init?: RequestInit): Promise<Response> =>
 const CLI = join(import.meta.dirname, '..', '..', 'cli', 'src', 'cli.ts');
 
 type Server = {
+  /** The document's own address under `akapen serve`: `/d/<id>`, without a trailing slash. */
   url: string;
+  /** The server's address, where its assets, keymap and stylesheet are. */
+  origin: string;
   port: string;
-  /** The registry entry is named after this, and stopping it has to take the entry with it. */
   pid: number;
   stop: () => void;
   /** Resolves once the process is gone, so shutdown can be asserted rather than assumed. */
@@ -76,8 +76,9 @@ type Server = {
 };
 
 /**
- * Start akapen on a port the OS picks and read the port back off its own output.
- * Choosing a number here would collide with a server someone left running.
+ * Start `akapen serve` on a port the OS picks, read the port back off its own output, and
+ * register `file` with it. Choosing a number here would collide with a server someone left
+ * running. `--root` belongs to `add`, per document; every other option goes to `serve`.
  */
 async function start(
   file: string,
@@ -88,19 +89,24 @@ async function start(
   // `null` leaves AKAPEN_TOKEN out, so the server generates and stores one — the path
   // the everyday case takes, and the only way to test what it writes.
   const token = opts.token === undefined ? TOKEN : opts.token;
-  const proc: ChildProcess = spawn('bun', ['run', CLI, file, '-p', '0', ...extra], {
-    env: {
-      ...process.env,
-      // Cleared unless a test sets them. akapen reads the origin off the environment,
-      // and these tests are themselves run by something that may export a session id —
-      // inheriting it would make what is asserted depend on who ran the suite, and pass
-      // in CI while failing on the machine that wrote it.
-      CLAUDE_CODE_SESSION_ID: '',
-      AKAPEN_ORIGIN_LABEL: '',
-      AKAPEN_HOME: home,
-      ...(token === null ? {} : { AKAPEN_TOKEN: token }),
-      ...opts.env,
-    },
+  const rootAt = extra.indexOf('--root');
+  const root = rootAt === -1 ? [] : extra.slice(rootAt, rootAt + 2);
+  const serveOptions = rootAt === -1 ? extra : [...extra.slice(0, rootAt), ...extra.slice(rootAt + 2)];
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    // Cleared unless a test sets them: these tests are themselves run by something that may
+    // export a session id, and inheriting it would make what is asserted depend on who ran
+    // the suite, and pass in CI while failing on the machine that wrote it.
+    CLAUDE_CODE_SESSION_ID: '',
+    AKAPEN_HOME: home,
+    AKAPEN_MANAGE_TOKEN: '',
+    AKAPEN_TOKEN: token ?? '',
+    AKAPEN_PORT: '',
+    ...opts.env,
+  };
+  if (token === null) delete env['AKAPEN_TOKEN'];
+  const proc: ChildProcess = spawn('bun', ['run', CLI, 'serve', '-p', '0', ...serveOptions], {
+    env,
     // stderr is piped, not dropped: when startup fails, the reason is only on stderr,
     // and a discarded one turns every failure into a bare timeout.
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -129,8 +135,28 @@ async function start(
       });
     });
 
+    const added = spawnSync('bun', ['run', CLI, 'add', file, ...root], {
+      env: { ...env, AKAPEN_PORT: port },
+      encoding: 'utf8',
+    });
+    const id = /^\s+id\s+(\S+)/m.exec(added.stdout)?.[1];
+    if (added.status !== 0 || id === undefined) {
+      throw new Error(`akapen add exited with ${added.status}\n${added.stderr}${added.stdout}`);
+    }
+
+    // A document is opened, and its first round taken from the file, by the first request
+    // for it. Made here, so what a test writes to the file afterwards is a change to a
+    // document that is already being served.
+    const credential = token ?? readFileSync(join(home, 'token'), 'utf8').trim();
+    const url = `http://127.0.0.1:${port}/d/${encodeURIComponent(id)}`;
+    const opened = await globalThis.fetch(`${url}/api/status`, {
+      headers: { authorization: `Bearer ${credential}` },
+    });
+    if (!opened.ok) throw new Error(`the document did not open: ${opened.status}`);
+
     return {
-      url: `http://127.0.0.1:${port}`,
+      url,
+      origin: `http://127.0.0.1:${port}`,
       port,
       pid: proc.pid!,
       stop,
@@ -145,26 +171,11 @@ async function start(
   }
 }
 
-/**
- * A pid nothing is using, for imitating an instance that crashed. Walking down from a
- * high number rather than picking one: a fixed number is a live process on somebody's
- * machine, and EPERM means one is there and owned by someone else.
- */
-function deadPid(): number {
-  for (let pid = 99_999; pid > 1; pid--) {
-    try {
-      process.kill(pid, 0);
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === 'ESRCH') return pid;
-    }
-  }
-  throw new Error('every pid up to 99999 is in use');
-}
-
 let sandbox: string;
 let work: string;
 let server: Server | null = null;
 let base: string;
+let origin: string;
 
 // Spawning bun and waiting for it to listen does not fit vitest's 10s default, and a
 // hook that times out reports itself instead of the startup output that says why.
@@ -174,6 +185,7 @@ beforeEach(async () => {
   writeFileSync(work, SOURCE);
   server = await start(work, join(sandbox, 'home'));
   base = server.url;
+  origin = server.origin;
 }, 30_000);
 
 afterEach(() => {
@@ -183,10 +195,6 @@ afterEach(() => {
   server = null;
   rmSync(sandbox, { recursive: true, force: true });
 });
-
-/** The instances one server can see, checked against the contract rather than cast. */
-const peers = async (from: string) =>
-  v.parse(InstancesPayloadSchema, await (await fetch(`${from}/api/instances`)).json()).instances;
 
 const post = (path: string, body?: unknown) =>
   fetch(`${base}${path}`, {
@@ -904,16 +912,16 @@ describe('what is served', () => {
     // `/../package.json` is not worth asserting: fetch folds it to `/package.json`
     // before the request leaves, so the server never sees the `..`. An encoded slash
     // survives normalisation and does reach the lookup.
-    expect((await fetch(`${base}/nope.txt`)).status).toBe(404);
-    expect((await fetch(`${base}/..%2fpackage.json`)).status).toBe(404);
+    expect((await fetch(`${origin}/nope.txt`)).status).toBe(404);
+    expect((await fetch(`${origin}/..%2fpackage.json`)).status).toBe(404);
   });
 
   it('answers 404 for a name that only exists on Object.prototype', async () => {
     // The lookup key comes straight from the URL. With an ordinary object literal these
     // find a function, pass the truthy check and reach Bun.file() as a 500.
-    expect((await fetch(`${base}/constructor`)).status).toBe(404);
-    expect((await fetch(`${base}/toString`)).status).toBe(404);
-    expect((await fetch(`${base}/__proto__`)).status).toBe(404);
+    expect((await fetch(`${origin}/constructor`)).status).toBe(404);
+    expect((await fetch(`${origin}/toString`)).status).toBe(404);
+    expect((await fetch(`${origin}/__proto__`)).status).toBe(404);
   });
 
   it('falls back to the default keymap when the override is broken JSON', async () => {
@@ -921,9 +929,9 @@ describe('what is served', () => {
     // with an empty override rather than failing the request.
     const broken = join(sandbox, 'keymap.json');
     writeFileSync(broken, '{ "row.next": [');
-    const other = await start(work, join(sandbox, 'home'), ['--keymap', broken]);
+    const other = await start(work, join(sandbox, 'keymap-home'), ['--keymap', broken]);
     try {
-      const res = await fetch(`${other.url}/keymap.json`);
+      const res = await fetch(`${other.origin}/keymap.json`);
       expect(res.ok).toBe(true);
       expect(await res.json()).toEqual({});
     } finally {
@@ -1041,25 +1049,9 @@ describe('replying', () => {
 });
 
 /**
- * Finding the other akapen on this host.
- *
- * Every instance drops a file naming itself under AKAPEN_HOME, and a reader proves each
- * one is alive by asking it. Both halves fail quietly when they break: a stale entry is
- * a row that goes nowhere, and an entry that outlives its process makes every reader pay
- * a timeout to discover it. The tests share one home, since that is the boundary of what
- * an instance can see.
+ * What `/api/status` says of a document: what the tab is built from.
  */
-describe('the other instances on this host', () => {
-  const home = () => join(sandbox, 'home');
-  const instancesDir = () => join(home(), 'instances');
-
-  /** A second akapen, with its own file so the two rows can be told apart. */
-  const startPeer = (name: string, extra: string[] = []) => {
-    const file = join(sandbox, name);
-    writeFileSync(file, SOURCE);
-    return start(file, home(), extra);
-  };
-
+describe('the status of a document', () => {
   it('reports what it is showing, by basename', async () => {
     const before = v.parse(StatusPayloadSchema, await (await fetch(`${base}/api/status`)).json());
     expect(before).toEqual({ file: 'note.md', title: 'Heading', round: 1, unresolved: 0 });
@@ -1068,21 +1060,9 @@ describe('the other instances on this host', () => {
 
     const after = v.parse(StatusPayloadSchema, await (await fetch(`${base}/api/status`)).json());
     expect(after.unresolved).toBe(1);
-    // The path is not in the payload at all. The switcher is read over the LAN with
-    // nothing authenticating a reader, and directory layout is not something to hand out.
+    // The path is not in the payload at all. `akapen list` has the path for
+    // whoever runs it, and this is read over the LAN, where directory layout is not something to hand out.
     expect(JSON.stringify(after)).not.toContain(sandbox);
-  });
-
-  it('lists the others without deleting entries it cannot read (#184)', async () => {
-    // A server outlives an upgrade, and the page asks this on every focus. What a newer
-    // binary registers in a shape this one does not know has to survive the asking.
-    mkdirSync(instancesDir(), { recursive: true });
-    // Named after a live process (this test's parent), so it is not a crash's leftover.
-    const foreign = join(instancesDir(), `${process.ppid}.json`);
-    writeFileSync(foreign, '{"shape":"from a later version"}');
-
-    expect((await fetch(`${base}/api/instances`)).ok).toBe(true);
-    expect(existsSync(foreign)).toBe(true);
   });
 
   /** What a document is called, where `akapen list` can reach it (#169). */
@@ -1117,348 +1097,6 @@ describe('the other instances on this host', () => {
     expect(await titleOf(base)).toBe('Heading');
     expect((await post('/api/rounds')).ok).toBe(true);
     expect(await titleOf(base)).toBe('Renamed');
-  });
-
-  it('lists the other instance, and never itself', async () => {
-    const peer = await startPeer('design.md');
-    try {
-      const ours = await peers(base);
-      expect(ours).toHaveLength(1);
-      expect(ours[0]).toMatchObject({ pid: peer.pid, file: 'design.md', round: 1, unresolved: 0 });
-      expect(ours[0]!.port).toBe(Number(peer.port));
-
-      // Both directions: the registry is shared, so seeing each other is one mechanism,
-      // but excluding yourself is decided by each server separately.
-      const theirs = await peers(peer.url);
-      expect(theirs.map((p) => p.file)).toEqual(['note.md']);
-      // A row has no title, even though the status it is built from does. Read raw, since
-      // parsing against the schema would strip one that was sent.
-      expect(await titleOf(base)).toBe('Heading');
-      const res = await fetch(`${peer.url}/api/instances`);
-      expect(res.ok).toBe(true);
-      const raw = (await res.json()) as { instances: Record<string, unknown>[] };
-      expect(raw.instances).toHaveLength(1);
-      expect(raw.instances.every((row) => !('title' in row))).toBe(true);
-    } finally {
-      peer.stop();
-    }
-  });
-
-  it('carries the round and the unresolved count from the instance itself', async () => {
-    const peer = await startPeer('design.md');
-    try {
-      await fetch(`${peer.url}/api/comments`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ startLine: 5, endLine: 5, body: 'about the heading' }),
-      });
-      writeFileSync(join(sandbox, 'design.md'), `${SOURCE}\nan edit\n`);
-      expect((await fetch(`${peer.url}/api/rounds`, { method: 'POST' })).ok).toBe(true);
-
-      // Round 2, and the unresolved comment from round 1 still counts: closing a round
-      // hands it over rather than settling it.
-      expect((await peers(base))[0]).toMatchObject({ round: 2, unresolved: 1 });
-    } finally {
-      peer.stop();
-    }
-  });
-
-  it('marks a loopback bind as unreachable instead of linking to it', async () => {
-    const loopback = await startPeer('design.md');
-    const lan = await startPeer('plan.md', ['--host', '0.0.0.0']);
-    try {
-      const rows = await peers(base);
-      const byFile = Object.fromEntries(rows.map((p) => [p.file, p]));
-      // The reader's browser is usually not on this host, so a peer that took the
-      // default bind cannot be opened from there however the link is built.
-      expect(byFile['design.md']).toMatchObject({ host: '127.0.0.1', reachable: false });
-      expect(byFile['plan.md']).toMatchObject({ host: '0.0.0.0', reachable: true });
-    } finally {
-      loopback.stop();
-      lan.stop();
-    }
-  });
-
-  it('drops an entry left behind by a crash, and deletes it', async () => {
-    // A crashed instance leaves its entry: no stop() ran, so nothing removed it. The pid
-    // is gone, which is what tells the difference.
-    const crashed = deadPid();
-    mkdirSync(instancesDir(), { recursive: true });
-    const entry = join(instancesDir(), `${crashed}.json`);
-    writeFileSync(
-      entry,
-      JSON.stringify({
-        pid: crashed,
-        host: '127.0.0.1',
-        port: 4300,
-        file: join(sandbox, 'gone.md'),
-        startedAt: new Date().toISOString(),
-      }),
-    );
-
-    expect(await peers(base)).toEqual([]);
-    expect(existsSync(entry)).toBe(false);
-  });
-
-  it('takes its entry with it when it stops', async () => {
-    const peer = await startPeer('design.md');
-    expect(existsSync(join(instancesDir(), `${peer.pid}.json`))).toBe(true);
-
-    // The normal way this ends is a signal. Leaving the entry would cost every reader
-    // after it a timeout on a port nobody is listening on.
-    peer.stop();
-    await peer.stopped;
-
-    expect(existsSync(join(instancesDir(), `${peer.pid}.json`))).toBe(false);
-    expect(await peers(base)).toEqual([]);
-  });
-});
-
-/** `akapen list` reads the same registry the switcher does, from where you lost the port. */
-describe('listing the instances from the terminal', () => {
-  const run = (extra: string[] = []) =>
-    spawnSync('bun', ['run', CLI, 'list', ...extra], {
-      env: { ...process.env, AKAPEN_HOME: join(sandbox, 'home'), AKAPEN_TOKEN: TOKEN },
-      encoding: 'utf8',
-    });
-
-  it('prints the running instance as JSON, with the path in full', () => {
-    const listed: unknown = JSON.parse(run(['--json']).stdout);
-    expect(listed).toEqual([
-      {
-        pid: expect.any(Number),
-        host: '127.0.0.1',
-        port: Number(server!.port),
-        // Somewhere to go, not the address it bound. A caller reading this to open one
-        // would otherwise have to know what `0.0.0.0` means for a peer that used it.
-        url: `http://127.0.0.1:${String(server!.port)}`,
-        // Started with no session id, so there is nothing to attribute it to. Null
-        // rather than absent: a consumer filtering on it should not have to tell the
-        // two apart.
-        origin: { kind: 'shell', cwd: expect.any(String) },
-        // The terminal is on the host and belongs to whoever started them, unlike the
-        // switcher, so here the path is the useful part.
-        file: work,
-        title: 'Heading',
-        round: 1,
-        unresolved: 0,
-        started_at: expect.any(String),
-      },
-    ]);
-  });
-
-  it('prints a table with the file in it', () => {
-    const out = run().stdout;
-    expect(out).toContain('R001');
-    expect(out).toContain(work);
-  });
-
-  it('prints a url to open, not the address the peer bound', () => {
-    const out = run().stdout;
-    expect(out).toContain('URL');
-    expect(out).toContain(`http://127.0.0.1:${String(server!.port)}`);
-    expect(out).not.toContain('ADDRESS');
-  });
-
-  it('says so when nothing is running', () => {
-    const empty = spawnSync('bun', ['run', CLI, 'list'], {
-      env: { ...process.env, AKAPEN_HOME: join(sandbox, 'nothing-here') },
-      encoding: 'utf8',
-    });
-    expect(empty.stdout.trim()).toBe('no akapen is running');
-    expect(
-      JSON.parse(
-        spawnSync('bun', ['run', CLI, 'list', '--json'], {
-          env: { ...process.env, AKAPEN_HOME: join(sandbox, 'nothing-here') },
-          encoding: 'utf8',
-        }).stdout,
-      ),
-    ).toEqual([]);
-  });
-});
-
-/**
- * Finding your own akapen again, from the session that started it.
- *
- * An agent starts one and the url lives in that session's scrollback and nowhere else.
- * Both halves of the fix fail quietly: an origin that is never recorded looks exactly
- * like a shell that had no session, and a url recorded on the wrong origin looks exactly
- * right until the browser is asked to come back on it and finds no cookie.
- */
-describe('the session that started an instance', () => {
-  const SESSION = 'f8f3b87b-e51b-4f8e-ac92-1e743787d779';
-  const home = () => join(sandbox, 'home');
-  const entry = (pid: number, session = SESSION) => join(home(), 'sessions', session, String(pid));
-  const recorded = (pid: number, session = SESSION) =>
-    existsSync(entry(pid, session)) ? readFileSync(entry(pid, session), 'utf8').trim() : null;
-  const registered = (pid: number) =>
-    JSON.parse(readFileSync(join(home(), 'instances', `${String(pid)}.json`), 'utf8')) as {
-      origin?: { kind: string; id?: string; label?: string; cwd: string };
-    };
-
-  const startFor = (name: string, env: NodeJS.ProcessEnv, extra: string[] = []) => {
-    const file = join(sandbox, name);
-    writeFileSync(file, SOURCE);
-    return start(file, home(), extra, { env });
-  };
-
-  it('records who started it, and where to come back to', async () => {
-    const peer = await startFor('design.md', { CLAUDE_CODE_SESSION_ID: SESSION });
-    try {
-      expect(registered(peer.pid).origin).toMatchObject({ kind: 'claude-code', id: SESSION });
-      // The url, not the bind address, and no token on it: this file is read by a
-      // statusline that prints it on every redraw.
-      expect(recorded(peer.pid)).toBe(`http://127.0.0.1:${peer.port}`);
-      expect(recorded(peer.pid)).not.toContain('token');
-    } finally {
-      peer.stop();
-      await peer.stopped;
-    }
-  });
-
-  it('records nothing to come back to when there was no session', async () => {
-    // The other direction. Without it, a test that only ever starts akapen with a session
-    // cannot tell "records the right thing" from "records something regardless".
-    const peer = await startFor('plan.md', {});
-    try {
-      expect(registered(peer.pid).origin).toMatchObject({ kind: 'shell' });
-      expect(registered(peer.pid).origin?.id).toBeUndefined();
-      expect(existsSync(join(home(), 'sessions'))).toBe(false);
-    } finally {
-      peer.stop();
-      await peer.stopped;
-    }
-  });
-
-  it('passes an origin label through without reading it', async () => {
-    // Whoever runs akapen may have a pane id or a ticket to attach. akapen holding it as
-    // an opaque string is what keeps one person's setup out of a tool anybody installs.
-    const peer = await startFor('labelled.md', {
-      CLAUDE_CODE_SESSION_ID: SESSION,
-      AKAPEN_ORIGIN_LABEL: 'wA:p1',
-    });
-    try {
-      expect(registered(peer.pid).origin?.label).toBe('wA:p1');
-    } finally {
-      peer.stop();
-      await peer.stopped;
-    }
-  });
-
-  it('rewrites the url to the origin a browser actually logged in on', async () => {
-    const peer = await startFor('rebind.md', { CLAUDE_CODE_SESSION_ID: SESSION });
-    try {
-      expect(recorded(peer.pid)).toBe(`http://127.0.0.1:${peer.port}`);
-
-      // A cookie is scoped to scheme, host and port together, so the guess above is one
-      // this browser could not come back on. Logging in on it is what corrects the guess,
-      // and it is why guessing is safe: a wrong guess is exactly a guess whose cookie is
-      // not sent, which forces the login that fixes it.
-      //
-      // Written onto the socket because Host is a forbidden header name for `fetch` — a
-      // version of this test using `fetch` would send the real authority and pass no
-      // matter what the server recorded.
-      const authority = `localhost:${peer.port}`;
-      expect(await rawGet(Number(peer.port), `/?token=${TOKEN}`, authority)).toBe(302);
-      await vi.waitFor(() => expect(recorded(peer.pid)).toBe(`http://${authority}`));
-    } finally {
-      peer.stop();
-      await peer.stopped;
-    }
-  });
-
-  it('does not rewrite the url for a request that failed to log in', async () => {
-    const peer = await startFor('refused.md', { CLAUDE_CODE_SESSION_ID: SESSION });
-    try {
-      const before = recorded(peer.pid);
-      // No cookie is set, so no origin became valid, so there is nothing to record. A
-      // rewrite here would let anyone who can reach the port move where the session
-      // thinks its own review is.
-      expect(await rawGet(Number(peer.port), '/?token=wrong', `localhost:${peer.port}`)).toBe(401);
-      expect(recorded(peer.pid)).toBe(before);
-    } finally {
-      peer.stop();
-      await peer.stopped;
-    }
-  });
-
-  it('records on a later login what a failed startup write did not', async () => {
-    // The startup write is made impossible: a file sits where the session directory
-    // belongs, so `mkdir` cannot make one. Then the obstruction is removed and the same
-    // url is logged in on.
-    //
-    // Caching the attempt rather than the write is what this catches. The url is the one
-    // startup already tried, so a cache set on the attempt makes the login return early
-    // and the instance stays unrecorded for the rest of its life — with nothing on screen
-    // to say so.
-    mkdirSync(join(home(), 'sessions'), { recursive: true });
-    writeFileSync(join(home(), 'sessions', SESSION), 'in the way');
-
-    const peer = await startFor('retry.md', { CLAUDE_CODE_SESSION_ID: SESSION });
-    try {
-      rmSync(join(home(), 'sessions', SESSION));
-      const authority = `127.0.0.1:${peer.port}`;
-      expect(await rawGet(Number(peer.port), `/?token=${TOKEN}`, authority)).toBe(302);
-      await vi.waitFor(() => expect(recorded(peer.pid)).toBe(`http://${authority}`));
-    } finally {
-      peer.stop();
-      await peer.stopped;
-    }
-  });
-
-  it('takes its own entry out when it stops, and leaves a sibling alone', async () => {
-    const one = await startFor('one.md', { CLAUDE_CODE_SESSION_ID: SESSION });
-    const two = await startFor('two.md', { CLAUDE_CODE_SESSION_ID: SESSION });
-    try {
-      expect(recorded(one.pid)).not.toBeNull();
-      expect(recorded(two.pid)).not.toBeNull();
-
-      one.stop();
-      await one.stopped;
-
-      expect(recorded(one.pid)).toBeNull();
-      // The direction that is easy to get wrong: one file per instance exists so that
-      // stopping one cannot take the other's with it.
-      expect(recorded(two.pid)).not.toBeNull();
-    } finally {
-      two.stop();
-      await two.stopped;
-    }
-  });
-
-  it('lists only what one session started', async () => {
-    const mine = await startFor('mine.md', { CLAUDE_CODE_SESSION_ID: SESSION });
-    const theirs = await startFor('theirs.md', { CLAUDE_CODE_SESSION_ID: 'another-session' });
-    try {
-      const run = (extra: string[]) =>
-        spawnSync('bun', ['run', CLI, 'list', ...extra], {
-          env: { ...process.env, AKAPEN_HOME: home(), AKAPEN_TOKEN: TOKEN },
-          encoding: 'utf8',
-        });
-
-      const filtered = JSON.parse(run(['--json', '--session', SESSION]).stdout) as {
-        pid: number;
-      }[];
-      expect(filtered.map((e) => e.pid)).toContain(mine.pid);
-      expect(filtered.map((e) => e.pid)).not.toContain(theirs.pid);
-
-      // Without the filter both are there, so what is being shown is the filter working
-      // and not the second instance having failed to register.
-      const all = JSON.parse(run(['--json']).stdout) as { pid: number }[];
-      expect(all.map((e) => e.pid)).toEqual(expect.arrayContaining([mine.pid, theirs.pid]));
-
-      // A value no session matches is not answered as a session with nothing open
-      // (#157). That message is for a session the registry knows.
-      const unknown = run(['--session', 'nobody-started-this']);
-      expect(unknown.status).toBe(0);
-      expect(unknown.stdout.trim()).toBe(
-        'no akapen running here was started by a session matching "nobody-started-this"',
-      );
-    } finally {
-      mine.stop();
-      theirs.stop();
-      await Promise.all([mine.stopped, theirs.stopped]);
-    }
   });
 });
 
@@ -1509,6 +1147,9 @@ function rawGet(port: number, path: string, host: string, extra: string[] = []):
 
 describe('authentication', () => {
   const bare = (path: string, init?: RequestInit) => globalThis.fetch(`${base}${path}`, init);
+  /** The server's own root, where a visit starts: the guard answers there before any document is looked up. */
+  const root = (path: string, init?: RequestInit) => globalThis.fetch(`${origin}${path}`, init);
+  const docPath = () => new URL(base).pathname;
 
   it('refuses a request with no credential', async () => {
     const res = await bare('/api/doc');
@@ -1534,7 +1175,7 @@ describe('authentication', () => {
   });
 
   it('exchanges a token in the query for a cookie and takes it out of the URL', async () => {
-    const res = await bare(`/?token=${TOKEN}`, { redirect: 'manual' });
+    const res = await root(`/?token=${TOKEN}`, { redirect: 'manual' });
     expect(res.status).toBe(302);
 
     const location = res.headers.get('location') ?? '';
@@ -1561,7 +1202,7 @@ describe('authentication', () => {
      * — the redirect would only ever have worked once, on the very first visit.
      */
     const cookie = `akapen_token=${TOKEN}`;
-    const res = await bare(`/?token=${TOKEN}`, { headers: { cookie }, redirect: 'manual' });
+    const res = await root(`/?token=${TOKEN}`, { headers: { cookie }, redirect: 'manual' });
     expect(res.status).toBe(302);
     expect(res.headers.get('location')).toBe('/');
   });
@@ -1576,7 +1217,7 @@ describe('authentication', () => {
      */
     const cookie = `akapen_token=${TOKEN}`;
     for (const path of ['//evil.example/x', '///evil.example/x', '////a']) {
-      const res = await bare(`${path}?token=${TOKEN}`, { headers: { cookie }, redirect: 'manual' });
+      const res = await root(`${path}?token=${TOKEN}`, { headers: { cookie }, redirect: 'manual' });
       const location = res.headers.get('location') ?? '';
       // One leading slash is a path on this server, which is all a redirect here should
       // ever be. Two is an authority, and the name after it is where the browser goes.
@@ -1592,7 +1233,7 @@ describe('authentication', () => {
     // It gets in on the cookie, and the dead value is taken out of the URL rather than
     // written over the credential that is working.
     const cookie = `akapen_token=${TOKEN}`;
-    const res = await bare(`/?token=${WRONG_TOKEN}`, { headers: { cookie }, redirect: 'manual' });
+    const res = await root(`/?token=${WRONG_TOKEN}`, { headers: { cookie }, redirect: 'manual' });
     expect(res.status).toBe(302);
     expect(res.headers.get('location')).toBe('/');
     expect(res.headers.get('set-cookie')).toBeNull();
@@ -1642,7 +1283,7 @@ describe('authentication', () => {
     // A session cookie would mean logging in again after every browser restart, which is
     // the whole thing this flow exists to remove. The token behind it does not expire, so
     // an expiry here would be asking again rather than protecting anything.
-    const res = await bare(`/?token=${TOKEN}`, { redirect: 'manual' });
+    const res = await root(`/?token=${TOKEN}`, { redirect: 'manual' });
     expect(res.headers.get('set-cookie')).toMatch(/Max-Age=\d{6,}/i);
   });
 
@@ -1712,9 +1353,9 @@ describe('authentication', () => {
     // `localhost.` is `localhost` with the root of the DNS tree written out. Clients do
     // send it, and a 403 there is a refusal with nothing wrong on the other end.
     const port = Number(server!.port);
-    expect(await rawGet(port, '/api/doc', `localhost.:${port}`, [`Authorization: Bearer ${TOKEN}`])).toBe(
-      200,
-    );
+    expect(
+      await rawGet(port, `${docPath()}/api/doc`, `localhost.:${port}`, [`Authorization: Bearer ${TOKEN}`]),
+    ).toBe(200);
   });
 
   it('refuses a Host it does not serve, even holding a valid token', async () => {
@@ -1723,17 +1364,17 @@ describe('authentication', () => {
     // the request a page cannot choose.
     const port = Number(server!.port);
     const bearer = `Authorization: Bearer ${TOKEN}`;
-    expect(await rawGet(port, '/api/doc', 'attacker.example', [bearer])).toBe(403);
+    expect(await rawGet(port, `${docPath()}/api/doc`, 'attacker.example', [bearer])).toBe(403);
     // A port on the end changes nothing: it is the name that is checked, and cookies are
     // not isolated by port anyway (RFC 6265 §8.5).
-    expect(await rawGet(port, '/api/doc', `attacker.example:${port}`, [bearer])).toBe(403);
+    expect(await rawGet(port, `${docPath()}/api/doc`, `attacker.example:${port}`, [bearer])).toBe(403);
   });
 
   it('serves the names this host really answers to', async () => {
     const port = Number(server!.port);
     const bearer = `Authorization: Bearer ${TOKEN}`;
     for (const host of ['localhost', `localhost:${port}`, '127.0.0.1', `127.0.0.1:${port}`]) {
-      expect(await rawGet(port, '/api/doc', host, [bearer]), host).toBe(200);
+      expect(await rawGet(port, `${docPath()}/api/doc`, host, [bearer]), host).toBe(200);
     }
   });
 
@@ -1950,7 +1591,9 @@ describe('authentication', () => {
       // The Host check is not part of the credential and stays on regardless: it answers
       // a different question, and `--no-auth` is about who may connect, not about which
       // origin a browser thinks it is talking to.
-      expect(await rawGet(Number(served.port), '/api/doc', 'attacker.example')).toBe(403);
+      expect(
+        await rawGet(Number(served.port), `${new URL(served.url).pathname}/api/doc`, 'attacker.example'),
+      ).toBe(403);
     } finally {
       served.stop();
       await served.stopped;
@@ -2076,7 +1719,7 @@ describe('images beside the document', () => {
     const elsewhere = mkdtempSync(join(tmpdir(), 'akapen-elsewhere-'));
     try {
       await expect(start(work, join(sandbox, 'home-bad'), ['--root', elsewhere])).rejects.toThrow(
-        /--root does not contain the document/,
+        /root does not contain the document/,
       );
     } finally {
       rmSync(elsewhere, { recursive: true, force: true });

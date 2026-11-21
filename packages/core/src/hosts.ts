@@ -17,8 +17,7 @@ import { networkInterfaces } from 'node:os';
  *
  * `0:0:0:0:0:0:0:0` and `::` are one address, and `::ffff:127.0.0.1` is what a browser
  * sends as `[::ffff:7f00:1]` while curl sends it as typed. The bind, the Host header,
- * `--advertise`, the printed URLs and `reachableHost` all go through this before they
- * compare. Anything that is not an IPv6 literal comes back as is.
+ * `--advertise` and the printed URLs all go through this before they compare. Anything that is not an IPv6 literal comes back as is.
  */
 export function canonicalAddress(value: string): string {
   const bracketed = value.startsWith('[') && value.endsWith(']');

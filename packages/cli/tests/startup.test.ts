@@ -1,5 +1,5 @@
 /**
- * The startup line, from a real process.
+ * The startup line of `akapen serve`, and the commands that talk to it, from real processes.
  *
  * The unit tests cover which addresses are chosen; this covers the thing that made it
  * worth doing — that the line printed to the terminal is a URL a browser can open.
@@ -8,18 +8,26 @@
  * the process starts, serves correctly, and prints an address that opens nothing.
  */
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { networkInterfaces } from 'node:os';
-import { tmpdir } from 'node:os';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { networkInterfaces, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createServer as createHttpServer } from 'node:http';
+import { createServer as createHttpServer, type IncomingMessage } from 'node:http';
 import { createServer, type Server } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
 
 const CLI = join(import.meta.dirname, '..', 'src', 'cli.ts');
 const SOURCE = ['# Heading', '', 'A paragraph.', ''].join('\n');
 
-type Started = { lines: string[]; stop: () => void; home: string; file: string };
+type Started = {
+  /** What `akapen serve` printed on startup. */
+  lines: string[];
+  stop: () => void;
+  home: string;
+  file: string;
+  port: string;
+  /** The registered document, with a trailing slash and no token: `http://host:port/d/<id>/`. */
+  doc: string;
+};
 
 let running: (() => void)[] = [];
 let sandboxes: string[] = [];
@@ -32,29 +40,23 @@ afterEach(() => {
 });
 
 /**
- * Start akapen and collect the startup block. `-p 0` by default, so a port someone left
- * listening on cannot fail this, which is also the case the printed port has to survive;
- * `null` passes no `-p`, for the tests of the default port.
+ * Start `akapen serve` and register a note with it, collecting the startup block. `-p 0`,
+ * so a port someone left listening on cannot fail this, which is also the case the printed
+ * port has to survive. `env` goes to both commands; a `--token` among the options is given
+ * to `add` as well, since a server that requires one refuses it without.
  */
-async function start(
-  extra: string[] = [],
-  env: NodeJS.ProcessEnv = {},
-  port: string | null = '0',
-): Promise<Started> {
+async function start(extra: string[] = [], env: NodeJS.ProcessEnv = {}): Promise<Started> {
   const sandbox = mkdtempSync(join(tmpdir(), 'akapen-startup-'));
   sandboxes.push(sandbox);
   const file = join(sandbox, 'note.md');
   writeFileSync(file, SOURCE);
   const home = join(sandbox, 'home');
+  const environment = { ...process.env, AKAPEN_HOME: home, AKAPEN_PORT: '', ...env };
 
-  const proc: ChildProcess = spawn(
-    'bun',
-    ['run', CLI, file, ...(port === null ? [] : ['-p', port]), ...extra],
-    {
-      env: { ...process.env, AKAPEN_HOME: home, ...env },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    },
-  );
+  const proc: ChildProcess = spawn('bun', ['run', CLI, 'serve', '-p', '0', ...extra], {
+    env: environment,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
   const stop = () => void proc.kill();
   running.push(stop);
 
@@ -62,13 +64,13 @@ async function start(
   proc.stderr?.on('data', (chunk: Buffer) => {
     out += chunk.toString();
   });
-  // `store` is the last line of the block for a loopback bind, so waiting for it means
-  // every url and also line has already been printed.
+  // The `url` line is the last one of the block for an open server, so waiting for it
+  // means the whole block has been printed.
   await new Promise<void>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`akapen did not start:\n${out}`)), 15_000);
     proc.stdout?.on('data', (chunk: Buffer) => {
       out += chunk.toString();
-      if (!/^\s+store\s+\S/m.test(out)) return;
+      if (!/^\s+url\s+\S/m.test(out)) return;
       clearTimeout(timer);
       resolve();
     });
@@ -77,7 +79,19 @@ async function start(
       reject(new Error(`akapen exited with ${code}\n${out}`));
     });
   });
-  return { lines: out.split('\n'), stop, home, file };
+  const url = urlsIn(out.split('\n'))[0]!;
+  const port = new URL(url).port;
+  const token = extra.indexOf('--token');
+  const added = spawnSync(
+    'bun',
+    ['run', CLI, 'add', file, ...(token === -1 ? [] : ['--token', extra[token + 1]!])],
+    { env: { ...environment, AKAPEN_PORT: port }, encoding: 'utf8', timeout: 20_000 },
+  );
+  const doc = /^\s+url\s+([^\s?]+)/m.exec(added.stdout)?.[1];
+  if (added.status !== 0 || doc === undefined) {
+    throw new Error(`akapen add exited with ${added.status}\n${added.stderr}${added.stdout}`);
+  }
+  return { lines: out.split('\n'), stop, home, file, port, doc };
 }
 
 /** Whether `::1` can be bound here, found by binding it rather than by guessing from the platform. */
@@ -100,43 +114,27 @@ describe('the startup block', () => {
     expect(lines.some((line) => /^\s+also\s/.test(line))).toBe(false);
   }, 30_000);
 
-  it('answers on every url it printed for a wildcard bind', async () => {
+  it('answers on the url it printed for a wildcard bind, and on the document it handed out', async () => {
     // `--no-auth` so the printed line is the bare address: what is under test is which
     // address was chosen, and appending a path to a url carrying a query would test the
     // test rather than the server. That the token is on the line is asserted above.
-    const { lines } = await start(['--host', '0.0.0.0', '--no-auth']);
+    const { lines, doc } = await start(['--host', '0.0.0.0', '--no-auth']);
     const urls = urlsIn(lines);
-    expect(urls.length).toBeGreaterThan(0);
+    expect(urls).toHaveLength(1);
 
     // The whole point: what was printed is not the address it was bound to.
-    for (const url of urls) expect(url).not.toContain('0.0.0.0');
+    expect(urls[0]).not.toContain('0.0.0.0');
+    expect(doc).not.toContain('0.0.0.0');
 
     // And it is not merely well formed — the server is there.
-    for (const url of urls) {
-      const res = await fetch(`${url}/api/doc`);
-      expect(res.ok).toBe(true);
-    }
+    expect((await fetch(`${urls[0]}/`)).ok).toBe(true);
+    expect((await fetch(`${doc}api/doc`)).ok).toBe(true);
   }, 30_000);
 
-  it('prints every non-loopback address of the machine, not one picked out of them', async () => {
-    const { lines } = await start(['--host', '0.0.0.0', '--no-auth']);
-    const printed = urlsIn(lines).map((url) => new URL(url).hostname);
-    const expected = Object.values(networkInterfaces())
-      .flatMap((infos) => infos ?? [])
-      .filter((info) => !info.internal && info.family === 'IPv4')
-      .map((info) => info.address);
-    // Compared as a set: which one comes first is the default route's business and is
-    // settled in the unit tests, where the routing table can be stated rather than read.
-    // An isolated container has none, and loopback is the documented fallback there.
-    const wanted = expected.length > 0 ? [...new Set(expected)] : ['127.0.0.1'];
-    expect(printed.toSorted()).toEqual(wanted.toSorted());
-  }, 30_000);
-
-  it('leaves the rest of the block where it was', async () => {
-    // The url line moved and grew; round and store did not, and something reads them.
+  it('says what it is, ahead of the url', async () => {
     const { lines } = await start();
-    expect(lines.some((line) => /^\s+round\s+\d{3}$/.test(line))).toBe(true);
-    expect(lines.some((line) => /^\s+store\s+\S/.test(line))).toBe(true);
+    expect(lines[0]).toBe('akapen serve');
+    expect(lines.findIndex((line) => /^\s+url\s/.test(line))).toBe(1);
   }, 30_000);
 });
 
@@ -157,10 +155,8 @@ describe('--advertise', () => {
   const failing = (extra: string[], env: NodeJS.ProcessEnv = {}) => {
     const sandbox = mkdtempSync(join(tmpdir(), 'akapen-startup-'));
     sandboxes.push(sandbox);
-    const file = join(sandbox, 'note.md');
-    writeFileSync(file, SOURCE);
-    return spawnSync('bun', ['run', CLI, file, '-p', '0', ...extra], {
-      env: { ...process.env, AKAPEN_HOME: join(sandbox, 'home'), ...env },
+    return spawnSync('bun', ['run', CLI, 'serve', '-p', '0', ...extra], {
+      env: { ...process.env, AKAPEN_HOME: join(sandbox, 'home'), AKAPEN_PORT: '', ...env },
       encoding: 'utf8',
       // A check that fails to refuse starts a server that never exits; fail rather than hang.
       timeout: 15_000,
@@ -246,27 +242,38 @@ describe('--advertise', () => {
       expect(result.status).toBe(1);
       expect(result.stderr).toContain(`akapen: --host`);
       expect(result.stderr).toContain(JSON.stringify(value));
-      expect(result.stderr).toContain('akapen <file.md> [options]');
-      expect(result.stderr).not.toMatch(/Is port|EADDRINUSE|at startServer/);
+      expect(result.stderr).toContain('akapen serve [options]');
+      expect(result.stderr).not.toMatch(/Is port|EADDRINUSE|at startDaemon/);
     },
     30_000,
   );
 
   // The other direction: a check that refused everything would pass the one above.
   const startsOn = async (value: string) => {
-    const { lines } = await start(['--host', value, '--no-auth']);
+    const { doc } = await start(['--host', value, '--no-auth']);
     // Answering, not only printing: a bind the Host check then refuses would print fine.
-    const [url] = urlsIn(lines);
-    expect((await fetch(`${url}/api/doc`)).ok).toBe(true);
+    expect((await fetch(`${doc}api/doc`)).ok).toBe(true);
   };
 
-  it.each(['0.0.0.0', '127.0.0.1', 'localhost'])('still starts on --host %s', startsOn, 30_000);
+  it.each(['0.0.0.0', '127.0.0.1'])('still starts on --host %s', startsOn, 30_000);
+
+  // The CLI reaches the server on 127.0.0.1, so a bind it could not reach there is refused
+  // by name instead of starting a server nothing can register a document with.
+  it.each(['localhost', '::1', '[::1]'])(
+    'refuses --host %s, which the CLI on this machine could not reach',
+    (value) => {
+      const result = failing(['--host', value]);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('unable to reach it');
+    },
+    30_000,
+  );
 
   // Skipped only off CI: a CI runner that lost IPv6 has to fail here, not drop the check.
-  it.skipIf(!ipv6Bindable && !process.env['CI']).each(['::', '[::]', '::1', '[::1]'])(
+  it.skipIf(!ipv6Bindable && !process.env['CI']).each(['::'])(
     'still starts on --host %s',
     async (value) => {
-      expect(ipv6Bindable, 'this host cannot bind ::1').toBe(true);
+      expect(ipv6Bindable, 'this host cannot bind IPv6').toBe(true);
       await startsOn(value);
     },
     30_000,
@@ -277,66 +284,30 @@ describe('akapen list --session', () => {
   const SESSION = 'fc40ec79-b629-4c08-9be7-721bb0d306a6';
   const list = (home: string, extra: string[]) =>
     spawnSync('bun', ['run', CLI, 'list', ...extra], {
-      env: { ...process.env, AKAPEN_HOME: home, CLAUDE_CODE_SESSION_ID: '' },
+      env: { ...process.env, AKAPEN_HOME: home, CLAUDE_CODE_SESSION_ID: '', AKAPEN_PORT: '' },
       encoding: 'utf8',
       timeout: 20_000,
     });
 
   it('takes back the session id its own table printed (#157)', async () => {
-    const { home } = await start([], { CLAUDE_CODE_SESSION_ID: SESSION });
+    const { home, port } = await start([], { CLAUDE_CODE_SESSION_ID: SESSION });
     const table = list(home, []);
-    const short = /^\d+\s+(\S+)\s/m.exec(table.stdout)?.[1];
+    const short = /^serve\s+(\S+)\s/m.exec(table.stdout)?.[1];
     expect(short).toBe(SESSION.slice(0, 8));
 
     const filtered = list(home, ['--session', short ?? '']);
     expect(filtered.status).toBe(0);
     expect(filtered.stdout).toContain(short);
-    expect(filtered.stdout).not.toContain('did not answer');
+    expect(filtered.stdout).toContain(`:${port}/d/note-`);
   }, 30_000);
 
-  it('says nothing running was started by a value no session matches, not that a session has none', async () => {
+  it('says no registered document belongs to a value no session matches, not that a session has none', async () => {
     const { home } = await start([], { CLAUDE_CODE_SESSION_ID: SESSION });
     const result = list(home, ['--session', '0a1b2c3d']);
     expect(result.status).toBe(0);
-    expect(result.stdout.trim()).toBe('no akapen running here was started by a session matching "0a1b2c3d"');
-  }, 30_000);
-
-  it('says the akapen did not answer, for a session the registry knows whose instance is silent', () => {
-    const home = mkdtempSync(join(tmpdir(), 'akapen-list-'));
-    sandboxes.push(home);
-    mkdirSync(join(home, 'instances'), { recursive: true });
-    // A live pid (this test's own) on a port nothing listens on: registered, never answers.
-    const record = {
-      pid: process.pid,
-      host: '127.0.0.1',
-      port: 1,
-      file: join(home, 'note.md'),
-      startedAt: new Date().toISOString(),
-      origin: { kind: 'claude-code', id: SESSION, cwd: home },
-    };
-    writeFileSync(join(home, 'instances', `${process.pid}.json`), JSON.stringify(record));
-
-    const result = list(home, ['--session', SESSION.slice(0, 8)]);
-    expect(result.status).toBe(0);
-    expect(result.stdout.trim()).toBe("that session's akapen did not answer");
-  }, 30_000);
-
-  it('says no akapen answered, not that none is running, when the registry is not empty (#221)', () => {
-    const home = mkdtempSync(join(tmpdir(), 'akapen-list-'));
-    sandboxes.push(home);
-    mkdirSync(join(home, 'instances'), { recursive: true });
-    // A live pid (this test's own) on a port nothing listens on: registered, never answers.
-    const record = {
-      pid: process.pid,
-      host: '127.0.0.1',
-      port: 1,
-      file: join(home, 'note.md'),
-      startedAt: new Date().toISOString(),
-    };
-    writeFileSync(join(home, 'instances', `${process.pid}.json`), JSON.stringify(record));
-    const all = list(home, []);
-    expect(all.status).toBe(0);
-    expect(all.stdout.trim()).toBe('no akapen answered (1 registered)');
+    expect(result.stdout.trim()).toBe(
+      'no document registered with akapen serve belongs to a session matching "0a1b2c3d"',
+    );
   }, 30_000);
 });
 
@@ -349,40 +320,22 @@ function hold(port: number): Promise<Server | null> {
   });
 }
 
-// #107: the default port moves when taken; a port asked for by name does not.
+// A moved port is a changed URL, so a port that is taken is a failure, not a move.
 describe('a taken port', () => {
-  it('moves off the default port to one the OS picks, and says so', async () => {
-    // Held here, or already taken by something else on the host: either way it is taken.
-    const held = await hold(4300);
-    try {
-      const { lines } = await start(['--no-auth'], {}, null);
-      expect(lines.some((line) => /^\s+note\s+port 4300 was taken, so the OS picked \d+$/.test(line))).toBe(
-        true,
-      );
-      const [url] = urlsIn(lines);
-      expect(new URL(url!).port).not.toBe('4300');
-      expect((await fetch(`${url}/api/doc`)).ok).toBe(true);
-    } finally {
-      held?.close();
-    }
-  }, 30_000);
-
   it('fails on a port asked for by name, with the port in the message and no stack trace', async () => {
     const held = await hold(0);
     const port = (held!.address() as { port: number }).port;
     try {
       const sandbox = mkdtempSync(join(tmpdir(), 'akapen-startup-'));
       sandboxes.push(sandbox);
-      const file = join(sandbox, 'note.md');
-      writeFileSync(file, SOURCE);
-      const result = spawnSync('bun', ['run', CLI, file, '-p', String(port)], {
-        env: { ...process.env, AKAPEN_HOME: join(sandbox, 'home') },
+      const result = spawnSync('bun', ['run', CLI, 'serve', '-p', String(port)], {
+        env: { ...process.env, AKAPEN_HOME: join(sandbox, 'home'), AKAPEN_PORT: '' },
         encoding: 'utf8',
         timeout: 15_000,
       });
       expect(result.status).toBe(1);
-      expect(result.stderr).toContain(`--port ${port} is in use`);
-      expect(result.stderr).not.toMatch(/at startServer|Bun v/);
+      expect(result.stderr).toContain(`port ${port} is in use`);
+      expect(result.stderr).not.toMatch(/at startDaemon|Bun v/);
     } finally {
       held?.close();
     }
@@ -392,12 +345,53 @@ describe('a taken port', () => {
 /** A 200 answer with `body` as JSON, for the fake akapen in the resolve tests. */
 const json = (body: unknown): [number, string] => [200, JSON.stringify(body)];
 
-// #130: the other half of `akapen comments`, through the akapen serving the file.
+/**
+ * What a request to the server on `port` answers, for a stand-in that sits in front of it:
+ * the request as the CLI made it, headers and management secret included.
+ */
+async function relay(port: string, req: IncomingMessage): Promise<{ status: number; body: string }> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of req) chunks.push(chunk as Buffer);
+  const headers: Record<string, string> = {};
+  for (const [name, value] of Object.entries(req.headers)) {
+    if (!['host', 'connection', 'content-length'].includes(name)) headers[name] = String(value);
+  }
+  const answer = await fetch(`http://127.0.0.1:${port}${req.url}`, {
+    method: req.method ?? 'GET',
+    headers,
+    redirect: 'manual',
+    ...(chunks.length === 0 ? {} : { body: Buffer.concat(chunks) }),
+  });
+  return { status: answer.status, body: await answer.text() };
+}
+
+/**
+ * The CLI run without blocking this process, for a test whose stand-in server lives in it
+ * and has to answer while the CLI waits.
+ */
+async function runCli(
+  home: string,
+  port: string,
+  session: string,
+  args: string[],
+): Promise<{ status: number | null; stdout: string; stderr: string }> {
+  const child = spawn('bun', ['run', CLI, ...args], {
+    env: { ...process.env, AKAPEN_HOME: home, AKAPEN_PORT: port, CLAUDE_CODE_SESSION_ID: session },
+  });
+  let stdout = '';
+  let stderr = '';
+  child.stdout.setEncoding('utf8').on('data', (d: string) => (stdout += d));
+  child.stderr.setEncoding('utf8').on('data', (d: string) => (stderr += d));
+  const status = await new Promise<number | null>((r) => child.on('close', r));
+  return { status, stdout, stderr };
+}
+
+// #130: the other half of `akapen comments`, through `akapen serve`.
 describe('akapen reply and resolve', () => {
   const SESSION = 'fc40ec79-b629-4c08-9be7-721bb0d306a6';
   const cli = (home: string, extra: string[]) =>
     spawnSync('bun', ['run', CLI, ...extra], {
-      env: { ...process.env, AKAPEN_HOME: home, CLAUDE_CODE_SESSION_ID: SESSION },
+      env: { ...process.env, AKAPEN_HOME: home, CLAUDE_CODE_SESSION_ID: SESSION, AKAPEN_PORT: '' },
       encoding: 'utf8',
       timeout: 20_000,
     });
@@ -408,8 +402,8 @@ describe('akapen reply and resolve', () => {
   };
 
   it('replies as the session, resolves, and refuses to resolve twice', async () => {
-    const { lines, home, file, stop } = await start(['--no-auth']);
-    const [url] = urlsIn(lines);
+    const { doc, home, file, stop } = await start(['--no-auth']);
+    const url = doc.slice(0, -1);
     const posted = await fetch(`${url}/api/comments`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -445,12 +439,13 @@ describe('akapen reply and resolve', () => {
     await new Promise((r) => setTimeout(r, 500));
     const nobody = cli(home, ['reply', file, comment.id, 'into the void']);
     expect(nobody.status).toBe(1);
-    expect(nobody.stderr).toContain('answered, so nothing was written; start one (akapen');
+    expect(nobody.stderr).toContain('akapen serve is not answering');
+    expect(nobody.stderr).toContain('so nothing was written');
   }, 60_000);
 
   it('cuts a round, and exits 1 when nothing serves the file or the server refuses (#178)', async () => {
-    const { lines, home, file, stop } = await start(['--no-auth']);
-    const [url] = urlsIn(lines);
+    const { doc, home, file, stop } = await start(['--no-auth']);
+    const url = doc.slice(0, -1);
     const current = async () =>
       ((await (await fetch(`${url}/api/rounds`)).json()) as { current: number }).current;
     expect(await current()).toBe(1);
@@ -500,13 +495,14 @@ describe('akapen reply and resolve', () => {
     await new Promise((r) => setTimeout(r, 500));
     const nobody = cli(home, ['rounds', 'cut', file]);
     expect(nobody.status).toBe(1);
-    expect(nobody.stderr).toContain('answered, so nothing was written; start one (akapen');
+    expect(nobody.stderr).toContain('akapen serve is not answering');
+    expect(nobody.stderr).toContain('so nothing was written');
   }, 60_000);
 
   it('cuts a round on an akapen that requires a token, given the same --token (#178)', async () => {
     const pinned = 'pinned-for-the-cut-test';
-    const { lines, home, file } = await start(['--token', pinned]);
-    const url = new URL(urlsIn(lines)[0]!).origin;
+    const { doc, home, file } = await start(['--token', pinned]);
+    const url = doc.slice(0, -1);
     const current = async () =>
       (
         (await (
@@ -529,8 +525,8 @@ describe('akapen reply and resolve', () => {
   }, 60_000);
 
   it('says who spoke last on the thread (#249)', async () => {
-    const { lines, home, file } = await start(['--no-auth']);
-    const [url] = urlsIn(lines);
+    const { doc, home, file } = await start(['--no-auth']);
+    const url = doc.slice(0, -1);
     const posted = await fetch(`${url}/api/comments`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -572,8 +568,8 @@ describe('akapen reply and resolve', () => {
 
   it('reaches an akapen started with --token when given the same --token', async () => {
     const pinned = 'pinned-for-the-reply-test';
-    const { lines, home, file } = await start(['--token', pinned]);
-    const url = new URL(urlsIn(lines)[0]!).origin;
+    const { doc, home, file } = await start(['--token', pinned]);
+    const url = doc.slice(0, -1);
     const posted = await fetch(`${url}/api/comments`, {
       method: 'POST',
       headers: { authorization: `Bearer ${pinned}`, 'content-type': 'application/json' },
@@ -587,8 +583,8 @@ describe('akapen reply and resolve', () => {
   }, 60_000);
 
   it('replies and resolves in one call with --resolve, with auth on', async () => {
-    const { lines, home, file } = await start([]);
-    const url = new URL(urlsIn(lines)[0]!).origin;
+    const { doc, home, file } = await start([]);
+    const url = doc.slice(0, -1);
     const auth = { authorization: `Bearer ${readFileSync(join(home, 'token'), 'utf8').trim()}` };
     const posted = await fetch(`${url}/api/comments`, {
       method: 'POST',
@@ -622,8 +618,8 @@ describe('akapen reply and resolve', () => {
 
   // #245: the rest of what #231 fixed without a test.
   it('finds the file from another directory, says whose the reply is, and refuses a resolve with a text', async () => {
-    const { lines, home, file } = await start(['--no-auth']);
-    const [url] = urlsIn(lines);
+    const { doc, home, file } = await start(['--no-auth']);
+    const url = doc.slice(0, -1);
     const posted = await fetch(`${url}/api/comments`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -633,7 +629,8 @@ describe('akapen reply and resolve', () => {
     const read = async () =>
       ((await (await fetch(`${url}/api/comments`)).json()) as Thread[]).find((c) => c.id === comment.id)!;
     const run = (cwd: string, session: string | undefined, extra: string[]) => {
-      const env: NodeJS.ProcessEnv = { ...process.env, AKAPEN_HOME: home };
+      // The server this home recorded, not one an AKAPEN_PORT exported by the runner names.
+      const env: NodeJS.ProcessEnv = { ...process.env, AKAPEN_HOME: home, AKAPEN_PORT: '' };
       if (session === undefined) delete env['CLAUDE_CODE_SESSION_ID'];
       else env['CLAUDE_CODE_SESSION_ID'] = session;
       return spawnSync('bun', ['run', CLI, ...extra], { cwd, env, encoding: 'utf8', timeout: 20_000 });
@@ -661,8 +658,8 @@ describe('akapen reply and resolve', () => {
   }, 60_000);
 
   it('resolves again when someone resolved the comment since it was read, rather than leave it reopened (#245)', async () => {
-    const { lines, home, file } = await start(['--no-auth']);
-    const [url] = urlsIn(lines);
+    const { doc, home, file, port } = await start(['--no-auth']);
+    const url = doc.slice(0, -1);
     const posted = await fetch(`${url}/api/comments`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -679,38 +676,50 @@ describe('akapen reply and resolve', () => {
     });
     const other = ((await second.json()) as { comment: { id: string } }).comment;
 
-    // The CLI reads the comments while they are open, from a copy of the home taken now; the
-    // copy's registry still points at the same server, which is where the resolve goes.
-    const stale = mkdtempSync(join(tmpdir(), 'akapen-stale-'));
-    sandboxes.push(stale);
-    cpSync(home, stale, { recursive: true });
-    // Someone resolves it in the page before the CLI's resolve lands.
-    expect((await fetch(`${url}/api/comments/${comment.id}/resolve`, { method: 'POST' })).ok).toBe(true);
-    expect((await read()).resolved).toBe(true);
+    // In front of the server, so someone can resolve a comment in the page right after the
+    // CLI has read it and before its resolve lands. The read is answered as it was.
+    const resolvedAfterRead: string[] = [];
+    const proxy = createHttpServer((req, res) => {
+      void relay(port, req).then(async ({ status, body }) => {
+        if (req.url?.includes('/api/pending')) {
+          for (const id of resolvedAfterRead.splice(0)) {
+            await fetch(`${url}/api/comments/${id}/resolve`, { method: 'POST' });
+          }
+        }
+        res.writeHead(status, { 'content-type': 'application/json' }).end(body);
+      });
+    });
+    await new Promise<void>((r) => proxy.listen(0, '127.0.0.1', r));
+    const proxyPort = String((proxy.address() as { port: number }).port);
+    try {
+      resolvedAfterRead.push(comment.id);
+      const raced = await runCli(home, proxyPort, SESSION, ['resolve', file, comment.id]);
+      expect(raced.status).toBe(0);
+      expect(raced.stdout.trim()).toBe('resolved (someone resolved it meanwhile, and this toggled it back)');
+      expect((await read()).resolved).toBe(true);
 
-    const raced = cli(stale, ['resolve', file, comment.id]);
-    expect(raced.status).toBe(0);
-    expect(raced.stdout.trim()).toBe('resolved (someone resolved it meanwhile, and this toggled it back)');
-    expect((await read()).resolved).toBe(true);
-
-    // The same through reply --resolve: the reply goes, and the resolve is toggled back.
-    expect((await fetch(`${url}/api/comments/${other.id}/resolve`, { method: 'POST' })).ok).toBe(true);
-    const replied = cli(stale, ['reply', file, other.id, 'done', '--resolve']);
-    expect(replied.status).toBe(0);
-    expect(replied.stdout.trim().split('\n')).toEqual([
-      'replied (filed as the agent)',
-      'resolved (someone resolved it meanwhile, and this toggled it back)',
-    ]);
-    const after = ((await (await fetch(`${url}/api/comments`)).json()) as Thread[]).find(
-      (c) => c.id === other.id,
-    )!;
-    expect(after.resolved).toBe(true);
-    expect(after.replies.map((r) => r.body)).toEqual(['done']);
+      // The same through reply --resolve: the reply goes, and the resolve is toggled back.
+      resolvedAfterRead.push(other.id);
+      const replied = await runCli(home, proxyPort, SESSION, ['reply', file, other.id, 'done', '--resolve']);
+      expect(replied.status).toBe(0);
+      expect(replied.stdout.trim().split('\n')).toEqual([
+        'replied (filed as the agent)',
+        'resolved (someone resolved it meanwhile, and this toggled it back)',
+      ]);
+      const after = ((await (await fetch(`${url}/api/comments`)).json()) as Thread[]).find(
+        (c) => c.id === other.id,
+      )!;
+      expect(after.resolved).toBe(true);
+      expect(after.replies.map((r) => r.body)).toEqual(['done']);
+    } finally {
+      proxy.closeAllConnections();
+      await new Promise((r) => proxy.close(r));
+    }
   }, 60_000);
 
   it('exits 1 on a resolve that does not end resolved, after one retry at most, and on a reply never answered (#245)', async () => {
-    const { lines, home, file } = await start(['--no-auth']);
-    const [url] = urlsIn(lines);
+    const { doc, home, file, port } = await start(['--no-auth']);
+    const url = doc.slice(0, -1);
     const posted = await fetch(`${url}/api/comments`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -718,16 +727,17 @@ describe('akapen reply and resolve', () => {
     });
     const { comment } = (await posted.json()) as { comment: { id: string } };
 
-    // Answers status as the real one does, and the nth resolve (from 1) as `answer` says.
+    // Answers the listing and the comments as the real server does, and the nth resolve
+    // (from 1) as `answer` says.
     let resolves = 0;
     let answer: (n: number) => [number, string] = () => json({ comment: { id: comment.id } });
     let replyAnswer: [number, string] | null = null;
     let replies = 0;
     const fake = createHttpServer((req, res) => {
-      if (req.url === '/api/status') {
-        void fetch(`${url}/api/status`)
-          .then((r) => r.text())
-          .then((body) => res.writeHead(200, { 'content-type': 'application/json' }).end(body));
+      if (req.url?.startsWith('/api/documents') || req.url?.includes('/api/pending')) {
+        void relay(port, req).then(({ status, body }) =>
+          res.writeHead(status, { 'content-type': 'application/json' }).end(body),
+        );
         return;
       }
       // Unanswered unless set, to see the CLI give up rather than wait on it.
@@ -741,24 +751,10 @@ describe('akapen reply and resolve', () => {
       res.writeHead(status, { 'content-type': 'application/json' }).end(body);
     });
     await new Promise<void>((r) => fake.listen(0, '127.0.0.1', r));
-    const fakePort = (fake.address() as { port: number }).port;
+    const fakePort = String((fake.address() as { port: number }).port);
     try {
-      for (const name of readdirSync(join(home, 'instances'))) {
-        const path = join(home, 'instances', name);
-        const record = JSON.parse(readFileSync(path, 'utf8')) as { host: string; port: number };
-        writeFileSync(path, JSON.stringify({ ...record, host: '127.0.0.1', port: fakePort }));
-      }
       // Not spawnSync: the fake runs in this process and has to answer while the CLI waits.
-      const run = async (extra: string[]) => {
-        const child = spawn('bun', ['run', CLI, ...extra], {
-          env: { ...process.env, AKAPEN_HOME: home, CLAUDE_CODE_SESSION_ID: SESSION },
-        });
-        let stderr = '';
-        child.stderr.setEncoding('utf8').on('data', (d: string) => (stderr += d));
-        child.stdout.resume();
-        const status = await new Promise<number | null>((r) => child.on('close', r));
-        return { status, stderr };
-      };
+      const run = (extra: string[]) => runCli(home, fakePort, SESSION, extra);
       const odd = await run(['resolve', file, comment.id]);
       expect(odd.status).toBe(1);
       expect(odd.stderr).toContain(`the resolve of ${comment.id} answered without its state`);

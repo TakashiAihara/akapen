@@ -1,43 +1,20 @@
 /**
- * The registry of running instances.
+ * What an earlier version's one-document akapen left behind, as `readInstances` reads it.
  *
- * This is where the feature can rot without anything looking wrong: a stale entry is a
- * row that is there to be clicked and goes nowhere, and an entry that is never removed
- * makes every reader spend a timeout on a port nobody is listening on. Neither shows up
- * anywhere else, so it is checked here.
- *
- * A crashed instance is simulated by leaving an entry for a pid that is gone.
+ * A crashed process is simulated by an entry for a pid that is gone. Nothing here writes
+ * through the module: the records are written by hand, as an older binary wrote them.
  */
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  readdirSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
-import { createServer } from 'node:http';
-import type { AddressInfo } from 'node:net';
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import {
-  instancesDir,
-  liveInstances,
-  reachableHost,
-  readInstances,
-  registerInstance,
-  removeInstance,
-  type InstanceRecord,
-} from '../src/instances.ts';
+import { instancesDir, readInstances } from '../src/instances.ts';
 
 let home: string;
 
 /**
  * A pid nothing is using. Walking down from a high number rather than picking one:
- * a fixed number is a process on somebody's machine, and the whole point of the entry
- * being stale is that the pid is gone.
+ * a fixed number is a process on somebody's machine.
  *
  * EPERM means a process is there and owned by someone else, which is not what is wanted.
  */
@@ -52,14 +29,10 @@ function deadPid(): number {
   throw new Error('every pid up to 99999 is in use');
 }
 
-const record = (over: Partial<InstanceRecord> = {}): InstanceRecord => ({
-  pid: process.pid,
-  host: '127.0.0.1',
-  port: 4300,
-  file: '/tmp/note.md',
-  startedAt: '2026-08-18T00:00:00.000Z',
-  ...over,
-});
+const write = (name: string, body: unknown): void => {
+  mkdirSync(instancesDir(), { recursive: true });
+  writeFileSync(join(instancesDir(), name), typeof body === 'string' ? body : JSON.stringify(body));
+};
 
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'akapen-instances-'));
@@ -71,242 +44,61 @@ afterEach(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
-/** Something listening that answers like an instance would. */
-async function listening(body: unknown): Promise<{ port: number; stop: () => Promise<void> }> {
-  const server = createServer((_req, res) => {
-    res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify(body));
-  });
-  await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
-  return {
-    port: (server.address() as AddressInfo).port,
-    stop: () =>
-      new Promise<void>((done) => {
-        // fetch keeps the connection alive, so waiting for it to go idle never returns
-        server.closeAllConnections();
-        server.close(() => done());
-      }),
-  };
-}
-
-/** A port nothing is listening on, so connecting to it is refused rather than hanging. */
-async function freePort(): Promise<number> {
-  const server = await listening({});
-  const { port } = server;
-  await server.stop();
-  return port;
-}
-
-describe('where an instance is reached from this host', () => {
-  it('turns every spelling of a wildcard into the loopback it answers on (#215)', () => {
-    expect(reachableHost('0.0.0.0')).toBe('127.0.0.1');
-    expect(reachableHost('::ffff:0:0')).toBe('127.0.0.1');
-    expect(reachableHost('::')).toBe('[::1]');
-    expect(reachableHost('0:0:0:0:0:0:0:0')).toBe('[::1]');
+describe('reading the records of one-document processes', () => {
+  it('finds nothing where no version ever wrote a record', () => {
+    expect(readInstances()).toEqual([]);
   });
 
-  it('brackets a concrete IPv6 address in its canonical form', () => {
-    expect(reachableHost('::ffff:127.0.0.1')).toBe('[::ffff:7f00:1]');
-    expect(reachableHost('192.168.0.151')).toBe('192.168.0.151');
-  });
-});
-
-describe('writing an entry', () => {
-  it('names the file after the pid and stores identity only', () => {
-    registerInstance(record({ port: 4321 }));
-
-    const written = readdirSync(instancesDir());
-    expect(written).toEqual([`${process.pid}.json`]);
-    const stored: unknown = JSON.parse(readFileSync(join(instancesDir(), written[0]!), 'utf8'));
-    // Round and unresolved change on every comment. An entry holding them would have to
-    // be rewritten that often, and would be wrong the rest of the time.
-    expect(stored).toEqual({
+  it('returns the pid and the file of a record whose process is alive, however much else it holds', () => {
+    write(`${process.pid}.json`, {
       pid: process.pid,
-      host: '127.0.0.1',
+      host: '0.0.0.0',
       port: 4321,
-      file: '/tmp/note.md',
+      file: '/notes/plan.md',
       startedAt: '2026-08-18T00:00:00.000Z',
+      origin: { kind: 'claude-code', id: 'abc', cwd: '/x' },
     });
+
+    expect(readInstances()).toEqual([{ pid: process.pid, file: '/notes/plan.md' }]);
   });
 
-  it('creates the directory rather than expecting one', () => {
-    expect(existsSync(instancesDir())).toBe(false);
-    registerInstance(record());
-    expect(readInstances()).toHaveLength(1);
-  });
-
-  it('never throws when the home cannot be written', () => {
-    // A read-only or missing AKAPEN_HOME costs the switcher, not the review.
-    process.env['AKAPEN_HOME'] = join(home, 'missing', '\0invalid');
-    expect(() => registerInstance(record())).not.toThrow();
-  });
-});
-
-describe('removing an entry', () => {
-  it('deletes the file for the given pid', () => {
-    registerInstance(record());
-    removeInstance();
-    expect(readdirSync(instancesDir())).toEqual([]);
-  });
-
-  it('leaves the others alone', () => {
-    const other = deadPid();
-    registerInstance(record());
-    registerInstance(record({ pid: other, port: 4301 }));
-
-    removeInstance(other);
-
-    expect(readdirSync(instancesDir())).toEqual([`${process.pid}.json`]);
-  });
-
-  it('says nothing when there is no entry to remove', () => {
-    // Shutdown runs it whether or not registering worked, so a missing entry is normal.
-    expect(() => removeInstance()).not.toThrow();
-  });
-});
-
-describe('reading the registry', () => {
-  it('drops an entry whose process is gone, and deletes it as it goes', () => {
+  it('leaves out the record of a process that is gone, and does not delete it', () => {
     const crashed = deadPid();
-    registerInstance(record());
-    registerInstance(record({ pid: crashed, port: 4301 }));
-
-    expect(readInstances().map((r) => r.pid)).toEqual([process.pid]);
-    // Deleted, not just skipped: otherwise every read after a crash pays for it again.
-    expect(existsSync(join(instancesDir(), `${crashed}.json`))).toBe(false);
-  });
-
-  it('drops an entry that is not readable as a record', () => {
-    mkdirSync(instancesDir(), { recursive: true });
-    writeFileSync(join(instancesDir(), '1234.json'), 'not json');
-    writeFileSync(join(instancesDir(), '1235.json'), JSON.stringify({ pid: process.pid }));
-    registerInstance(record());
-
-    expect(readInstances().map((r) => r.pid)).toEqual([process.pid]);
-    expect(readdirSync(instancesDir())).toEqual([`${process.pid}.json`]);
-  });
-
-  it('drops an entry whose address could not be reached anyway', () => {
-    // host and port go straight into the URL the liveness check asks. A port outside the
-    // range cannot be listening, and a host carrying a path or a userinfo separator moves
-    // what that URL points at, so both are stale entries rather than merely odd ones.
-    mkdirSync(instancesDir(), { recursive: true });
-    const bad = {
-      '10.json': { ...record({ pid: process.pid }), port: 0 },
-      '11.json': { ...record({ pid: process.pid }), port: 70_000 },
-      '12.json': { ...record({ pid: process.pid }), host: 'evil.example.com/x' },
-      '13.json': { ...record({ pid: process.pid }), host: 'evil.example.com@real' },
-      '14.json': { ...record({ pid: process.pid }), host: '' },
-    };
-    for (const [name, entry] of Object.entries(bad)) {
-      writeFileSync(join(instancesDir(), name), JSON.stringify(entry));
-    }
+    write(`${crashed}.json`, { pid: crashed, file: '/notes/gone.md' });
 
     expect(readInstances()).toEqual([]);
-    expect(readdirSync(instancesDir())).toEqual([]);
+    expect(readdirSync(instancesDir())).toEqual([`${crashed}.json`]);
   });
 
-  it('keeps an entry for a host that only looks unusual', () => {
-    // Both spellings of an IPv6 literal. Rejecting them would delete the entry of anyone
-    // who bound one, which is the failure the check above exists to avoid causing.
-    mkdirSync(instancesDir(), { recursive: true });
-    writeFileSync(
-      join(instancesDir(), `${process.pid}.json`),
-      JSON.stringify(record({ host: '::1', port: 4300 })),
-    );
-    writeFileSync(
-      join(instancesDir(), `${process.ppid}.json`),
-      JSON.stringify(record({ pid: process.ppid, host: '[fe80::1]', port: 4301 })),
-    );
+  it.each([
+    ['not JSON', 'not json'],
+    ['no file', { pid: process.pid }],
+    ['no pid', { file: '/notes/plan.md' }],
+    ['a pid that is not a whole number', { pid: 1.5, file: '/notes/plan.md' }],
+    ['a pid that is not a number', { pid: String(process.pid), file: '/notes/plan.md' }],
+    ['a pid of zero', { pid: 0, file: '/notes/plan.md' }],
+    ['null', 'null'],
+  ])('does not take %s for a record, and leaves the file', (_label, body) => {
+    write('1234.json', body);
 
-    expect(readInstances().map((r) => r.host)).toEqual(['::1', '[fe80::1]']);
+    expect(readInstances()).toEqual([]);
+    expect(readdirSync(instancesDir())).toEqual(['1234.json']);
   });
 
-  it('keeps a live process entry it cannot read when asked not to sweep (#184)', () => {
-    const crashed = deadPid();
-    mkdirSync(instancesDir(), { recursive: true });
-    // A live process's entry in a shape from a later version: the parent of this test is alive.
-    const foreign = `${process.ppid}.json`;
-    writeFileSync(join(instancesDir(), foreign), '{"shape":"from a later version"}');
-    registerInstance(record());
-    registerInstance(record({ pid: crashed, port: 4301 }));
+  it('reads only .json files', () => {
+    write('note.txt', { pid: process.pid, file: '/notes/plan.md' });
 
-    // Skipped from the answer all the same, so a non-sweeping reader is not handed junk.
-    expect(readInstances({ sweep: false }).map((r) => r.pid)).toEqual([process.pid]);
-    // A crash still heals: the dead pid's entry goes whoever wrote it.
-    expect(readdirSync(instancesDir()).toSorted()).toEqual([foreign, `${process.pid}.json`].toSorted());
-
-    // The sweeping reader, for contrast, takes the foreign entry too.
-    readInstances();
-    expect(readdirSync(instancesDir())).toEqual([`${process.pid}.json`]);
-  });
-
-  it('is empty, not an error, before anything has registered', () => {
     expect(readInstances()).toEqual([]);
   });
-});
 
-describe('proving an instance is alive', () => {
-  it('lists only the entries that answer, and keeps the silent one on disk', async () => {
-    // Both pids are alive, so the pid check passes for both and only the request tells
-    // them apart. Pids are reused, which is why the check is not enough on its own.
-    const answering = await listening({ file: 'note.md', round: 2, unresolved: 3 });
-    const silentPort = await freePort();
+  it('counts the records of every live process', () => {
+    write(`${process.pid}.json`, { pid: process.pid, file: '/notes/a.md' });
+    write(`${process.ppid}.json`, { pid: process.ppid, file: '/notes/b.md' });
 
-    registerInstance(record({ pid: process.pid, port: answering.port }));
-    // A second entry needs a second file, so it needs a second pid whose process still
-    // exists. The parent is one.
-    registerInstance(record({ pid: process.ppid, port: silentPort }));
-
-    const live = await liveInstances({ timeoutMs: 2_000 });
-
-    expect(live).toHaveLength(1);
-    expect(live[0]!.record.port).toBe(answering.port);
-    // The fake answers the way an instance from before #169 does, with no title. It is
-    // alive all the same, and reads as a document with no heading.
-    expect(live[0]!.status).toEqual({ file: 'note.md', title: '', round: 2, unresolved: 3 });
-    // Left alone on purpose: its pid is alive, so it may be an instance that was busy.
-    expect(existsSync(join(instancesDir(), `${process.ppid}.json`))).toBe(true);
-
-    await answering.stop();
-  });
-
-  it('passes on the title a peer reports', async () => {
-    // The other direction: a test on only the missing case passes on an implementation
-    // that always answers ''.
-    const peer = await listening({ file: 'note.md', title: 'The rail', round: 1, unresolved: 0 });
-    registerInstance(record({ pid: process.pid, port: peer.port }));
-
-    expect((await liveInstances({ timeoutMs: 2_000 }))[0]!.status.title).toBe('The rail');
-
-    await peer.stop();
-  });
-
-  it('reads a title that is not a string as none, rather than passing it on', async () => {
-    const peer = await listening({ file: 'note.md', title: 5, round: 1, unresolved: 0 });
-    registerInstance(record({ pid: process.pid, port: peer.port }));
-
-    expect((await liveInstances({ timeoutMs: 2_000 }))[0]!.status.title).toBe('');
-
-    await peer.stop();
-  });
-
-  it('leaves out the caller when asked to', async () => {
-    const own = await listening({ file: 'note.md', round: 1, unresolved: 0 });
-    registerInstance(record({ pid: process.pid, port: own.port }));
-
-    expect(await liveInstances({ excludePid: process.pid })).toEqual([]);
-
-    await own.stop();
-  });
-
-  it('ignores an answer that is not a status', async () => {
-    // Whatever is on that port now, it is not an akapen just because it replied.
-    const impostor = await listening({ hello: 'there' });
-    registerInstance(record({ pid: process.pid, port: impostor.port }));
-
-    expect(await liveInstances({ timeoutMs: 2_000 })).toEqual([]);
-
-    await impostor.stop();
+    expect(
+      readInstances()
+        .map((r) => r.file)
+        .toSorted(),
+    ).toEqual(['/notes/a.md', '/notes/b.md']);
   });
 });

@@ -7,7 +7,7 @@
  * "true". The parser is a separate module so these can be run at all.
  */
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -167,31 +167,29 @@ describe('resolvePort', () => {
 describe('the binary', () => {
   const CLI = join(import.meta.dirname, '..', 'src', 'cli.ts');
 
-  /**
-   * Run the real entry point: the parser is only useful if cli.ts acts on it.
-   *
-   * Bounded, because the failure mode being tested is "it starts a server instead of
-   * refusing". Without a timeout a regression would hang here until the whole run gives
-   * up, and SIGKILL because a listening server need not honour SIGTERM promptly.
-   */
-  const run = (args: string[]) =>
-    spawnSync('bun', ['run', CLI, ...args], {
-      encoding: 'utf8',
-      env: { ...process.env },
-      timeout: 10_000,
-      killSignal: 'SIGKILL',
-    });
-
   it('exits non-zero and names the flag instead of starting a server', () => {
     const sandbox = mkdtempSync(join(tmpdir(), 'akapen-cli-'));
-    const note = join(sandbox, 'note.md');
-    writeFileSync(note, '# Heading\n');
     try {
-      const missing = run([note, '--css']);
+      /**
+       * Run the real entry point: the parser is only useful if cli.ts acts on it.
+       *
+       * Bounded, because the failure mode being tested is "it starts a server instead of
+       * refusing". Without a timeout a regression would hang here until the whole run gives
+       * up, and SIGKILL because a listening server need not honour SIGTERM promptly. The
+       * home is in the sandbox, so a serve that does start is not on the real one.
+       */
+      const run = (args: string[]) =>
+        spawnSync('bun', ['run', CLI, ...args], {
+          encoding: 'utf8',
+          env: { ...process.env, AKAPEN_HOME: join(sandbox, 'home'), AKAPEN_PORT: '' },
+          timeout: 10_000,
+          killSignal: 'SIGKILL',
+        });
+      const missing = run(['serve', '--css']);
       expect(missing.status).toBe(1);
       expect(missing.stderr).toMatch(/--css needs a value/);
 
-      const badPort = run([note, '--port', 'abc']);
+      const badPort = run(['serve', '--port', 'abc']);
       expect(badPort.status).toBe(1);
       expect(badPort.stderr).toMatch(/--port must be a whole number/);
     } finally {

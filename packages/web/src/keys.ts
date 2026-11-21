@@ -23,10 +23,7 @@ export const DEFAULT_KEYMAP: Keymap = {
   'comment.submit': ['ctrl+enter', 'meta+enter'],
   'comment.cancel': ['escape'],
   'lines.toggle': ['l'],
-  // o for "others": the akapen running beside this one
-  'instances.toggle': ['o'],
-  // t for "table of contents". o and t sit next to each other because both open a panel
-  // from the header, and neither is a letter the document itself needs.
+  // t for "table of contents": opens a panel from the header, and is not a letter the document itself needs.
   'outline.toggle': ['t'],
   // z for "zoom": the image or diagram on the focused line, at a readable size
   'figure.zoom': ['z'],
