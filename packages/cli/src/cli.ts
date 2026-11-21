@@ -561,19 +561,19 @@ if (positional[0] === 'reply' || positional[0] === 'resolve') {
     console.log(`replied (filed as ${session === '' ? 'a person, no CLAUDE_CODE_SESSION_ID' : 'the agent'})`);
   }
   if (resolving) {
-    const toggle = async () =>
+    const toggle = async (done: string) =>
       (
-        (await post(
-          `/api/comments/${encodeURIComponent(id)}/resolve`,
-          verb === 'reply' ? 'replied, but ' : '',
-          '`akapen comments`',
-        )) as { comment?: { resolved?: boolean } }
+        (await post(`/api/comments/${encodeURIComponent(id)}/resolve`, done, '`akapen comments`')) as {
+          comment?: { resolved?: boolean };
+        }
       ).comment?.resolved;
-    let state = await toggle();
+    let state = await toggle(verb === 'reply' ? 'replied, but ' : '');
     // A toggle: someone else resolved it since the store was read, so this reopened it.
     // Toggled back once. A third resolve landing in between is undone by it, and shows as open.
     const raced = state === false;
-    if (raced) state = await toggle();
+    // Said if the toggle back fails: the comment is open now, by this call.
+    if (raced)
+      state = await toggle(`reopened ${id}, which someone had resolved meanwhile, and the toggle back `);
     if (state === false) {
       console.error(`akapen: ${id} is open after the call; check \`akapen comments\``);
       process.exit(1);

@@ -423,7 +423,9 @@ describe('akapen reply and resolve', () => {
     ]);
     expect((await read()).resolved).toBe(false);
 
-    expect(cli(home, ['resolve', file, comment.id]).status).toBe(0);
+    const resolved = cli(home, ['resolve', file, comment.id]);
+    expect(resolved.status).toBe(0);
+    expect(resolved.stdout.trim()).toBe('resolved');
     expect((await read()).resolved).toBe(true);
 
     // The server toggles, so a second resolve would reopen it. Refused instead.
@@ -667,7 +669,14 @@ describe('akapen reply and resolve', () => {
     const read = async () =>
       ((await (await fetch(`${url}/api/comments`)).json()) as Thread[]).find((c) => c.id === comment.id)!;
 
-    // The CLI reads the comment while it is open, from a copy of the home taken now; the
+    const second = await fetch(`${url}/api/comments`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ startLine: 1, endLine: 1, body: 'y' }),
+    });
+    const other = ((await second.json()) as { comment: { id: string } }).comment;
+
+    // The CLI reads the comments while they are open, from a copy of the home taken now; the
     // copy's registry still points at the same server, which is where the resolve goes.
     const stale = mkdtempSync(join(tmpdir(), 'akapen-stale-'));
     sandboxes.push(stale);
@@ -680,6 +689,20 @@ describe('akapen reply and resolve', () => {
     expect(raced.status).toBe(0);
     expect(raced.stdout.trim()).toBe('resolved (someone resolved it meanwhile, and this toggled it back)');
     expect((await read()).resolved).toBe(true);
+
+    // The same through reply --resolve: the reply goes, and the resolve is toggled back.
+    expect((await fetch(`${url}/api/comments/${other.id}/resolve`, { method: 'POST' })).ok).toBe(true);
+    const replied = cli(stale, ['reply', file, other.id, 'done', '--resolve']);
+    expect(replied.status).toBe(0);
+    expect(replied.stdout.trim().split('\n')).toEqual([
+      'replied (filed as the agent)',
+      'resolved (someone resolved it meanwhile, and this toggled it back)',
+    ]);
+    const after = ((await (await fetch(`${url}/api/comments`)).json()) as Thread[]).find(
+      (c) => c.id === other.id,
+    )!;
+    expect(after.resolved).toBe(true);
+    expect(after.replies.map((r) => r.body)).toEqual(['done']);
   }, 60_000);
 
   it('exits 1 on a resolve that does not end resolved, after one retry at most, and on a reply never answered (#245)', async () => {
@@ -695,6 +718,7 @@ describe('akapen reply and resolve', () => {
     // Answers status as the real one does, and a resolve with the state set below.
     let resolves = 0;
     let answer: { id: string; resolved?: boolean } = { id: comment.id };
+    let failSecond = false;
     const fake = createHttpServer((req, res) => {
       if (req.url === '/api/status') {
         void fetch(`${url}/api/status`)
@@ -705,6 +729,10 @@ describe('akapen reply and resolve', () => {
       // Never answered, to see the CLI give up rather than wait on it.
       if (req.url?.endsWith('/replies')) return;
       if (req.url?.endsWith('/resolve')) resolves++;
+      if (req.url?.endsWith('/resolve') && failSecond && resolves === 2) {
+        res.writeHead(500).end('broken');
+        return;
+      }
       res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ comment: answer }));
     });
     await new Promise<void>((r) => fake.listen(0, '127.0.0.1', r));
@@ -739,6 +767,17 @@ describe('akapen reply and resolve', () => {
       expect(stuck.stderr).toContain(`${comment.id} is open after the call`);
       expect(resolves).toBe(2);
 
+      // The toggle back fails: what is said is that this call left it open.
+      failSecond = true;
+      resolves = 0;
+      const broken = await run(['resolve', file, comment.id]);
+      expect(broken.status).toBe(1);
+      expect(broken.stderr).toContain(
+        `reopened ${comment.id}, which someone had resolved meanwhile, and the toggle back /api/comments/`,
+      );
+      expect(resolves).toBe(2);
+      failSecond = false;
+
       const began = Date.now();
       const silent = await run(['reply', file, comment.id, 'into silence']);
       expect(silent.status).toBe(1);
@@ -747,7 +786,8 @@ describe('akapen reply and resolve', () => {
       expect(waited).toBeGreaterThanOrEqual(9_000);
       expect(waited).toBeLessThan(18_000);
     } finally {
-      fake.close();
+      fake.closeAllConnections();
+      await new Promise((r) => fake.close(r));
     }
   }, 60_000);
 });
