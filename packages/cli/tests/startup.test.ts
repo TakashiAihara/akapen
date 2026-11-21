@@ -721,6 +721,7 @@ describe('akapen reply and resolve', () => {
     // Answers status as the real one does, and the nth resolve (from 1) as `answer` says.
     let resolves = 0;
     let answer: (n: number) => [number, string] = () => json({ comment: { id: comment.id } });
+    let replyAnswer: [number, string] | null = null;
     const fake = createHttpServer((req, res) => {
       if (req.url === '/api/status') {
         void fetch(`${url}/api/status`)
@@ -728,8 +729,12 @@ describe('akapen reply and resolve', () => {
           .then((body) => res.writeHead(200, { 'content-type': 'application/json' }).end(body));
         return;
       }
-      // Never answered, to see the CLI give up rather than wait on it.
-      if (req.url?.endsWith('/replies')) return;
+      // Unanswered unless set, to see the CLI give up rather than wait on it.
+      if (req.url?.endsWith('/replies')) {
+        if (replyAnswer)
+          res.writeHead(replyAnswer[0], { 'content-type': 'application/json' }).end(replyAnswer[1]);
+        return;
+      }
       const [status, body] = answer(++resolves);
       res.writeHead(status, { 'content-type': 'application/json' }).end(body);
     });
@@ -786,7 +791,9 @@ describe('akapen reply and resolve', () => {
       resolves = 0;
       const stuck = await run(['resolve', file, comment.id]);
       expect(stuck.status).toBe(1);
-      expect(stuck.stderr).toContain(`${comment.id} is open after the call`);
+      expect(stuck.stderr).toContain(
+        `reopened ${comment.id}, which someone had resolved meanwhile, and the toggle back left it open`,
+      );
       expect(resolves).toBe(2);
 
       // The toggle back fails: what is said is that this call left it open.
@@ -798,6 +805,16 @@ describe('akapen reply and resolve', () => {
         `reopened ${comment.id}, which someone had resolved meanwhile, and the toggle back /api/comments/`,
       );
       expect(resolves).toBe(2);
+
+      // reply --resolve: the reply landed, and the failure says so, so it is not sent twice.
+      replyAnswer = json({ comment: { id: comment.id } });
+      answer = () => [500, 'broken'];
+      resolves = 0;
+      const halfway = await run(['reply', file, comment.id, 'landed', '--resolve']);
+      expect(halfway.status).toBe(1);
+      expect(halfway.stderr).toContain(`replied, but /api/comments/${comment.id}/resolve answered 500`);
+      expect(resolves).toBe(1);
+      replyAnswer = null;
 
       const began = Date.now();
       const silent = await run(['reply', file, comment.id, 'into silence']);
