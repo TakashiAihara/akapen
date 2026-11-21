@@ -342,7 +342,9 @@ describe('akapen list --session', () => {
 /** Hold a port on loopback until released. Resolves with null when it is already taken. */
 function hold(port: number): Promise<Server | null> {
   return new Promise((done) => {
-    const server = createServer();
+    // akapen asks the default port whether akapen serve is there, and gives up after a few
+    // seconds; the reset that leaves on an accepted socket is not this test's concern.
+    const server = createServer((socket) => socket.on('error', () => {}));
     server.once('error', () => done(null));
     server.listen(port, '127.0.0.1', () => done(server));
   });
