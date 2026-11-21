@@ -13,12 +13,12 @@ import { documentFileSrc, imageMime, isInside, resolveDocumentFile } from '../sr
 
 describe('which image srcs point at the file route', () => {
   it('takes a document-relative path, decoded back to what was typed', () => {
-    expect(documentFileSrc('png/overview.png')).toBe('/file?path=png%2Foverview.png');
-    expect(documentFileSrc('../images/a%20b.png')).toBe('/file?path=..%2Fimages%2Fa%20b.png');
+    expect(documentFileSrc('png/overview.png')).toBe('file?path=png%2Foverview.png');
+    expect(documentFileSrc('../images/a%20b.png')).toBe('file?path=..%2Fimages%2Fa%20b.png');
   });
 
   it('drops a query and a fragment, which a file does not have', () => {
-    expect(documentFileSrc('a.png?v=2#x')).toBe('/file?path=a.png');
+    expect(documentFileSrc('a.png?v=2#x')).toBe('file?path=a.png');
   });
 
   it('leaves everything that does not name something beside the document as written', () => {

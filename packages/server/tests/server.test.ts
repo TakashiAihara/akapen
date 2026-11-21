@@ -2042,7 +2042,7 @@ describe('images beside the document', () => {
     expect((await post('/api/rounds')).ok).toBe(true);
     const doc = v.parse(DocPayloadSchema, await (await fetch(`${base}/api/doc`)).json());
     const html = doc.doc.blocks.map((b) => b.html).join('');
-    expect(html).toContain('src="/file?path=png%2Fa.png"');
+    expect(html).toContain('src="file?path=png%2Fa.png"');
     expect(html).toContain('src="https://example.com/r.png"');
   });
 
