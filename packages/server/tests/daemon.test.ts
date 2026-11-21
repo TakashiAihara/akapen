@@ -23,6 +23,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { localAddresses } from '@akapen/core/addresses';
 import { collect, holdServeStream, serveStore } from '../../cli/src/channel.ts';
 import { chosenServePort, documentId } from '@akapen/core/documents';
+import { storeDir } from '@akapen/core/store';
 
 const TOKEN = 'test-token-for-the-daemon-suite';
 const CLI = join(import.meta.dirname, '..', '..', 'cli', 'src', 'cli.ts');
@@ -744,6 +745,8 @@ describe('akapen serve', () => {
     const res = await authed(`${url}api/status`);
     expect(res.status).toBe(409);
     expect(await res.text()).toContain(`(pid ${process.pid})`);
+    // Not opened at all: opening would have written the first round into the store.
+    expect(existsSync(join(storeDir(file), 'rounds'))).toBe(false);
   });
 
   it('lists nothing for a --session that matches no session', async () => {
