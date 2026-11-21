@@ -722,6 +722,7 @@ describe('akapen reply and resolve', () => {
     let resolves = 0;
     let answer: (n: number) => [number, string] = () => json({ comment: { id: comment.id } });
     let replyAnswer: [number, string] | null = null;
+    let replies = 0;
     const fake = createHttpServer((req, res) => {
       if (req.url === '/api/status') {
         void fetch(`${url}/api/status`)
@@ -731,6 +732,7 @@ describe('akapen reply and resolve', () => {
       }
       // Unanswered unless set, to see the CLI give up rather than wait on it.
       if (req.url?.endsWith('/replies')) {
+        replies++;
         if (replyAnswer)
           res.writeHead(replyAnswer[0], { 'content-type': 'application/json' }).end(replyAnswer[1]);
         return;
@@ -810,10 +812,12 @@ describe('akapen reply and resolve', () => {
       replyAnswer = json({ comment: { id: comment.id } });
       answer = () => [500, 'broken'];
       resolves = 0;
+      replies = 0;
       const halfway = await run(['reply', file, comment.id, 'landed', '--resolve']);
       expect(halfway.status).toBe(1);
       expect(halfway.stderr).toContain(`replied, but /api/comments/${comment.id}/resolve answered 500`);
       expect(resolves).toBe(1);
+      expect(replies).toBe(1);
       replyAnswer = null;
 
       const began = Date.now();
