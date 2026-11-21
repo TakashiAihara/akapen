@@ -1067,8 +1067,12 @@ export function startDaemon(opts: DaemonOptions & { manageToken: string }) {
     }
     // A one-document akapen on the same file holds the round and comments in memory and
     // writes them back, as this server would: two holders of one store overwrite each other.
-    if (readInstances().some((r) => r.file === file)) {
-      return { refused: `a one-document akapen is serving ${file}; stop it first`, status: 409 };
+    const holder = readInstances().find((r) => r.file === file);
+    if (holder !== undefined) {
+      return {
+        refused: `a one-document akapen from an earlier version (pid ${holder.pid}) is serving ${file}; stop it first`,
+        status: 409,
+      };
     }
     const id = documentId(file);
     const prev = entries.find((e) => e.id === id);

@@ -1573,13 +1573,15 @@ sse.addEventListener('message', (e) => {
 });
 
 /**
- * Notice when the server behind this tab is now another akapen (#177).
+ * Notice when this document's address no longer answers as it did (#177).
  *
- * Ports are handed out lowest-free first, so when an instance stops, the next one to
- * start often takes its port. The stream reconnects to it without complaint and the tab
- * keeps drawing the old document, with nothing saying it is not what that port serves.
- * So after a reconnect the document's path is asked again, and a different one is said.
- * Not swapped in: the old document may still be under review in this tab. From a drop
+ * The stream reconnects without complaint, and the tab would keep drawing the document
+ * with nothing saying the server behind it went away: the document was removed, or akapen
+ * serve came back on another token. So after a reconnect the document is asked for again.
+ * (A different path at the same address was how a one-document akapen on a reused port
+ * showed itself; under akapen serve the address follows from the path, so that answer is
+ * not expected, and is still said if it comes.) Not swapped in: the old document may still
+ * be under review in this tab. From a drop
  * until the path is known to match again, the port is treated as another document's:
  * its events are ignored (the first one arrives before the path is asked) and nothing is
  * fetched — a write would land on a document the reader is not looking at, and a read

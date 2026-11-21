@@ -742,7 +742,7 @@ describe('akapen serve', () => {
     legacyRecord(file);
     const r = cli(d, ['add', file]);
     expect(r.code).toBe(1);
-    expect(r.err).toContain('a one-document akapen is serving');
+    expect(r.err).toContain('a one-document akapen from an earlier version (pid ');
     expect(JSON.parse(cli(d, ['list', '--json']).out)).toEqual([]);
     // Only the file it serves: another one registers as usual.
     expect(cli(d, ['add', note('other.md')]).code).toBe(0);
@@ -1149,6 +1149,37 @@ describe('the commands that name a document', () => {
 });
 
 describe('akapen list', () => {
+  it('lists the round and the open comments a document has reached, as JSON and as a table', async () => {
+    const d = await serve();
+    const file = note('note.md');
+    const url = urlIn(cli(d, ['add', file]).out);
+    await comment(url, 'one');
+    await comment(url, 'two');
+    writeFileSync(file, '# A heading\n\nChanged.\n');
+    expect(cli(d, ['rounds', 'cut', file]).code).toBe(0);
+    await comment(url, 'three');
+
+    const [row] = JSON.parse(cli(d, ['list', '--json']).out) as { round: number; unresolved: number }[];
+    expect(row).toMatchObject({ round: 2, unresolved: 3 });
+    const table = cli(d, ['list']).out;
+    expect(table).toMatch(/R002\s+3\s/);
+
+    // Only the comments of the current round are marked as such.
+    const listed = JSON.parse(cli(d, ['comments', file]).out) as { body: string; current_round: boolean }[];
+    expect(listed.map((c) => [c.body, c.current_round]).toSorted()).toEqual([
+      ['one', false],
+      ['three', true],
+      ['two', false],
+    ]);
+  });
+
+  it('refuses the options of akapen serve on add, rather than dropping them', async () => {
+    const d = await serve();
+    const r = cli(d, ['add', note('note.md'), '--css', 'x.css', '--author', 'me']);
+    expect(r.code).toBe(1);
+    expect(r.err).toContain('--css, --author belong to akapen serve');
+  });
+
   it('prints what is registered as JSON, with the path in full', async () => {
     const d = await serve();
     const file = note('note.md');

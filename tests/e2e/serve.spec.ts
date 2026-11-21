@@ -15,7 +15,7 @@ const PNG = Buffer.from(
   'base64',
 );
 
-type Served = { add: (file: string) => string; sandbox: string };
+type Served = { add: (file: string) => string; remove: (file: string) => void; sandbox: string };
 
 const test = base.extend<{ served: Served }>({
   served: async ({ context }, use) => {
@@ -54,7 +54,14 @@ const test = base.extend<{ served: Served }>({
         if (r.status !== 0) throw new Error(r.stderr);
         return /url\s+(\S+)\?token=/.exec(r.stdout)![1]!;
       };
-      await use({ add, sandbox });
+      const remove = (file: string): void => {
+        const r = spawnSync('bun', ['run', 'packages/cli/src/cli.ts', 'remove', file], {
+          env: { ...env, AKAPEN_PORT: port },
+          encoding: 'utf8',
+        });
+        if (r.status !== 0) throw new Error(r.stderr);
+      };
+      await use({ add, remove, sandbox });
     } finally {
       if (proc.exitCode === null && proc.signalCode === null) proc.kill();
       await exited;
@@ -121,4 +128,18 @@ test('leads from a document back to the list of documents', async ({ page, serve
   await page.locator('#brand').click();
   await expect(page).toHaveURL(new URL('/', url).href);
   await expect(page.locator('body')).toContainText('note.md');
+});
+
+test('says so, and writes nothing, when the document it shows is removed', async ({ page, served }) => {
+  const file = join(served.sandbox, 'note.md');
+  writeFileSync(file, '# Removed\n\nText.\n');
+  const url = served.add(file);
+
+  await page.goto(url);
+  await expect(page.locator('#doc')).toContainText('Text.');
+  await expect(page.locator('#otherDocBar')).toBeHidden();
+  served.remove(file);
+  await expect(page.locator('#otherDocBar')).toBeVisible({ timeout: 15_000 });
+  // Lost, or not answering once asked again: either way the reader is told to reload.
+  await expect(page.locator('#otherDocText')).toContainText('reload');
 });

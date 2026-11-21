@@ -34,7 +34,7 @@ const USAGE = `akapen — markdown inline review
   akapen resolve <file.md> <id>  resolve a comment
   akapen rounds cut <file.md>    close the current round and open the next one
                                  (none when the file matches the current round)
-  akapen list                    print the akapen running on this host
+  akapen list                    print what akapen serve has registered
   akapen channel                 push this session's comments to Claude Code (MCP channel)
   akapen token                   print this host's token (--rotate to replace it)
 
@@ -55,7 +55,7 @@ options:
   --no-auth                serve: no token at all (only behind something that authenticates)
   --all                    comments: include resolved ones
   --json                   list: print as JSON (for agents)
-  --session <id>           list: only what that session started (a unique prefix works)
+  --session <id>           list: only what that session registered (a unique prefix works)
   --rotate                 token: replace the stored token
   --resolve                reply: resolve the comment after replying
 `;
@@ -240,8 +240,7 @@ if (positional[0] === 'channel') {
 /**
  * The token, for a script that has to present one.
  *
- * `akapen comments` reads the store off disk and needs nothing, but the reply and
- * resolve endpoints are HTTP, and so is anything watching `/api/status`. Printing it
+ * The reply and resolve endpoints are HTTP, and so is anything watching `/api/status`. Printing it
  * from the command keeps the path out of scripts, which is the part that moves.
  *
  * `--rotate` is the only revocation there is. One secret is shared by every browser and
@@ -538,6 +537,12 @@ if (positional[0] === 'add') {
   const [, target, ...extra] = positional;
   if (!target || !existsSync(target)) fail(`no such file: ${target ?? '(missing)'}`);
   if (extra.length > 0) fail(`add: unexpected ${JSON.stringify(extra.join(' '))}`);
+  // What used to follow `akapen <file.md>` would otherwise be dropped without a word.
+  const serveOnly = (['host', 'advertise', 'css', 'keymap', 'author', 'no-auth'] as const).filter(
+    (k) => args[k] !== undefined && args[k] !== false,
+  );
+  if (serveOnly.length > 0)
+    fail(`add: --${serveOnly.join(', --')} belong to akapen serve, which serves every document`);
   // Read, not created: a running server already has the token it checks.
   const token = clientToken();
   const res = await daemon(

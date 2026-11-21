@@ -284,15 +284,11 @@ export const RoundsPayloadSchema = v.object({
 });
 export type RoundsPayload = v.InferOutput<typeof RoundsPayloadSchema>;
 
-/* ===== Instances ===== */
-
 /**
- * What an instance says about itself, and the request that proves it is alive.
+ * What a document says about itself at `api/status`, and the request that proves it is served.
  *
- * `file` is the basename, not the path it was started with. The list this feeds is
- * shown over the LAN with nothing authenticating a reader (#10), and the layout of
- * somebody's disk is not something to hand out for free. Keeping the path out of the
- * payload means no caller can leak it by accident. Revisit when #10 lands.
+ * `file` is the basename, not the path. This answer reaches whoever holds the token on
+ * the LAN, and the layout of somebody's disk is not something to hand out for free.
  */
 export const StatusPayloadSchema = v.object({
   file: v.string(),
