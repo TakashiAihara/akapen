@@ -10,7 +10,15 @@ import { readServePort } from '@akapen/core/documents';
 import { akapenHome, loadReview, pendingComments } from '@akapen/core/store';
 import { liveInstances, reachableHost, readInstances } from '@akapen/core/instances';
 import { liveEntries, sweep as sweepSessions } from '@akapen/core/sessions';
-import { currentToken, resolveToken, rotateToken, secureHome, tokenIsPinned } from '@akapen/core/token';
+import {
+  currentToken,
+  readManageToken,
+  resolveManageToken,
+  resolveToken,
+  rotateToken,
+  secureHome,
+  tokenIsPinned,
+} from '@akapen/core/token';
 import { parseArgs, resolveHost, resolvePort, resolveSession, UsageError, type Args } from './args.ts';
 
 const USAGE = `akapen — markdown inline review
@@ -113,11 +121,14 @@ async function daemon(
 ): Promise<Response | null> {
   const port = daemonPort();
   if (port === null) return null;
+  const manageToken = readManageToken();
   const session = process.env['CLAUDE_CODE_SESSION_ID'] ?? '';
   const headers: Record<string, string> = {
     ...(token === null ? {} : { authorization: `Bearer ${token}` }),
     ...(session === '' ? {} : { 'x-akapen-session': session }),
     ...(init.body === undefined ? {} : { 'content-type': 'application/json' }),
+    // Only to the management API: a document's own routes have no use for it.
+    ...(path.startsWith('/api/') && manageToken !== null ? { 'x-akapen-manage': manageToken } : {}),
   };
   try {
     return await fetch(`http://127.0.0.1:${port}${path}`, {
@@ -659,8 +670,12 @@ if (positional[0] === 'serve') {
   const runningOn = readServePort();
   if (runningOn !== null) {
     const token = clientToken();
+    const manage = readManageToken();
     const answer = await fetch(`http://127.0.0.1:${runningOn}/api/documents`, {
-      headers: token === null ? {} : { authorization: `Bearer ${token}` },
+      headers: {
+        ...(token === null ? {} : { authorization: `Bearer ${token}` }),
+        ...(manage === null ? {} : { 'x-akapen-manage': manage }),
+      },
       signal: AbortSignal.timeout(2_000),
     }).catch(() => null);
     // A listing, or akapen's own refusal (a server on another token). Whatever else took the
@@ -706,6 +721,7 @@ if (positional[0] === 'serve') {
       tokenPinned: tokenIsPinned(args.token),
       author: args.author ?? process.env['USER'] ?? 'user',
       advertised: advertisedServe,
+      manageToken: resolveManageToken(),
       ...(args.css ? { cssPath: resolve(args.css) } : {}),
       ...(args.keymap ? { keymapPath: resolve(args.keymap) } : {}),
     });

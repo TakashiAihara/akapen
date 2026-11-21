@@ -14,7 +14,7 @@ Issue #305. One long-lived `akapen serve` on one fixed port hands out every regi
 - A document's URL is `/d/<store name>/`, where the store name is the directory its comments already live in: the file name and the first 12 hex digits of the SHA-1 of its absolute path. It follows from the path alone, so it survives restarts of the server and of the agent session
 - The default port is 4300, changed with `-p` or `$AKAPEN_PORT`. A port that is taken is a failure, not a move: a moved port is a changed URL
 - Registrations live in `~/.akapen/documents.json`. Only the server writes it; the CLI goes through `/api/documents`. One writer on one event loop is what keeps two sessions registering at once from losing one of the registrations, without a lock
-- `/api/documents` answers loopback peers only. A token holder on the LAN can read what is registered; letting them register would let them read any file the server's user can
+- `/api/documents` answers loopback peers only, and only with the management secret in `X-Akapen-Manage`. The secret is `~/.akapen/manage-token`, 0600, created by the first `serve`, or `AKAPEN_MANAGE_TOKEN` where the home is not shared. A token holder on the LAN can read what is registered; letting them register would let them read any file the server's user can. Loopback alone is not enough: a proxy on the same host relays the LAN from loopback, and need not say so in any header
 
 ## Planned in the same major version
 
@@ -27,6 +27,9 @@ Issue #305. One long-lived `akapen serve` on one fixed port hands out every regi
 
 ## Options not taken
 
+- Guarding management by peer address and forwarding headers alone: a proxy that adds no header gets through
+- Management on a unix socket: out of reach of a proxy too, but a container would have to share the socket, and the channel would have to speak to it
+- The token for management as well: it is in every reader's browser, so every reader could register any file
 - Port 80: needs privileges, and the existing cookies and bookmarks are on 4300
 - A URL from the path itself (`/d/notes/plan.md`): readable, but it hands the directory layout to the LAN, which the page has never done
 - A URL from a counter: changes when a document is registered again

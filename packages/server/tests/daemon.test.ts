@@ -4,7 +4,16 @@
  * Spawned, as server.test.ts does, so the path under test is the one the binary takes.
  */
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { createServer as createNetServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -18,6 +27,16 @@ const authed = (url: string, init: RequestInit = {}): Promise<Response> =>
   fetch(url, {
     ...init,
     headers: { ...(init.headers as Record<string, string> | undefined), authorization: `Bearer ${TOKEN}` },
+  });
+
+/** As the CLI on this machine calls the management API: the token and the management secret. */
+const managed = (url: string, init: RequestInit = {}): Promise<Response> =>
+  authed(url, {
+    ...init,
+    headers: {
+      ...(init.headers as Record<string, string> | undefined),
+      'x-akapen-manage': readFileSync(join(home, 'manage-token'), 'utf8').trim(),
+    },
   });
 
 type Daemon = { port: string; base: string; stop: () => Promise<void> };
@@ -389,7 +408,7 @@ describe('akapen serve', () => {
     const mine = urlIn(cli(d, ['add', note('a.md')], { CLAUDE_CODE_SESSION_ID: 'session-a' }).out);
     const theirs = urlIn(cli(d, ['add', note('b.md')], { CLAUDE_CODE_SESSION_ID: 'session-b' }).out);
 
-    const res = await authed(`${d.base}/api/documents?session=session-a`, { method: 'DELETE' });
+    const res = await managed(`${d.base}/api/documents?session=session-a`, { method: 'DELETE' });
     expect(res.status).toBe(200);
     expect(((await res.json()) as { removed: string[] }).removed).toEqual([/\/d\/([^/]+)\//.exec(mine)![1]]);
     expect((await authed(`${mine}api/status`)).status).toBe(404);
@@ -524,10 +543,29 @@ describe('akapen serve', () => {
     expect(readFileSync(join(home, 'documents.json'), 'utf8')).toBe(newer);
   });
 
+  it('refuses the management API without the management secret, even from this machine', async () => {
+    const d = await serve();
+    const body = { method: 'POST', headers: { 'content-type': 'application/json' } };
+    const without = await authed(`${d.base}/api/documents`, {
+      ...body,
+      body: JSON.stringify({ file: note('a.md') }),
+    });
+    expect(without.status).toBe(403);
+    const wrong = await authed(`${d.base}/api/documents`, {
+      ...body,
+      headers: { ...body.headers, 'x-akapen-manage': 'not-it' },
+      body: JSON.stringify({ file: note('b.md') }),
+    });
+    expect(wrong.status).toBe(403);
+    expect((await authed(`${d.base}/api/documents`)).status).toBe(403);
+    expect(existsSync(join(home, 'documents.json'))).toBe(false);
+    expect(statSync(join(home, 'manage-token')).mode & 0o777).toBe(0o600);
+  });
+
   it('refuses the management API to a request a proxy on this machine forwarded', async () => {
     const d = await serve();
     for (const header of ['x-forwarded-for', 'forwarded', 'x-real-ip']) {
-      const res = await authed(`${d.base}/api/documents`, {
+      const res = await managed(`${d.base}/api/documents`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', [header]: '203.0.113.9' },
         body: JSON.stringify({ file: note('secret.md') }),
@@ -614,9 +652,9 @@ describe('akapen serve', () => {
     const d = await serve(['--host', '0.0.0.0']);
     cli(d, ['add', note('note.md')]);
 
-    const fromLan = await authed(`http://${lan}:${d.port}/api/documents`);
+    const fromLan = await managed(`http://${lan}:${d.port}/api/documents`);
     expect(fromLan.status).toBe(403);
-    const added = await authed(`http://${lan}:${d.port}/api/documents`, {
+    const added = await managed(`http://${lan}:${d.port}/api/documents`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ file: note('secret.md') }),

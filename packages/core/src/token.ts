@@ -162,3 +162,37 @@ export function tokensMatch(presented: string, actual: string): boolean {
   const b = createHash('sha256').update(actual).digest();
   return timingSafeEqual(a, b);
 }
+
+/**
+ * The secret the management API of `akapen serve` asks for (#305, #306).
+ *
+ * Separate from the token, which every reader on the LAN holds as a cookie: registering a
+ * document makes the server read a file, so whoever may register can read any file the
+ * server's user can. This one stays in a 0600 file only that user can read, so the CLI on
+ * the same machine has it and a request relayed by a proxy does not. `AKAPEN_MANAGE_TOKEN`
+ * hands the same value to a server or a CLI that does not share this home (a container).
+ */
+export function manageTokenPath(): string {
+  return join(akapenHome(), 'manage-token');
+}
+
+export function readManageToken(): string | null {
+  const given = process.env['AKAPEN_MANAGE_TOKEN'];
+  if (given !== undefined && given !== '') return given;
+  try {
+    const raw = readFileSync(manageTokenPath(), 'utf8').trim();
+    return raw === '' ? null : raw;
+  } catch {
+    return null;
+  }
+}
+
+/** The management secret for a starting server, created on the first start. */
+export function resolveManageToken(): string {
+  const existing = readManageToken();
+  if (existing !== null) return existing;
+  const created = generate();
+  secureHome();
+  writeAtomic(manageTokenPath(), created, { mode: 0o600 });
+  return created;
+}

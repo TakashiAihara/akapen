@@ -1061,11 +1061,8 @@ const isLoopbackPeer = (address: string | undefined): boolean =>
 
 /**
  * A request that came through a proxy on this machine arrives from loopback too, on behalf
- * of whoever reached the proxy. Proxies say so in these headers, and such a request is
- * refused the management API.
- *
- * shortcut: a proxy that forwards without any of these still gets through; if one is put
- * in front, management should move to a unix socket.
+ * of whoever reached the proxy. Proxies that say so in these headers are refused here.
+ * One that does not is stopped by the management secret, which it does not have.
  */
 const FORWARDING_HEADERS = ['forwarded', 'x-forwarded-for', 'x-real-ip'];
 const fromThisMachine = (c: Context): boolean =>
@@ -1086,7 +1083,8 @@ const escapeHtml = (s: string): string => s.replace(/[&<>"']/g, (ch) => `&#${ch.
  * and only here: the CLI goes through `/api/documents`, which makes this the single
  * writer of `documents.json`.
  */
-export function startDaemon(opts: DaemonOptions) {
+export function startDaemon(opts: DaemonOptions & { manageToken: string }) {
+  const { manageToken } = opts;
   const { app, currentSecret } = guardedApp(opts, () => {});
   let entries: DocumentEntry[] = readDocuments();
   const open = new Map<string, OpenDocument>();
@@ -1155,6 +1153,10 @@ export function startDaemon(opts: DaemonOptions) {
   app.use('/api/documents/*', async (c, next) => {
     if (!fromThisMachine(c)) {
       return c.text('documents are managed from this machine only', 403);
+    }
+    const presented = c.req.header('x-akapen-manage');
+    if (presented === undefined || !tokensMatch(presented, manageToken)) {
+      return c.text('the management secret is missing or wrong (~/.akapen/manage-token)', 403);
     }
     return next();
   });
