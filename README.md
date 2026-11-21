@@ -135,7 +135,21 @@ akapen remove notes/plan.md          # stops serving it; its comments stay
 - `add` does not start a server. With none answering it says so and exits 1
 - Registrations are kept in `~/.akapen/documents.json`, which only the server writes. Registering and listing take a second secret, `~/.akapen/manage-token` (created by the first `serve`, readable only by its user), on top of coming from this machine: whoever holds the token can read what is registered, and registering would let them read any file. A request relayed by a proxy in front does not have that secret. A server or CLI that does not share the home (a container) is handed the same value in `AKAPEN_MANAGE_TOKEN`, and the CLI the server's port in `AKAPEN_PORT`. The CLI sends that secret only to a port chosen that way or recorded by a server that is still running, never to a bare 4300 another user could be listening on (the token goes there as before)
 - `--root <dir>` belongs to `add`, per document. `--css`, `--keymap`, `--author` and the authentication options belong to `serve`
-- `reply`, `resolve` and `rounds cut` find a registered document through the server, as they find a one-document server
+- `reply`, `resolve`, `rounds cut` and `comments` find a registered document through the server, as they find a one-document server
+
+A registration belongs to the Claude Code session that made it (`CLAUDE_CODE_SESSION_ID`), and lasts as long as the session:
+
+- `akapen channel` connects to the server, so a comment reaches the session as it is written. A session whose channel has been gone for 30 seconds is unregistered
+- The SessionEnd hook unregisters the session's documents, and the SessionStart hook registers them again when the session is resumed. The URLs come back as they were, since they follow from the paths. A hook is handed the session id as `session_id` in the JSON on its stdin:
+
+```json
+{
+  "hooks": {
+    "SessionEnd": [{ "hooks": [{ "type": "command", "command": "akapen remove --session \"$(jq -r .session_id)\"" }] }],
+    "SessionStart": [{ "matcher": "resume", "hooks": [{ "type": "command", "command": "akapen restore \"$(jq -r .session_id)\"" }] }]
+  }
+}
+```
 
 ### Pushing comments into a Claude Code session
 
