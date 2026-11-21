@@ -8,19 +8,15 @@
  * moves out of the session — nothing to re-arm, nothing to time out, and nothing that
  * stops watching without saying so.
  *
- * What it watches is the store rather than the server. The comments are on disk either
- * way, an instance that starts after this process is picked up on the next pass, and
- * there is no second connection to keep alive. The server-sent path is worth having once
- * the stream has a heartbeat (#71) and the browser needs the same event (#175); this
- * costs nothing until then.
+ * What it reads is `akapen serve` (#305): this session's documents and their unresolved
+ * comments, on a pass every few seconds, and a stream it holds open that wakes the pass
+ * when a comment lands. A server that is not running gives a pass nothing to report.
  */
 
 import { spawnSync } from 'node:child_process';
 import { statSync } from 'node:fs';
 
 import { chosenServePort, readServePort } from '@akapen/core/documents';
-import { reachableHost, readInstances } from '@akapen/core/instances';
-import { pendingComments } from '@akapen/core/store';
 import { currentToken, readManageToken } from '@akapen/core/token';
 import type { Reply, RoundComment } from '@akapen/shared';
 
@@ -34,9 +30,9 @@ const exitOnClose = (): never => process.exit(0);
 /**
  * The documents this session is reviewing.
  *
- * `origin.id` is stamped by the instance from `CLAUDE_CODE_SESSION_ID`, so an akapen
- * started by a sibling session is not ours to report. Without the filter a host running
- * thirty sessions would push every comment into all of them.
+ * `origin.id` is the session that registered the document, so one registered by a sibling
+ * session is not ours to report. Without the filter a host running thirty sessions would
+ * push every comment into all of them.
  */
 export function filesForSession(
   records: { file: string; origin?: { id?: string } }[],
@@ -200,21 +196,17 @@ export function newEvents(
   return { events: sorted, known: new Set(ids.filter((id) => !pushed.has(id))) };
 }
 
-/** What a pass reads. Passed in so the walking can be tested without a store on disk. */
+/** What a pass reads. Passed in so the walking can be tested without a server. */
 export type Store = {
   instances: () => {
     file: string;
-    host: string;
-    port: number;
     startedAt: string;
     origin?: { id?: string };
-    /** Where the document is reached, when it is not the root of `host:port` (`akapen serve`). */
-    url?: string;
+    /** Where the document is reached, as `akapen serve` hands it out. */
+    url: string;
   }[];
   comments: (file: string) => RoundComment[];
 };
-
-const DISK: Store = { instances: () => readInstances({ sweep: false }), comments: (f) => pendingComments(f) };
 
 /**
  * One pass over every document this session is reviewing, oldest event first across all
@@ -227,11 +219,7 @@ const DISK: Store = { instances: () => readInstances({ sweep: false }), comments
  * sent when it comes back, including what another session handled while the file was
  * registered to it.
  */
-export function collect(
-  sessionId: string,
-  seen: Map<string, Set<string>>,
-  store: Store = DISK,
-): ChannelEvent[] {
+export function collect(sessionId: string, seen: Map<string, Set<string>>, store: Store): ChannelEvent[] {
   const out: Timed[] = [];
   const next = new Map<string, Set<string>>();
   let files: string[] = [];
@@ -242,16 +230,15 @@ export function collect(
     files = filesForSession(records, sessionId);
     for (const r of records) {
       if (r.origin?.id !== sessionId) continue;
-      // Loopback is enough: whoever reads this runs on the host that serves the file.
-      urls.set(r.file, r.url ?? `http://${reachableHost(r.host)}:${r.port}`);
-      // The earliest of this session's instances on a file, so a comment written on an
+      urls.set(r.file, r.url);
+      // The earliest of this session's registrations of a file, so a comment written on an
       // older one is not taken for history because a newer one started later.
       const at = Date.parse(r.startedAt);
       const prev = started.get(r.file);
       if (!Number.isNaN(at) && (prev === undefined || at < prev)) started.set(r.file, at);
     }
   } catch {
-    /* The registry mid-write. Leaving `seen` alone means the next pass picks up where
+    /* The store mid-write. Leaving `seen` alone means the next pass picks up where
        this one would have, rather than re-seeding and going quiet about what arrived. */
     return [];
   }
@@ -506,11 +493,7 @@ const serveHeaders = (): Record<string, string> => {
   };
 };
 
-/**
- * The store a pass reads: the one-document servers' registry off disk, and this
- * session's documents as `akapen serve` holds them (#305). With no server answering,
- * only the first.
- */
+/** The store a pass reads: this session's documents as `akapen serve` holds them (#305). */
 export async function serveStore(sessionId: string): Promise<Store> {
   type Served = { file: string; url: string; added_at: string; comments: RoundComment[] };
   let served: Served[] = [];
@@ -544,22 +527,18 @@ export async function serveStore(sessionId: string): Promise<Store> {
       } else noteRefusal(res);
     }
   } catch {
-    /* No server, or one that did not answer: this pass reads the registry only. */
+    /* No server, or one that did not answer: this pass has nothing to report. */
   }
   const byFile = new Map(served.map((d) => [d.file, d]));
   return {
-    instances: () => [
-      ...DISK.instances(),
-      ...served.map((d) => ({
+    instances: () =>
+      served.map((d) => ({
         file: d.file,
-        host: '127.0.0.1',
-        port: port ?? 0,
         startedAt: d.added_at,
         origin: { id: sessionId },
         url: d.url.replace(/\/$/, ''),
       })),
-    ],
-    comments: (f) => byFile.get(f)?.comments ?? DISK.comments(f),
+    comments: (f) => byFile.get(f)?.comments ?? [],
   };
 }
 

@@ -8,17 +8,7 @@
  * handed over by `akapen comments`. Counting instead of naming re-fires on the same
  * unresolved comment every pass, forever.
  */
-import {
-  chmodSync,
-  mkdirSync,
-  mkdtempSync,
-  readdirSync,
-  renameSync,
-  rmSync,
-  statSync,
-  utimesSync,
-  writeFileSync,
-} from 'node:fs';
+import { chmodSync, mkdtempSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -328,7 +318,12 @@ describe('the order a batch is pushed in (#185)', () => {
 /** A store on no disk: what each pass sees is whatever the case hands it. */
 const store = (files: string[], comments: Record<string, RoundComment[] | Error>, startedAt = STARTED) => ({
   instances: () =>
-    files.map((file) => ({ file, host: '0.0.0.0', port: 4314, startedAt, origin: { id: 'S1' } })),
+    files.map((file) => ({
+      file,
+      url: 'http://192.168.0.5:4300/d/note-a1b2c3',
+      startedAt,
+      origin: { id: 'S1' },
+    })),
   comments: (file: string) => {
     const c = comments[file];
     if (c instanceof Error) throw c;
@@ -337,11 +332,11 @@ const store = (files: string[], comments: Record<string, RoundComment[] | Error>
 });
 
 describe('collect', () => {
-  it('says where to reply, on this host', () => {
+  it('says where to reply, as akapen serve hands the document out', () => {
     const seen = new Map<string, Set<string>>();
     collect('S1', seen, store(['/n/a.md'], { '/n/a.md': [] }));
     const events = collect('S1', seen, store(['/n/a.md'], { '/n/a.md': [comment('c1')] }));
-    expect(events[0]?.meta['url']).toBe('http://127.0.0.1:4314');
+    expect(events[0]?.meta['url']).toBe('http://192.168.0.5:4300/d/note-a1b2c3');
   });
 
   it('sends an event again when its delivery failed', () => {
@@ -412,26 +407,23 @@ describe('collect', () => {
     expect(events.map((e) => e.meta['reply_id'] ?? e.meta['comment_id'])).toEqual(['after']);
   });
 
-  it('seeds from the earliest of its instances on a document', () => {
+  it('seeds from the earliest of its registrations of a document', () => {
     const records = [
       {
         file: '/n/a.md',
-        host: '127.0.0.1',
-        port: 4314,
+        url: 'http://127.0.0.1:4300/d/note-4314',
         startedAt: '2026-09-18T00:00:10.000Z',
         origin: { id: 'S1' },
       },
       {
         file: '/n/a.md',
-        host: '127.0.0.1',
-        port: 4315,
+        url: 'http://127.0.0.1:4300/d/note-4315',
         startedAt: '2026-09-18T00:00:02.000Z',
         origin: { id: 'S1' },
       },
       {
         file: '/n/a.md',
-        host: '127.0.0.1',
-        port: 4316,
+        url: 'http://127.0.0.1:4300/d/note-4316',
         startedAt: '2026-09-18T00:00:20.000Z',
         origin: { id: 'S1' },
       },
@@ -441,19 +433,17 @@ describe('collect', () => {
     expect(events.map((e) => e.meta['comment_id'])).toEqual(['c1']);
   });
 
-  it("does not seed from a sibling session's instance on the same document", () => {
+  it("does not seed from a sibling session's registration of the same document", () => {
     const records = [
       {
         file: '/n/a.md',
-        host: '127.0.0.1',
-        port: 4314,
+        url: 'http://127.0.0.1:4300/d/note-4314',
         startedAt: '2026-09-18T00:00:01.000Z',
         origin: { id: 'S2' },
       },
       {
         file: '/n/a.md',
-        host: '127.0.0.1',
-        port: 4315,
+        url: 'http://127.0.0.1:4300/d/note-4315',
         startedAt: '2026-09-18T00:00:10.000Z',
         origin: { id: 'S1' },
       },
@@ -462,13 +452,17 @@ describe('collect', () => {
     expect(collect('S1', new Map(), { instances: () => records, comments: () => [written] })).toEqual([]);
   });
 
-  it('seeds from the instance whose start time parses when another one does not', () => {
+  it('seeds from the registration whose time parses when another one does not', () => {
     const records = [
-      { file: '/n/a.md', host: '127.0.0.1', port: 4314, startedAt: 'not a time', origin: { id: 'S1' } },
       {
         file: '/n/a.md',
-        host: '127.0.0.1',
-        port: 4315,
+        url: 'http://127.0.0.1:4300/d/note-4314',
+        startedAt: 'not a time',
+        origin: { id: 'S1' },
+      },
+      {
+        file: '/n/a.md',
+        url: 'http://127.0.0.1:4300/d/note-4315',
         startedAt: '2026-09-18T00:00:02.000Z',
         origin: { id: 'S1' },
       },
@@ -545,7 +539,7 @@ describe('collect', () => {
     expect(events[0]?.meta['comment_id']).toBe('c2');
   });
 
-  it('does not go quiet when the registry cannot be read', () => {
+  it('does not go quiet when the store cannot be read', () => {
     const seen = new Map<string, Set<string>>();
     collect('S1', seen, store(['/n/a.md'], { '/n/a.md': [comment('c1')] }));
     const broken = {
@@ -586,27 +580,6 @@ describe('runChannel', () => {
       rmSync(home, { recursive: true, force: true });
     }
   }, 15000);
-});
-
-describe('the store the channel reads by default', () => {
-  it('leaves registry entries it cannot use where they are (#184)', () => {
-    const home = mkdtempSync(join(tmpdir(), 'akapen-channel-'));
-    const before = process.env['AKAPEN_HOME'];
-    process.env['AKAPEN_HOME'] = home;
-    try {
-      mkdirSync(join(home, 'instances'), { recursive: true });
-      // What a newer binary might write and this one cannot read, for a live process.
-      const foreign = `${process.ppid}.json`;
-      writeFileSync(join(home, 'instances', foreign), '{"shape":"from a later version"}');
-
-      expect(collect('channel-sweep-test', new Map())).toEqual([]);
-      expect(readdirSync(join(home, 'instances'))).toEqual([foreign]);
-    } finally {
-      if (before === undefined) delete process.env['AKAPEN_HOME'];
-      else process.env['AKAPEN_HOME'] = before;
-      rmSync(home, { recursive: true, force: true });
-    }
-  });
 });
 
 const withDir = (fn: (dir: string) => void): void => {
