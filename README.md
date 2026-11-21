@@ -8,14 +8,14 @@ Comments are never written into the markdown file. They live in a sidecar under 
 
 ## How a review goes
 
-An agent writes a markdown file and serves it. A person reads the rendered page in a browser and comments on lines. The agent picks the comments up, edits the file, and answers on the thread.
+An agent writes a markdown file and registers it with the server. A person reads the rendered page in a browser and comments on lines. The agent picks the comments up, edits the file, and answers on the thread.
 
 ```mermaid
 sequenceDiagram
     participant A as Agent (Claude Code)
     participant K as akapen
     participant P as Person (browser)
-    A->>K: akapen note.md
+    A->>K: akapen add note.md
     P->>K: comment on a line
     K-->>A: channel event (pushed)
     A->>K: or akapen comments (pulled)
@@ -26,7 +26,7 @@ sequenceDiagram
 
 The push needs Claude Code's development channel flag, since channels are a research preview (see below). An agent resolves what it changed the document for; a reply that only answers a question, or asks the person to decide, stays open.
 
-- One binary, one file per process. Nothing to install on the reading side but a browser.
+- One binary, and one server for every document. Nothing to install on the reading side but a browser.
 - Comments are anchored to source lines in a frozen round and carry the text they point at, so an agent can find the spot while the live file has moved on.
 - Rounds freeze what was reviewed. The page shows that snapshot, not the live file, so the agent can keep writing while the person keeps reading.
 - Replies are threaded one level deep, and each reply says whether a person or an agent wrote it, and which Claude Code session.
@@ -38,7 +38,8 @@ The push needs Claude Code's development channel flag, since channels are a rese
 ```bash
 curl -fsSL https://raw.githubusercontent.com/TakashiAihara/akapen/main/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"   # where install.sh puts it, if not on PATH yet
-akapen notes/design.md                 # serves in the foreground and prints the URL to open, token included
+akapen serve &                         # once per host: the server for every document (a service unit is under Running the server)
+akapen add notes/design.md             # registers the document and prints the URL to open, token included
 ```
 
 From another shell, once someone has commented:
@@ -47,7 +48,7 @@ From another shell, once someone has commented:
 akapen comments notes/design.md        # unresolved comments, as JSON
 ```
 
-On a remote machine, add `--host 0.0.0.0` and open the printed LAN address (see Usage).
+On a remote machine, start the server with `akapen serve --host 0.0.0.0` and open the LAN address `akapen add` printed (see Usage).
 
 ## Why it exists
 
@@ -96,26 +97,28 @@ Binaries exist for linux and darwin on x64 and arm64. GitHub Actions builds them
 
 ```bash
 bun install
-bun run start <file.md> [options]
+bun run start serve [options]
 ```
 
 The examples below use `bun run packages/cli/src/cli.ts`; read that as `akapen` if you installed it.
 
 ## Usage
 
+The options of `akapen serve`, and `--root`, which belongs to `akapen add`:
+
 | Option | Meaning |
 |---|---|
 | `--host <addr>` | listen address: an IP address or `localhost`; any other name is refused (default `127.0.0.1`) |
-| `-p, --port <n>` | port (default `4300`; when that is taken, one the OS picks, said on the startup line. A port given here is not moved off) |
+| `-p, --port <n>` | port (default `$AKAPEN_PORT`, else `4300`). One that is taken is a failure, not a move, since a URL already handed out has to keep working; `0` lets the OS pick |
 | `-A, --advertise <addr\|iface>` | address to print in the URL, or an interface to take one from (`AKAPEN_ADVERTISE` sets it once per host) |
 | `--css <file>` | extra stylesheet, loaded after the defaults so it can override everything |
 | `--keymap <file>` | JSON overriding the keymap, merged over the defaults |
-| `--root <dir>` | file root: serve images the document refers to from anywhere under this directory (default: the document's own directory) |
+| `--root <dir>` | `akapen add` only, per document. File root: serve images the document refers to from anywhere under this directory (default: the document's own directory) |
 | `--author <name>` | comment author (default `$USER`) |
 | `--token <s>` | use this token instead of the stored one (`AKAPEN_TOKEN` does the same without appearing in `ps`) |
 | `--no-auth` | serve with no token at all, for running behind something that authenticates |
 
-Use `--host 0.0.0.0` to run it on a remote machine and read it from a local browser. A wildcard bind is not an address anything connects to, so what gets printed is the machine's own addresses — the section below says which, and how to pin one. An address, not a name: akapen serves literal addresses and `localhost` only, because a name is the one thing another machine on the network can claim and rebind.
+Use `--host 0.0.0.0` to run it on a remote machine and read it from a local browser. A wildcard bind is not an address anything connects to, so what gets printed is the machine's address that carries the default route — the section below says how to pin another. An address, not a name: akapen serves literal addresses and `localhost` only, because a name is the one thing another machine on the network can claim and rebind.
 
 ### One process for many documents
 
@@ -129,13 +132,14 @@ akapen remove notes/plan.md          # stops serving it; its comments stay
 
 - The path segment is the store directory's name: the file name and a hash of its absolute path. The same file always gets the same URL, across restarts of the server and re-registration, and two files with the same name in different directories get different ones
 - The server listens on `-p`, else `$AKAPEN_PORT`, else `4300`. A taken port is a failure rather than a move, since a URL already handed out has to keep working
-- `add`, `remove` and `list` reach it on `127.0.0.1` at `-p`, else `$AKAPEN_PORT`, else the port the running server recorded in `~/.akapen/serve.json`, else `4300`. `list` shows what the server holds next to any one-document servers
+- `add`, `remove` and `list` reach it on `127.0.0.1` at `-p`, else `$AKAPEN_PORT`, else the port the running server recorded in `~/.akapen/serve.json`, else `4300`. `list` shows what the server holds
 - `--host` for `serve` is `127.0.0.1` (the default), `0.0.0.0` or `::`: the commands above connect to `127.0.0.1`
 - One server per `~/.akapen`: a second refuses to start while the first answers
 - `add` does not start a server. With none answering it says so and exits 1
 - Registrations are kept in `~/.akapen/documents.json`, which only the server writes. Registering and listing take a second secret, `~/.akapen/manage-token` (created by the first `serve`, readable only by its user), on top of coming from this machine: whoever holds the token can read what is registered, and registering would let them read any file. A request relayed by a proxy in front does not have that secret. A server or CLI that does not share the home (a container) is handed the same value in `AKAPEN_MANAGE_TOKEN`, and the CLI the server's port in `AKAPEN_PORT`. The CLI sends that secret only to a port chosen that way or recorded by a server that is still running, never to a bare 4300 another user could be listening on (the token goes there as before)
 - `--root <dir>` belongs to `add`, per document. `--css`, `--keymap`, `--author` and the authentication options belong to `serve`
-- `reply`, `resolve`, `rounds cut` and `comments` find a registered document through the server, as they find a one-document server
+- `reply`, `resolve`, `rounds cut` and `comments` reach a registered document through the server, and say so when the document is not registered
+- `akapen <file.md>`, one process for one document, no longer exists: it exits 2 and names `akapen serve` and `akapen add`
 
 #### Running the server
 
@@ -207,8 +211,8 @@ services:
 ```
 
 ```bash
-# Stop any one-document akapen on the host first (akapen list): from inside the container
-# their processes look gone, and the first start would move ~/.akapen/reviews/ under them.
+# Stop any one-document akapen from an earlier version first (what it left is in ~/.akapen/instances/):
+# from inside the container its process looks gone, and the first start would move ~/.akapen/reviews/ under it.
 mkdir -p ~/.akapen                # created by you, not by Docker as root
 chmod 700 ~/.akapen
 export UID GID="$(id -g)"         # bash keeps UID unexported and has no GID
@@ -244,7 +248,7 @@ Register it, and start the session with the flag that admits it. Channels are a 
 claude --dangerously-load-development-channels server:akapen
 ```
 
-It reports only the documents that session started — `CLAUDE_CODE_SESSION_ID` is stamped on an instance when it starts, and the same id reaches the channel — so a host running several sessions does not tell all of them about each comment. When the channel first sees a document, what was written on it before its akapen started is not reported: that backlog is what `akapen comments` already hands over, and pushing it would bury whatever is new. What was written after the start is pushed, so a comment typed in the first seconds, or while the channel was not running, still arrives. A channel that restarts (a resumed session, a reconnect) does not know what was delivered before; one that keeps running remembers a document across a moment it is not listed, and on its return reports only what is new. On a thread the session has replied on, it pushes only what was written at or after the session's latest reply; anything else written since the start arrives again. That is a guess, and it can lose a reply: one written in the few seconds before the session's answer, which the stopped channel had not delivered yet, is taken as read and not pushed. A batch arrives in the order it was written, not in line order.
+It reports only the documents that session registered — `akapen add` stamps `CLAUDE_CODE_SESSION_ID` on the registration, and the same id reaches the channel — so a host running several sessions does not tell all of them about each comment. When the channel first sees a document, what was written on it before it was registered is not reported: that backlog is what `akapen comments` already hands over, and pushing it would bury whatever is new. What was written after the start is pushed, so a comment typed in the first seconds, or while the channel was not running, still arrives. A channel that restarts (a resumed session, a reconnect) does not know what was delivered before; one that keeps running remembers a document across a moment it is not listed, and on its return reports only what is new. On a thread the session has replied on, it pushes only what was written at or after the session's latest reply; anything else written since the start arrives again. That is a guess, and it can lose a reply: one written in the few seconds before the session's answer, which the stopped channel had not delivered yet, is taken as read and not pushed. A batch arrives in the order it was written, not in line order.
 
 For a session that loads the channel, it replaces anything that waits on `akapen comments` and wakes the session, such as `akapen-wait-comment`. Run one or the other: with both, every comment arrives twice.
 
@@ -257,13 +261,13 @@ It is one way. The channel does not declare `claude/channel/permission`, which w
 Every request needs a token, at every bind address. The URL akapen prints carries it:
 
 ```text
-akapen  /home/you/notes/design.md
+akapen serve
   url     http://192.168.1.20:4300/?token=<token>
 ```
 
 Opening that once is the whole of logging in. akapen answers with a cookie and a redirect that takes the token back out of the address bar, so every later visit is the bare `http://host:4300` — and the URL above, kept as a bookmark, still works when the cookie is gone or you are on another browser. Opening the bookmark again redirects again: the token comes out of the address bar every time, not only on the first visit.
 
-The token is one per host, kept in `~/.akapen/token` (mode `0600`), and it does not expire. `--token` and `AKAPEN_TOKEN` override it for one run, in that order, and neither is written to the store. One per host rather than one per instance is deliberate: cookies are not isolated by port ([RFC 6265 §8.5](https://www.rfc-editor.org/rfc/rfc6265#section-8.5)), so opening any one of the akapen running on a machine authenticates the browser for all of them, including ones started later.
+The token is one per host, kept in `~/.akapen/token` (mode `0600`), and it does not expire. `--token` and `AKAPEN_TOKEN` override it for one run, in that order, and neither is written to the store. One per host is deliberate: cookies are not isolated by port ([RFC 6265 §8.5](https://www.rfc-editor.org/rfc/rfc6265#section-8.5)), so a browser holding the cookie of one akapen sends it to every other on the machine, and the one token authenticates it for all of them.
 
 For curl and agents there is a header, and no cookie is set for it:
 
@@ -281,7 +285,7 @@ It is a shared secret, not a key: nothing is signed or encrypted, holding it is 
 `--no-auth` turns the credential off completely, so it is only for a front that authenticates on akapen's behalf — Tailscale Serve, or a proxy asking for a login. It also needs nothing else to be able to reach the port. Bind it to loopback and point the proxy there:
 
 ```bash
-akapen note.md --host 127.0.0.1 -p 4300 --no-auth
+akapen serve --host 127.0.0.1 -p 4300 --no-auth
 ```
 
 A proxy does not protect a port that is still listening on the LAN beside it, and the `Host` check is not a credential — a client connecting directly can send whichever name it likes.
@@ -290,42 +294,41 @@ Writes have to come from akapen's own page. `SameSite` is about the site and a s
 
 Separately from the token, akapen refuses any request whose `Host` header is not a name it actually serves. That is not the same job. A page you visit can point its own hostname at `127.0.0.1` after loading — DNS rebinding — and the browser will then treat akapen as that page's origin and attach the cookie itself, so the token proves nothing. The `Host` header is the part of the request a script cannot choose, which is why it is the one checked. It is why loopback alone was never a defence, and it stays on under `--no-auth`.
 
-Several akapen on one host can find each other, so `-p 0` — let the OS pick a port — is a reasonable way to start one.
+### Listing what is registered
 
 ```bash
-bun run packages/cli/src/cli.ts list          # the akapen running on this host
-bun run packages/cli/src/cli.ts list --json   # the same, for agents
+akapen list          # what akapen serve holds
+akapen list --json   # the same, for agents
 ```
 
 ```text
-PID     SESSION   URL                         ROUND  UNRESOLVED  FILE
-81234   0e79fa27  http://192.168.1.20:4300    R002   3           /path/to/design.md
-81235   -         http://127.0.0.1:4391       R001   0           /path/to/plan.md
+PID    SESSION   URL                                              ROUND  UNRESOLVED  FILE
+serve  0e79fa27  http://192.168.1.20:4300/d/design-ab12cd34ef56/  R002   3           /path/to/design.md
+serve  -         http://192.168.1.20:4300/d/plan-0123456789ab/    R001   0           /path/to/plan.md
 ```
 
-The column is a URL rather than the address each was bound to, for the same reason the startup block is one: `0.0.0.0:4300` is not somewhere to go. It carries no token — the terminal it is read in belongs to whoever started them, and a secret printed on every row would be in the scrollback of every other thing they did. `akapen token` prints it when a script needs one.
+`PID` says `serve` because a document is held by the server rather than by a process of its own; `--json` has `null` there.
+
+The column is a URL rather than the address the server was bound to, for the same reason the startup block is one: `0.0.0.0:4300` is not somewhere to go. It carries no token — the terminal it is read in belongs to whoever runs the server, and a secret printed on every row would be in the scrollback of every other thing they did. `akapen token` prints it when a script needs one.
 
 `--json` also carries `title`: the document's first top-level heading with the markup taken off, the heading the browser tab is named after. It is empty for a document with none — `file` is beside it, so the fallback is yours to pick.
 
-`0.0.0.0` names every interface and no machine, so it is not printed back. When the bound address is a wildcard, the startup block lists the machine's own non-loopback IPv4 addresses instead — the one carrying the default route first, the rest as `also`, because which one your browser can reach is knowledge akapen does not have.
+`0.0.0.0` names every interface and no machine, so it is not printed back. When the bound address is a wildcard, the startup block prints the machine's own non-loopback IPv4 address that carries the default route, because which one your browser can reach is knowledge akapen does not have; the next section pins another.
 
 ```text
-akapen  /home/me/notes/design.md
-  url     http://192.168.1.20:4300/?token=<token>…
-  also    http://172.17.0.1:4300/?token=<token>…
-  round   001
-  store   /home/me/.akapen/comments/design-ab12cd34ef56
+akapen serve
+  url     http://192.168.1.20:4300/?token=<token>
 ```
 
-A concrete `--host` is printed unchanged. Ordering by the default route reads `/proc/net/route`, so on a platform without it the addresses come out in whatever order the OS reports them.
+A concrete `--host` is printed unchanged. Ordering by the default route reads `/proc/net/route`, so on a platform without it the address is the first one the OS reports.
 
 ### Pinning the one to hand over
 
-Listing every address is honest and still leaves you picking one out of three that cannot work. `--advertise` (`-A`) says which one, and `AKAPEN_ADVERTISE` says it once for a host that always wants the same answer — the flag wins, so reaching for it is what marks this run as the exception.
+The address printed for a wildcard bind is a guess at which of the machine's addresses you can reach. `--advertise` (`-A`) says which one, and `AKAPEN_ADVERTISE` says it once for a host that always wants the same answer — the flag wins, so reaching for it is what marks this run as the exception.
 
 ```bash
-akapen note.md --host 0.0.0.0 --advertise 192.168.1.20   # this address
-akapen note.md --host 0.0.0.0 -A eth0                     # whatever that interface has
+akapen serve --host 0.0.0.0 --advertise 192.168.1.20   # this address
+akapen serve --host 0.0.0.0 -A eth0                     # whatever that interface has
 export AKAPEN_ADVERTISE=eth0                              # and then neither
 ```
 
@@ -335,7 +338,7 @@ A hostname is refused rather than resolved, and this is deliberate. The `Host` c
 
 ### Handing comments to an agent
 
-Besides the channel, the handoff to an agent is a CLI command.
+Besides the channel, the handoff to an agent is a CLI command. It reads through `akapen serve`, so the document has to be registered (`akapen add`).
 
 ```bash
 bun run packages/cli/src/cli.ts comments <file.md>          # unresolved comments as JSON
@@ -385,13 +388,13 @@ An agent resolves with `POST /api/comments/<id>/resolve` and the `Authorization`
 There is an example stylesheet in `examples/dense.css`. The space above a heading is the variable `--ak-heading-above`, set per heading row (`.row.heading { --ak-heading-above: 12px; }`), not the heading's `margin-top`: the line number and the + are placed with it, so a sheet that sets the margin leaves them behind.
 
 ```bash
-bun run packages/cli/src/cli.ts note.md --css examples/dense.css
+bun run packages/cli/src/cli.ts serve --css examples/dense.css
 ```
 
 `examples/sample.md` is there to try it on.
 
 ```bash
-bun run packages/cli/src/cli.ts examples/sample.md
+bun run packages/cli/src/cli.ts add examples/sample.md
 ```
 
 ## Design
@@ -426,9 +429,8 @@ While skimming you are scrolling, so a hover-based path is needed. While writing
 | `shift+j` / `shift+k` | grow the selection (same as a mouse drag) | `row.extendNext` / `row.extendPrev` |
 | `c` | comment on the selection | `comment.start` |
 | `Ctrl+Enter` | send | `comment.submit` |
-| `Esc` | close an enlarged figure; otherwise cancel (switcher, then draft, then rail, then selection) | `comment.cancel` |
+| `Esc` | close an enlarged figure; otherwise cancel (outline, then draft, then rail, then selection) | `comment.cancel` |
 | `l` | toggle line numbers | `lines.toggle` |
-| `o` | the other akapen on this host | `instances.toggle` |
 | `t` | the outline | `outline.toggle` |
 | `z` | enlarge the first figure (a diagram, or an image shown smaller than its own size or taller than the window) on the focused line | `figure.zoom` |
 
@@ -437,7 +439,7 @@ The assignment is provisional and will be revisited as a whole. It is defined in
 Arrow keys and `Enter` are deliberately unbound. Taking the arrows breaks page scrolling, which breaks reading. Add them with `--keymap`.
 
 ```bash
-bun run packages/cli/src/cli.ts note.md --keymap examples/keymap.json
+bun run packages/cli/src/cli.ts serve --keymap examples/keymap.json
 ```
 
 ```json
@@ -462,7 +464,7 @@ One binary, five packages. The split is about which direction knowledge is allow
 | `@akapen/core` | line mapping and the comment store. Knows nothing about HTTP |
 | `@akapen/server` | Hono routes over `Bun.serve`, plus the embedded assets |
 | `@akapen/web` | the browser side, bundled by `bun build` |
-| `@akapen/cli` | argument parsing and the subcommands (`comments`, `reply`, `resolve`, `rounds`, `list`, `token`, `channel`) |
+| `@akapen/cli` | argument parsing and the subcommands (`serve`, `add`, `remove`, `restore`, `comments`, `reply`, `resolve`, `rounds`, `list`, `token`, `channel`) |
 
 Everything points at `shared`, and nothing points back. `server` embeds `web`'s build output, which is the one edge that runs the other way; it stays acyclic because `web` never reaches for the server. A typed client generated from the routes (Hono's `hc`, tRPC) would close that loop — the browser would import the server to learn the shapes — and clients only get added over time. Putting the contract in `shared` keeps every client one hop from the same definition.
 
@@ -522,57 +524,19 @@ A screen replaced by a payload arriving from the server destroys the reading pos
 
 The trade-off: what the agent fixed does not appear until the next round begins. Use mdserve alongside when you want to watch it change. crit makes the same call.
 
-### The other akapen on this host
-
-One akapen is one file and one process, and the port it took exists in exactly one place: the startup line of whoever started it. Once that has scrolled away, the review is running and unreachable. A header button lists the others and links to them; `o` opens the same list, and it is not there at all while nothing else is running.
-
-Every instance drops a file naming itself under `AKAPEN_HOME`, holding identity only: pid, address, file, start time. The round number and the unresolved count change on every comment, and a registry that has to be rewritten that often is a registry that will be wrong — so those are asked of the instance itself, over `GET /api/status`, which is also the request that proves it is alive. A crash leaves an entry behind and pids are reused, so an entry existing is not evidence of anything on its own. Entries naming a process that is gone are deleted as they are read, and the directory heals itself.
-
-The list is built by the server, at `GET /api/instances`. The browser cannot build it: every instance is a different origin, so it would need CORS on an endpoint that has none, and one bound to `127.0.0.1` is not reachable from the reader's machine at all while being perfectly reachable from the server sitting next to it.
-
-A link is built from the address the page was opened on, `location.hostname`, not from what the peer bound. The browser is usually not on this host — akapen is started with `--host 0.0.0.0` and read over the LAN — so `localhost` and `127.0.0.1` point at the reader's own machine. Which leaves the default bind as a case to handle rather than ignore: a peer on `127.0.0.1` cannot be opened from that browser however the link is built, so its row is listed and marked unreachable instead of carrying a link that will time out. Where a review you cannot reach is running is still worth knowing.
-
-A row shows the basename, the round and the unresolved count. Not the title either, which nothing on the switcher uses (`akapen list --json` has it). **Not the path**: directory layout is not something to hand out, and the token says a reader may see the review rather than everything about the machine holding it. `akapen list` does print it in full — that is read on the host, by whoever started them.
-
-Instances find each other by asking, and the request carries the same token, so a peer started with a different one does not answer, and `akapen list` says so rather than that nothing is running.
-
-Only instances sharing an `AKAPEN_HOME` see each other, and only on one host. Reaching across hosts is a different thing and is not built.
-
 ### Finding your own again
 
-An agent that starts akapen leaves the url in the scrollback of the session that ran it, and nowhere else. Once that has scrolled away the review is running and unreachable, and on a host with five of them there is nothing saying which is which.
-
-So every instance records who started it. Nothing has to be passed in — Claude Code exports `CLAUDE_CODE_SESSION_ID` to what it runs, and akapen reads it there.
+A document is registered by a session, and its URL follows from its path, so a session can ask for its own again.
 
 ```bash
-akapen list --session "$CLAUDE_CODE_SESSION_ID"          # only what this session started
-akapen list --json --session "$CLAUDE_CODE_SESSION_ID"   # the same, with the whole origin
+akapen list --session "$CLAUDE_CODE_SESSION_ID"          # only what this session registered
+akapen list --json --session "$CLAUDE_CODE_SESSION_ID"   # the same, with the session as `origin`
+akapen add notes/design.md                               # the same URL as before
 ```
 
-`--session` also takes the short id the table prints, as long as only one session starts with it; a prefix that more than one session starts with is refused, with the candidates. A value no running session matches is answered as such ("no akapen running here was started by a session matching …"), which is also what a session that has closed everything gets. `--json` answers `[]` for both.
+`--session` also takes the short id the table prints, as long as only one session starts with it; a prefix that more than one session starts with is refused, with the candidates. A value no registered document's session matches is answered as such ("no document registered with akapen serve belongs to a session matching …"), which is also what a session that has no documents any more looks like.
 
-`AKAPEN_ORIGIN_LABEL` is carried alongside it and never read: a pane id, a ticket, whatever identifies the instance in a setup akapen knows nothing about.
-
-There is also a reverse index, for a statusline that wants to show the url and cannot afford to fork on every redraw.
-
-```text
-~/.akapen/sessions/<session-id>/<pid>      # one url, on one line
-```
-
-```bash
-for f in "$HOME/.akapen/sessions/$session_id"/*; do
-  [[ -r $f ]] || continue
-  pid=${f##*/}
-  kill -0 "$pid" 2>/dev/null || continue
-  read -r url < "$f"
-done
-```
-
-Pathname expansion, `kill` and `read` are all builtins, so that loop forks nothing. `kill -0` sends no signal and only asks whether the process is there; `/proc` would do as well on linux and never answer on darwin, which akapen also ships for. The pid check is a cheap way to skip an instance that has gone; what actually removes the file is `akapen list`, or the next instance to start, neither of which trusts a pid on its own — pids come round again, and an entry standing behind an unrelated process would keep a dead url on screen.
-
-The url has no token on it. It is the one to come back to, and coming back is what the cookie already covers; a secret printed on every redraw would end up in the scrollback of everything else that terminal did. Recorded at startup it is a guess at which of this machine's addresses you will use, and a login corrects it: a cookie is scoped to scheme, host and port together, so a wrong guess is exactly one whose cookie is not sent — which forces the login that rewrites it.
-
-After `akapen token --rotate` the existing cookies are void, so a bare url answers 401 until you open the startup line once more. That is what rotating is for.
+After `akapen token --rotate` the existing cookies are void, so a bare url answers 401 until you open a URL carrying the token once more (`akapen add` prints one). That is what rotating is for.
 
 ### The outline
 
@@ -604,12 +568,11 @@ The markdown file is never touched. A home from before this version keeps them i
     001/comments.json  # comments anchored to lines in 001
     002/content.md
     002/comments.json
-~/.akapen/instances/
-  <pid>.json           # one running akapen: pid, address, file, start time, origin
-~/.akapen/sessions/
-  <session-id>/<pid>   # the url that instance can be reached at, one line
+~/.akapen/documents.json # what akapen serve has registered; only the server writes it
 ~/.akapen/token        # the shared secret, mode 0600
 ```
+
+`~/.akapen/instances/` holds what a one-document akapen of an earlier version left. Nothing writes it now; `akapen serve` only reads it, to refuse a file such a process still serves and to hold back the move from `reviews/` while one runs.
 
 `AKAPEN_HOME` replaces `~/.akapen` (the tests use it to avoid touching the real store). `AKAPEN_SETTLE_MS` replaces the 50ms gap between the two reads that decide the file has stopped moving; the test that asserts a moving file is refused hands over a long one, because at 50ms the assertion rested on its writer outrunning that gap and lost the race on CI ([#135](https://github.com/TakashiAihara/akapen/issues/135)).
 
@@ -641,7 +604,6 @@ Across all 152 notes in a vault, no line was dropped or duplicated (24164 blocks
 
 ## Not done yet
 
-- Reviewing several files. One file per process today; the others on the host are listed and linked to, not held by one process.
 - Starting the agent from akapen. The channel pushes comments into a session that is already running; nothing like crit's `agent_cmd` starts one.
 
 ## Licence
