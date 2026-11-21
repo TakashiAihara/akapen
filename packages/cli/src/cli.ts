@@ -132,8 +132,21 @@ async function daemon(
  * What `akapen serve` has registered, or null when it is not running — or when whatever
  * answers on its port is not it, which is told by the shape of the answer.
  */
+/**
+ * Set by `daemonDocuments` when akapen serve answered but refused the token: running, on
+ * another one. Kept apart from "not running", which the same null would otherwise mean.
+ */
+let serveRefused = false;
+
 async function daemonDocuments(token: string | null = clientToken()): Promise<DaemonDocument[] | null> {
   const res = await daemon('/api/documents', {}, token);
+  if (
+    res?.status === 401 &&
+    (await res.text().catch(() => '')).startsWith('unauthenticated. open the URL akapen printed')
+  ) {
+    serveRefused = true;
+    return null;
+  }
   if (res === null || !res.ok) return null;
   const body: unknown = await res.json().catch(() => null);
   if (!Array.isArray(body)) return null;
@@ -307,15 +320,17 @@ if (positional[0] === 'list') {
     // Why it did not answer is not known here, so no cause is named.
     const registered = args.session === undefined ? readInstances().length : 0;
     console.log(
-      args.session === undefined && answered !== null && registered === 0
-        ? `akapen serve is running on port ${daemonPort()}; nothing is registered`
-        : args.session === undefined
-          ? registered === 0
-            ? 'no akapen is running'
-            : `no akapen answered (${registered} registered)`
-          : session === null
-            ? `no akapen running here was started by a session matching ${JSON.stringify(args.session)}`
-            : "that session's akapen did not answer",
+      serveRefused && registered === 0
+        ? `akapen serve is running on port ${daemonPort()} but refused this token; pass --token or set AKAPEN_TOKEN`
+        : args.session === undefined && answered !== null && registered === 0
+          ? `akapen serve is running on port ${daemonPort()}; nothing is registered`
+          : args.session === undefined
+            ? registered === 0
+              ? 'no akapen is running'
+              : `no akapen answered (${registered} registered)`
+            : session === null
+              ? `no akapen running here was started by a session matching ${JSON.stringify(args.session)}`
+              : "that session's akapen did not answer",
     );
     process.exit(0);
   }
@@ -719,7 +734,12 @@ const file = positional[0]!;
 if (!existsSync(file)) fail(`no such file: ${file}`);
 // The same store held by akapen serve as well would be overwritten by whichever wrote last.
 portFlagNamesServer = false;
-if ((await daemonDocuments())?.some((d) => d.file === resolve(file))) {
+const served = await daemonDocuments();
+// Refused, it may well hold this file: starting would put a second holder on its store.
+if (serveRefused) {
+  fail(`akapen serve is running on port ${daemonPort()} on another token; pass that token, or stop it first`);
+}
+if (served?.some((d) => d.file === resolve(file))) {
   fail(
     `akapen serve already serves ${resolve(file)}; open it there (akapen list), or akapen remove it first`,
   );

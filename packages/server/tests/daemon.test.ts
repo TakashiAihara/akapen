@@ -5,6 +5,7 @@
  */
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer as createNetServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -187,6 +188,46 @@ describe('akapen serve', () => {
       proc.kill();
       await exited;
     }
+  });
+
+  it('listens on AKAPEN_PORT over the port a crashed server recorded', async () => {
+    mkdirSync(home, { recursive: true });
+    const free = await new Promise<number>((done) => {
+      const s = createNetServer().listen(0, '127.0.0.1', () => {
+        const p = (s.address() as { port: number }).port;
+        s.close(() => done(p));
+      });
+    });
+    writeFileSync(join(home, 'serve.json'), JSON.stringify({ port: 1, pid: 1 }));
+    const proc = spawn('bun', ['run', CLI, 'serve'], {
+      env: env({ AKAPEN_PORT: String(free) }),
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const exited = new Promise<void>((done) => proc.on('exit', () => done()));
+    try {
+      let out = '';
+      await until(() => {
+        out += proc.stdout.read()?.toString() ?? '';
+        return /url\s+http/.test(out);
+      }, 15_000);
+      expect(out).toContain(`127.0.0.1:${free}/`);
+    } finally {
+      proc.kill();
+      await exited;
+    }
+  });
+
+  it('says a server on another token is running, and a one-document start refuses beside it', async () => {
+    const d = await serve();
+    const other = { AKAPEN_TOKEN: 'some-other-token' };
+    expect(cli(d, ['list'], other).out).toContain('refused this token');
+    const r = spawnSync('bun', ['run', CLI, note('note.md'), '-p', '0'], {
+      env: env({ ...other, AKAPEN_PORT: d.port }),
+      encoding: 'utf8',
+      timeout: 15_000,
+    });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('on another token');
   });
 
   it('refuses a second server whose first runs on another token', async () => {
