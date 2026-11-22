@@ -1100,7 +1100,7 @@ export function startDaemon(opts: DaemonOptions & { manageToken: string }) {
     const holder = readInstances().find((r) => r.file === file);
     if (holder !== undefined) {
       return {
-        refused: `a one-document akapen from an earlier version (pid ${holder.pid}) is serving ${file}; stop it first`,
+        refused: `a one-document akapen from an earlier version (pid ${holder.pid}, recorded in ${holder.record}) is serving ${file}; stop it first, or delete the record if that process is not akapen`,
         status: 409,
       };
     }
@@ -1339,7 +1339,8 @@ export function startDaemon(opts: DaemonOptions & { manageToken: string }) {
     if (doc === null) return c.text('not registered here', 404);
     if ('heldBy' in doc)
       return c.text(
-        `a one-document akapen from an earlier version (pid ${doc.heldBy}) is serving this file; stop it first`,
+        // No path: this is read over the LAN.
+        `a one-document akapen from an earlier version (pid ${doc.heldBy}) is serving this file; stop it first (its record is in instances/ under akapen's home)`,
         409,
       );
     // Cut from the raw path: the id arrives decoded, and its encoded form is longer.

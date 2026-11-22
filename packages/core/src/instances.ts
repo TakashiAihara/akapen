@@ -12,6 +12,7 @@
 
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { processStartedAt } from './process.ts';
 import { akapenHome } from './store.ts';
 
 /** The two things of an old record that anything reads. */
@@ -19,6 +20,8 @@ export type InstanceRecord = {
   pid: number;
   /** Absolute path of the file that process serves. */
   file: string;
+  /** Where the record is, for a message: something to look at, or to delete. */
+  record: string;
 };
 
 export function instancesDir(): string {
@@ -38,6 +41,20 @@ function alive(pid: number): boolean {
   }
 }
 
+/** A record's `startedAt` is written a moment after its process starts; clocks are read to the second. */
+const START_SLACK_MS = 2_000;
+
+/**
+ * Whether the process with this id can be the one that wrote a record at `startedAt` (#323).
+ * One that started after the record was written was given the id later: the writer is gone,
+ * and nothing ever removes its record. Where either time is unknown, the pid decides alone.
+ */
+function wrote(pid: number, startedAt: unknown): boolean {
+  const written = typeof startedAt === 'string' ? Date.parse(startedAt) : Number.NaN;
+  const started = Number.isNaN(written) ? null : processStartedAt(pid);
+  return started === null || started <= written + START_SLACK_MS;
+}
+
 /** The records whose process is still there. One that cannot be read is not one. */
 export function readInstances(): InstanceRecord[] {
   const dir = instancesDir();
@@ -46,15 +63,20 @@ export function readInstances(): InstanceRecord[] {
   for (const name of readdirSync(dir)) {
     if (!name.endsWith('.json')) continue;
     try {
-      const parsed = JSON.parse(readFileSync(join(dir, name), 'utf8')) as Partial<InstanceRecord> | null;
+      const parsed = JSON.parse(readFileSync(join(dir, name), 'utf8')) as {
+        pid?: unknown;
+        file?: unknown;
+        startedAt?: unknown;
+      } | null;
       if (
         typeof parsed?.pid === 'number' &&
         Number.isInteger(parsed.pid) &&
         parsed.pid > 0 &&
         typeof parsed.file === 'string' &&
-        alive(parsed.pid)
+        alive(parsed.pid) &&
+        wrote(parsed.pid, parsed.startedAt)
       ) {
-        out.push({ pid: parsed.pid, file: parsed.file });
+        out.push({ pid: parsed.pid, file: parsed.file, record: join(dir, name) });
       }
     } catch {
       /* Unreadable or not JSON: not a record. */
