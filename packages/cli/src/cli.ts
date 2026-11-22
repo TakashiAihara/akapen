@@ -365,6 +365,9 @@ type Pending = { current: number; comments: ReturnType<typeof pendingComments> }
  * means for the command ("nothing was written").
  */
 function unreachable(file: string, documents: DaemonDocument[] | null, consequence: string): never {
+  // Asked only once the server has said it is not registered: a registered document whose
+  // file is gone still takes replies (#345).
+  if (documents !== null && !existsSync(file)) fail(`no such file: ${file}`);
   console.error(
     documents === null
       ? serveRefused
@@ -474,7 +477,7 @@ if (positional[0] === 'rounds') {
 if (positional[0] === 'reply' || positional[0] === 'resolve') {
   const verb = positional[0];
   const [, file, id, text, ...extra] = positional;
-  if (!file || !existsSync(file)) fail(`no such file: ${file ?? '(missing)'}`);
+  if (!file) fail('no such file: (missing)');
   if (!id) fail(`${verb}: which comment? Give its id, as \`akapen comments\` prints it`);
   if (verb === 'reply' && !text?.trim()) fail('reply: the text of the reply is missing');
   // A text in several words is one argument; quote it. Dropping the rest would send a part.
@@ -679,7 +682,7 @@ if (positional[0] === 'remove') {
 
 if (positional[0] === 'comments') {
   const file = positional[1];
-  if (!file || !existsSync(file)) fail(`no such file: ${file ?? '(missing)'}`);
+  if (!file) fail('no such file: (missing)');
   // Unresolved comments from earlier rounds are included. Closing a round removes them
   // from the screen, not from the feedback. Line numbers refer to that round's snapshot
   // and will not match the live file, so an agent matches on `anchor` (the text as it was).

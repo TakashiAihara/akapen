@@ -1075,11 +1075,16 @@ export function startDaemon(opts: DaemonOptions & { manageToken: string }) {
     root: string | undefined,
     since?: string,
   ): DocumentEntry | { refused: string; status: 400 | 409 } => {
-    if (!statSync(file, { throwIfNoEntry: false })?.isFile()) return bad(`no such file: ${file}`);
+    // A file that is gone is still registered when its store holds a round: a session that
+    // resumes gets back the document it was being told about (#319).
+    const st = statSync(file, { throwIfNoEntry: false });
+    if (st === undefined ? loadReview(file).currentRound === 0 : !st.isFile())
+      return bad(`no such file: ${file}`);
     if (root !== undefined) {
       if (!statSync(root, { throwIfNoEntry: false })?.isDirectory())
         return bad(`root is not a directory: ${root}`);
-      if (!isInside(realpathSync(root), realpathSync(file)))
+      // Checked when it was first registered; there is nothing to resolve while the file is gone.
+      if (st !== undefined && !isInside(realpathSync(root), realpathSync(file)))
         return bad(`root does not contain the document: ${root}`);
     }
     // A one-document akapen on the same file holds the round and comments in memory and

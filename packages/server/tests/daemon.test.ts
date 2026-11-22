@@ -331,7 +331,14 @@ describe('akapen serve', () => {
 
     const d = await serve();
     const again = `${d.base}${new URL(url).pathname}`;
-    expect((await comment(again, 'while it is gone')).status).toBe(200);
+    const written = (await (await comment(again, 'while it is gone')).json()) as { comment: { id: string } };
+    // The agent told about it can answer from the command line as well.
+    const replied = cli(d, ['reply', file, written.comment.id, 'seen']);
+    expect(replied.code, replied.err).toBe(0);
+    expect(cli(d, ['comments', file]).out).toContain('while it is gone');
+    const typo = cli(d, ['reply', `${file}.absent`, written.comment.id, 'seen']);
+    expect(typo.code).toBe(1);
+    expect(typo.err).toContain(`no such file: ${file}.absent`);
     const listed = JSON.parse(cli(d, ['list', '--json']).out) as Record<string, unknown>[];
     expect(listed.map((r) => [r['missing'], r['title'], r['round'], r['unresolved']])).toEqual([
       [true, 'A heading', 1, 2],
@@ -975,6 +982,21 @@ describe('sessions on akapen serve', () => {
     expect(restored.err).toContain(`not restored: ${gone}: no such file`);
     expect(restored.out).toContain(url);
     expect(restored.out).not.toContain('nothing to restore');
+  });
+
+  it('restores a document whose file is gone when its store holds a round', async () => {
+    const d = await serve();
+    const file = note('note.md');
+    // With a root, which cannot be checked against a file that is not there.
+    const url = urlIn(cli(d, ['add', file, '--root', sandbox], { CLAUDE_CODE_SESSION_ID: 'session-a' }).out);
+    expect((await comment(url, 'before')).status).toBe(200);
+    cli(d, ['remove', '--session', 'session-a']);
+    rmSync(file);
+
+    const restored = cli(d, ['restore', 'session-a']);
+    expect(restored.err).not.toContain('not restored');
+    expect(restored.out).toContain(url);
+    expect((await comment(url, 'after the resume')).status).toBe(200);
   });
 
   it('wakes the stream of the session a comment belongs to, and no other', async () => {
