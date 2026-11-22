@@ -5,6 +5,7 @@
  */
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -768,6 +769,35 @@ describe('akapen serve', () => {
     } finally {
       await new Promise<void>((done) => listener.close(() => done()));
     }
+  });
+
+  it('refuses a management secret other users could read, in the server and in the CLI', async () => {
+    mkdirSync(home, { recursive: true });
+    const stored = join(home, 'manage-token');
+    writeFileSync(stored, 'readable-by-anyone\n');
+    chmodSync(stored, 0o644);
+    const started = spawnSync('bun', ['run', CLI, 'serve', '-p', '0'], {
+      env: env(),
+      encoding: 'utf8',
+      timeout: 15_000,
+    });
+    expect(started.status).toBe(1);
+    expect(started.stderr).toContain(
+      `${stored} is not used: its mode is 644, not 600, so it may have been read or replaced`,
+    );
+    // Said as akapen says things, in one line: not a stack trace.
+    expect(started.stderr.trim().split('\n')).toHaveLength(1);
+    expect(started.stderr.startsWith('akapen: ')).toBe(true);
+    expect(readFileSync(stored, 'utf8')).toBe('readable-by-anyone\n');
+
+    // A server running on the very value in the file: sent, it would be let in. It is not sent.
+    const d = await serve([], { AKAPEN_MANAGE_TOKEN: 'readable-by-anyone' });
+    const asked = cli(d, ['comments', note('note.md')]);
+    expect(asked.code).toBe(1);
+    expect(asked.err).toContain(
+      `${stored} is not used: its mode is 644, not 600, so it may have been read or replaced`,
+    );
+    expect(asked.err).toContain('refused this command');
   });
 
   it('does not hand the management secret to whatever holds a port this home never chose', async () => {

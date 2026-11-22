@@ -9,6 +9,7 @@ import { readServePort, recordedServerAlive, servePath, whatAnswers } from '@aka
 import { akapenHome, type pendingComments } from '@akapen/core/store';
 import {
   currentToken,
+  ManageTokenError,
   readManageToken,
   resolveManageToken,
   resolveToken,
@@ -829,6 +830,10 @@ if (positional[0] === 'serve') {
       ...(args.keymap ? { keymapPath: resolve(args.keymap) } : {}),
     });
   } catch (err) {
+    if (err instanceof ManageTokenError) {
+      console.error(`akapen: ${err.message}`);
+      process.exit(1);
+    }
     if ((err as { code?: unknown }).code !== 'EADDRINUSE') throw err;
     fail(
       `port ${port} is in use. If it is akapen serve, it is already running; otherwise pick another with -p or $AKAPEN_PORT`,

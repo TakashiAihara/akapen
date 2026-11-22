@@ -17,7 +17,16 @@
  */
 
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import {
+  chmodSync,
+  closeSync,
+  constants,
+  existsSync,
+  fstatSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import { akapenHome, writeAtomic } from './store.ts';
 
@@ -176,22 +185,90 @@ export function manageTokenPath(): string {
   return join(akapenHome(), 'manage-token');
 }
 
-export function readManageToken(): string | null {
-  // Trimmed as the file is: a blank value is not a secret, and falls through to the file.
+/** `AKAPEN_MANAGE_TOKEN`, handed in on purpose. Trimmed as the file is: a blank value is not a secret. */
+function givenManageToken(): string | null {
   const given = process.env['AKAPEN_MANAGE_TOKEN']?.trim();
-  if (given !== undefined && given !== '') return given;
+  return given === undefined || given === '' ? null : given;
+}
+
+/**
+ * What is wrong with a file holding a secret, or null: a mode that lets anyone but its owner
+ * read or replace it, or an owner who is not the user running this (#322).
+ */
+export function secretFileFault(st: { mode: number; uid: number }, uid: number): string | null {
+  if ((st.mode & 0o077) !== 0) return `its mode is ${(st.mode & 0o777).toString(8)}, not 600`;
+  if (st.uid !== uid) return `it belongs to uid ${st.uid}, not ${uid}`;
+  return null;
+}
+
+/** The code of a file-system error, for a message. */
+const errnoOf = (err: unknown): string => String((err as { code?: unknown }).code);
+
+/**
+ * The stored management secret, or why it is not used. Neither when there is none to read.
+ *
+ * The file lets a request register any file the server's user can read, so one that another
+ * user of the machine could have read, in a shared or copied home, is not a secret any more.
+ * Refused rather than tightened: a chmod would hide that it had been readable. Checked and
+ * read through one descriptor, so the file that was checked is the file that is read. Not
+ * checked where there are no uids to compare (Windows). What an ACL grants is not seen.
+ *
+ * Only a file that is not there, or an empty one, counts as none. One that is there and
+ * cannot be opened or read (another user's 0600, which this user cannot open to look at),
+ * or is not a regular file, is a fault as well: taking it for none would have the server
+ * write a new secret over it. Opened without blocking, since opening a FIFO left at the
+ * path would otherwise wait for a writer for ever.
+ */
+function storedManageToken(): { value: string | null; fault: string | null } {
+  const path = manageTokenPath();
+  const unused = (why: string) => ({
+    value: null,
+    fault: `${path} is not used: ${why}. Remove it and restart akapen serve, which writes a new one, or hand the secret in as AKAPEN_MANAGE_TOKEN`,
+  });
+  let fd: number;
   try {
-    const raw = readFileSync(manageTokenPath(), 'utf8').trim();
-    return raw === '' ? null : raw;
-  } catch {
-    return null;
+    fd = openSync(path, constants.O_RDONLY | constants.O_NONBLOCK);
+  } catch (err) {
+    return errnoOf(err) === 'ENOENT'
+      ? { value: null, fault: null }
+      : unused(`it cannot be opened (${errnoOf(err)})`);
   }
+  try {
+    const st = fstatSync(fd);
+    if (!st.isFile()) return unused('it is not a regular file');
+    const fault = process.getuid === undefined ? null : secretFileFault(st, process.getuid());
+    if (fault !== null) return unused(`${fault}, so it may have been read or replaced`);
+    const raw = readFileSync(fd, 'utf8').trim();
+    return { value: raw === '' ? null : raw, fault: null };
+  } catch (err) {
+    return unused(`it cannot be read (${errnoOf(err)})`);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/** A stored management secret that is not used, so a server does not start on a new one without a word. */
+export class ManageTokenError extends Error {}
+
+/** The fault last said, so the channel, which reads on every pass, says each one once. */
+let faultSaid: string | null = null;
+
+export function readManageToken(): string | null {
+  const given = givenManageToken();
+  if (given !== null) return given;
+  const stored = storedManageToken();
+  if (stored.fault !== null && stored.fault !== faultSaid) console.error(`akapen: ${stored.fault}`);
+  faultSaid = stored.fault;
+  return stored.value;
 }
 
 /** The management secret for a starting server, created on the first start. */
 export function resolveManageToken(): string {
-  const existing = readManageToken();
-  if (existing !== null) return existing;
+  const given = givenManageToken();
+  if (given !== null) return given;
+  const stored = storedManageToken();
+  if (stored.fault !== null) throw new ManageTokenError(stored.fault);
+  if (stored.value !== null) return stored.value;
   const created = generate();
   secureHome();
   writeAtomic(manageTokenPath(), created, { mode: 0o600 });
