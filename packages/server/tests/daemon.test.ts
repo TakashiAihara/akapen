@@ -830,7 +830,7 @@ describe('akapen serve', () => {
       seen.length = 0;
       writeFileSync(
         join(home, 'serve.json'),
-        JSON.stringify({ port, pid: process.pid, started: 'another process than this one' }),
+        JSON.stringify({ port, pid: process.pid, identity: 'another process than this one' }),
       );
       await listAsync({ ...env(), AKAPEN_PORT: '' });
       expect(seen.length).toBeGreaterThan(0);
@@ -839,7 +839,7 @@ describe('akapen serve', () => {
       seen.length = 0;
       writeFileSync(
         join(home, 'serve.json'),
-        JSON.stringify({ port, pid: process.pid, started: processIdentity(process.pid) }),
+        JSON.stringify({ port, pid: process.pid, identity: processIdentity(process.pid) }),
       );
       await listAsync({ ...env(), AKAPEN_PORT: '' });
       expect(seen).toContain('the-secret-that-must-stay');
@@ -1049,13 +1049,25 @@ describe('akapen serve', () => {
     expect(readdirSync(join(home, 'instances')).toSorted()).toEqual([gone, alive].toSorted());
   });
 
+  it('starts beside a record whose pid lives but names another process, and not beside its own', async () => {
+    const first = await serve();
+    const record = join(home, 'serve.json');
+    const own = readFileSync(record, 'utf8');
+    // The running server's record as it is: a second one is refused.
+    await expect(serve()).rejects.toThrow('already running');
+    // The same pid, alive, on a record that names another process: left behind by a crash.
+    writeFileSync(record, JSON.stringify({ ...(JSON.parse(own) as object), identity: 'not this process' }));
+    const second = await serve();
+    expect(second.port).not.toBe(first.port);
+  });
+
   it('records what names its process beside its pid', async () => {
     await serve();
     const rec = JSON.parse(readFileSync(join(home, 'serve.json'), 'utf8')) as {
       pid: number;
-      started: string;
+      identity: string;
     };
-    expect(rec.started).toBe(processIdentity(rec.pid));
+    expect(rec.identity).toBe(processIdentity(rec.pid));
   });
 
   it('finds a server started on its own port through what it recorded', async () => {

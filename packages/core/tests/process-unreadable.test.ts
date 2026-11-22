@@ -26,7 +26,7 @@ it('counts a recorded server whose pid lives as running when its process cannot 
   const { recordedServerAlive, writeServePort } = await import('../src/documents.ts');
   writeFileSync(
     join(home, 'serve.json'),
-    JSON.stringify({ port: 4321, pid: process.pid, started: 'recorded' }),
+    JSON.stringify({ port: 4321, pid: process.pid, identity: 'recorded' }),
   );
   expect(recordedServerAlive()).toBe(true);
   // And writes a record without it, rather than one that could never match.

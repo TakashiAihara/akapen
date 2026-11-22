@@ -86,22 +86,23 @@ export function readServePort(): number | null {
 }
 
 /**
- * What the running server recorded: its port, its pid when the record has one, and when
- * that process started when the server could tell (#323).
+ * What the running server recorded: its port, its pid when the record has one, and what
+ * else names that process when the server could tell (#323). `identity` is compared for
+ * equality and is not a time.
  */
-export function readServeRecord(): { port: number; pid: number | null; started: string | null } | null {
+export function readServeRecord(): { port: number; pid: number | null; identity: string | null } | null {
   try {
     const rec = JSON.parse(readFileSync(servePath(), 'utf8')) as {
       port?: unknown;
       pid?: unknown;
-      started?: unknown;
+      identity?: unknown;
     };
-    const { port, pid, started } = rec;
+    const { port, pid, identity } = rec;
     if (typeof port !== 'number' || !Number.isInteger(port) || port <= 0 || port > 65_535) return null;
     return {
       port,
       pid: typeof pid === 'number' && Number.isInteger(pid) && pid > 0 ? pid : null,
-      started: typeof started === 'string' ? started : null,
+      identity: typeof identity === 'string' ? identity : null,
     };
   } catch {
     return null;
@@ -111,8 +112,8 @@ export function readServeRecord(): { port: number; pid: number | null; started: 
 /**
  * Whether the server this home recorded is still running. A record a crash left behind
  * names a port anyone may hold now. A pid answering EPERM belongs to another user, which a
- * server of this home never is, so it counts as gone. So does a pid that lives but started
- * at another moment than the record says: the server's id, given to a later process.
+ * server of this home never is, so it counts as gone. So does a pid that lives but is not
+ * the process the record names: the server's id, given to a later process.
  */
 export function recordedServerAlive(): boolean {
   return liveServeRecord() !== null;
@@ -126,8 +127,8 @@ function liveServeRecord(): number | null {
     process.kill(rec.pid, 0);
     // Compared only when both are known: a record from before this was written, or a
     // platform where the start cannot be read, is judged by the pid alone, as it was.
-    const started = rec.started === null ? null : processIdentity(rec.pid);
-    return started !== null && started !== rec.started ? null : rec.port;
+    const identity = rec.identity === null ? null : processIdentity(rec.pid);
+    return identity !== null && identity !== rec.identity ? null : rec.port;
   } catch {
     return null;
   }
@@ -148,10 +149,10 @@ export function chosenServePort(): number | null {
 
 export function writeServePort(port: number): void {
   mkdirSync(akapenHome(), { recursive: true });
-  const started = processIdentity(process.pid);
+  const identity = processIdentity(process.pid);
   writeAtomic(
     servePath(),
-    `${JSON.stringify({ port, pid: process.pid, ...(started === null ? {} : { started }) })}\n`,
+    `${JSON.stringify({ port, pid: process.pid, ...(identity === null ? {} : { identity }) })}\n`,
   );
 }
 

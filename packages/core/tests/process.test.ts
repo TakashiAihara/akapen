@@ -11,11 +11,17 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { readServeRecord, recordedServerAlive, writeServePort } from '../src/documents.ts';
 import { processIdentity } from '../src/process.ts';
 
+const tick = (identity: string | null) => Number(identity!.split(':')[1]);
+
 describe('what names a process beside its pid', () => {
   it('is read for this process, and is the same each time', () => {
     const mine = processIdentity(process.pid);
     expect(mine).toMatch(/\S/);
     expect(processIdentity(process.pid)).toBe(mine);
+    // On Linux, which values: the boot's id and a count of ticks, not some other field of the line.
+    if (process.platform === 'linux') {
+      expect(mine).toMatch(/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}:\d+$/);
+    }
   });
 
   it('differs for another process, and is not read for one that is gone', async () => {
@@ -25,6 +31,11 @@ describe('what names a process beside its pid', () => {
       const theirs = processIdentity(child.pid!);
       expect(theirs).toMatch(/\S/);
       expect(theirs).not.toBe(processIdentity(process.pid));
+      // The tick it started at, which for a process started later is not an earlier one.
+      if (process.platform === 'linux') {
+        expect(tick(theirs)).toBeGreaterThanOrEqual(tick(processIdentity(process.pid)));
+        expect(tick(theirs) - tick(processIdentity(process.pid))).toBeLessThan(100 * 3600);
+      }
     } finally {
       child.kill();
       await exited;
@@ -50,20 +61,20 @@ describe('the server a home recorded', () => {
     expect(readServeRecord()).toEqual({
       port: 4321,
       pid: process.pid,
-      started: processIdentity(process.pid),
+      identity: processIdentity(process.pid),
     });
     expect(recordedServerAlive()).toBe(true);
   });
 
   it('is gone when its pid lives but is another process than the one recorded', () => {
-    record({ port: 4321, pid: process.pid, started: `${processIdentity(process.pid)}0` });
+    record({ port: 4321, pid: process.pid, identity: `${processIdentity(process.pid)}0` });
     expect(recordedServerAlive()).toBe(false);
   });
 
   it('is judged by the pid alone when the record does not say which process', () => {
     record({ port: 4321, pid: process.pid });
     expect(recordedServerAlive()).toBe(true);
-    record({ port: 4321, pid: 2 ** 22 + 1, started: 'x' });
+    record({ port: 4321, pid: 2 ** 22 + 1, identity: 'x' });
     expect(recordedServerAlive()).toBe(false);
   });
 });
