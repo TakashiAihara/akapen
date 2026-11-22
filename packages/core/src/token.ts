@@ -192,6 +192,9 @@ export function secretFileFault(st: { mode: number; uid: number }, uid: number):
   return null;
 }
 
+/** The code of a file-system error, for a message. */
+const errnoOf = (err: unknown): string => String((err as { code?: unknown }).code);
+
 /**
  * The stored management secret, or why it is not used. Neither when there is none to read.
  *
@@ -199,28 +202,33 @@ export function secretFileFault(st: { mode: number; uid: number }, uid: number):
  * user of the machine could have read, in a shared or copied home, is not a secret any more.
  * Refused rather than tightened: a chmod would hide that it had been readable. Checked and
  * read through one descriptor, so the file that was checked is the file that is read. Not
- * checked where there are no uids to compare (Windows).
+ * checked where there are no uids to compare (Windows). What an ACL grants is not seen.
+ *
+ * Only a file that is not there counts as none. One that is there and cannot be opened or
+ * read (another user's 0600, which this user cannot open to look at; a directory) is a
+ * fault as well: taking it for none would have the server write a new secret over it.
  */
 function storedManageToken(): { value: string | null; fault: string | null } {
   const path = manageTokenPath();
+  const unused = (why: string) => ({
+    value: null,
+    fault: `${path} is not used: ${why}. Delete it and restart akapen serve, which writes a new one`,
+  });
   let fd: number;
   try {
     fd = openSync(path, 'r');
-  } catch {
-    return { value: null, fault: null };
+  } catch (err) {
+    return errnoOf(err) === 'ENOENT'
+      ? { value: null, fault: null }
+      : unused(`it cannot be opened (${errnoOf(err)})`);
   }
   try {
     const fault = process.getuid === undefined ? null : secretFileFault(fstatSync(fd), process.getuid());
-    if (fault !== null)
-      return {
-        value: null,
-        fault: `${path} is not used: ${fault}. Whoever could read it may hold the secret: delete it and restart akapen serve, which writes a new one`,
-      };
+    if (fault !== null) return unused(`${fault}, so whoever could read it may hold the secret`);
     const raw = readFileSync(fd, 'utf8').trim();
     return { value: raw === '' ? null : raw, fault: null };
-  } catch {
-    // Opened but not readable (a directory at the path): as good as absent.
-    return { value: null, fault: null };
+  } catch (err) {
+    return unused(`it cannot be read (${errnoOf(err)})`);
   } finally {
     closeSync(fd);
   }

@@ -226,14 +226,24 @@ describe('the stored management secret', () => {
     }
   });
 
-  it('reads nothing, rather than failing, where the secret cannot be looked at', () => {
-    // A home that is a file, and a directory where the secret would be.
+  it('reads nothing where the secret cannot be looked at, and does not write a new one over it', () => {
+    // A home that is a file: the path cannot be opened, for a reason other than not being there.
     writeFileSync(home, '');
     expect(readManageToken()).toBeNull();
+    expect(() => resolveManageToken()).toThrow(ManageTokenError);
+    expect(() => resolveManageToken()).toThrow('it cannot be opened (ENOTDIR)');
     rmSync(home);
+    // A directory where the secret would be, sound by mode and owner, so it is the read that fails.
     mkdirSync(stored(), { recursive: true });
-    // Sound by mode and owner, so it is the read that fails.
     chmodSync(stored(), 0o700);
     expect(readManageToken()).toBeNull();
+    expect(() => resolveManageToken()).toThrow('it cannot be read (EISDIR)');
+    expect(statSync(stored()).isDirectory()).toBe(true);
+  });
+
+  it('writes one where there is none', () => {
+    const created = resolveManageToken();
+    expect(readFileSync(stored(), 'utf8')).toBe(created);
+    expect(statSync(stored()).mode & 0o777).toBe(0o600);
   });
 });
