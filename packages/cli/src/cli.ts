@@ -301,6 +301,8 @@ if (positional[0] === 'list') {
         ? []
         : documents.filter((d) => d.session === session);
   if (args.json) {
+    // An empty list on stdout either way; a reader of it is told on stderr what it does not mean.
+    if (somethingElse) console.error(`akapen: ${noAnswer()}`);
     console.log(
       JSON.stringify(
         served.map((d) => ({

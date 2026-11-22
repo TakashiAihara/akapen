@@ -729,6 +729,10 @@ describe('akapen serve', () => {
       const listed = await run(['list']);
       expect(listed.text).toContain(`what answers on 127.0.0.1:${port} is not akapen serve`);
       expect(listed.text).not.toContain('refused this command');
+      // For an agent reading the JSON: empty, with the reason beside it.
+      expect((await run(['list', '--json'])).text).toContain(
+        `what answers on 127.0.0.1:${port} is not akapen serve`,
+      );
       const added = await run(['add', note('note.md')]);
       expect(added.code).toBe(1);
       expect(added.text).toContain(`what answers on 127.0.0.1:${port} is not akapen serve`);
