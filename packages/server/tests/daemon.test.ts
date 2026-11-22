@@ -788,8 +788,8 @@ describe('akapen serve', () => {
     expect(started.stderr.startsWith('akapen: ')).toBe(true);
     expect(readFileSync(stored, 'utf8')).toBe('readable-by-anyone\n');
 
-    // A server that was handed its secret is running; the CLI still does not send the file's.
-    const d = await serve([], { AKAPEN_MANAGE_TOKEN: 'handed-to-the-server' });
+    // A server running on the very value in the file: sent, it would be let in. It is not sent.
+    const d = await serve([], { AKAPEN_MANAGE_TOKEN: 'readable-by-anyone' });
     const asked = cli(d, ['comments', note('note.md')]);
     expect(asked.code).toBe(1);
     expect(asked.err).toContain(`${stored} is not used: its mode is 644, not 600`);
