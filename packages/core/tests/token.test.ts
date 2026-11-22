@@ -10,7 +10,7 @@
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   currentToken,
   generate,
@@ -208,5 +208,32 @@ describe('the stored management secret', () => {
     expect(secretFileFault({ mode: 0o100400, uid: 1000 }, 1000)).toBeNull();
     expect(secretFileFault({ mode: 0o100600, uid: 1001 }, 1000)).toBe('it belongs to uid 1001, not 1000');
     expect(secretFileFault({ mode: 0o100600, uid: 0 }, 1000)).toBe('it belongs to uid 0, not 1000');
+  });
+
+  it('says why once, however often the secret is asked for', async () => {
+    store(0o644);
+    vi.resetModules();
+    const fresh = await import('../src/token.ts');
+    const said = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      expect(fresh.readManageToken()).toBeNull();
+      expect(fresh.readManageToken()).toBeNull();
+      expect(said.mock.calls.map((c) => String(c[0]))).toEqual([
+        expect.stringContaining(`${stored()} is not used: its mode is 644, not 600`),
+      ]);
+    } finally {
+      said.mockRestore();
+    }
+  });
+
+  it('reads nothing, rather than failing, where the secret cannot be looked at', () => {
+    // A home that is a file, and a directory where the secret would be.
+    writeFileSync(home, '');
+    expect(readManageToken()).toBeNull();
+    rmSync(home);
+    mkdirSync(stored(), { recursive: true });
+    // Sound by mode and owner, so it is the read that fails.
+    chmodSync(stored(), 0o700);
+    expect(readManageToken()).toBeNull();
   });
 });

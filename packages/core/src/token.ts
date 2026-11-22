@@ -17,7 +17,7 @@
  */
 
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
+import { chmodSync, closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { akapenHome, writeAtomic } from './store.ts';
 
@@ -193,20 +193,37 @@ export function secretFileFault(st: { mode: number; uid: number }, uid: number):
 }
 
 /**
- * Why the stored management secret is not used, or null when it is absent or sound.
+ * The stored management secret, or why it is not used. Neither when there is none to read.
  *
  * The file lets a request register any file the server's user can read, so one that another
  * user of the machine could have read, in a shared or copied home, is not a secret any more.
- * Refused rather than tightened: a chmod would hide that it had been readable. Not checked
- * where there are no uids to compare (Windows).
+ * Refused rather than tightened: a chmod would hide that it had been readable. Checked and
+ * read through one descriptor, so the file that was checked is the file that is read. Not
+ * checked where there are no uids to compare (Windows).
  */
-export function manageTokenFault(): string | null {
-  if (process.getuid === undefined) return null;
-  const st = statSync(manageTokenPath(), { throwIfNoEntry: false });
-  const fault = st === undefined ? null : secretFileFault(st, process.getuid());
-  return fault === null
-    ? null
-    : `${manageTokenPath()} is not used: ${fault}. Whoever could read it may hold the secret: delete it and restart akapen serve, which writes a new one`;
+function storedManageToken(): { value: string | null; fault: string | null } {
+  const path = manageTokenPath();
+  let fd: number;
+  try {
+    fd = openSync(path, 'r');
+  } catch {
+    return { value: null, fault: null };
+  }
+  try {
+    const fault = process.getuid === undefined ? null : secretFileFault(fstatSync(fd), process.getuid());
+    if (fault !== null)
+      return {
+        value: null,
+        fault: `${path} is not used: ${fault}. Whoever could read it may hold the secret: delete it and restart akapen serve, which writes a new one`,
+      };
+    const raw = readFileSync(fd, 'utf8').trim();
+    return { value: raw === '' ? null : raw, fault: null };
+  } catch {
+    // Opened but not readable (a directory at the path): as good as absent.
+    return { value: null, fault: null };
+  } finally {
+    closeSync(fd);
+  }
 }
 
 /** A stored management secret that is not used, so a server does not start on a new one without a word. */
@@ -217,27 +234,20 @@ let faultSaid = false;
 export function readManageToken(): string | null {
   const given = givenManageToken();
   if (given !== null) return given;
-  const fault = manageTokenFault();
-  if (fault !== null) {
-    // Once per process: the channel reads it on every pass.
-    if (!faultSaid) console.error(`akapen: ${fault}`);
-    faultSaid = true;
-    return null;
-  }
-  try {
-    const raw = readFileSync(manageTokenPath(), 'utf8').trim();
-    return raw === '' ? null : raw;
-  } catch {
-    return null;
-  }
+  const stored = storedManageToken();
+  // Once per process: the channel reads it on every pass.
+  if (stored.fault !== null && !faultSaid) console.error(`akapen: ${stored.fault}`);
+  faultSaid ||= stored.fault !== null;
+  return stored.value;
 }
 
 /** The management secret for a starting server, created on the first start. */
 export function resolveManageToken(): string {
-  const fault = givenManageToken() === null ? manageTokenFault() : null;
-  if (fault !== null) throw new ManageTokenError(fault);
-  const existing = readManageToken();
-  if (existing !== null) return existing;
+  const given = givenManageToken();
+  if (given !== null) return given;
+  const stored = storedManageToken();
+  if (stored.fault !== null) throw new ManageTokenError(stored.fault);
+  if (stored.value !== null) return stored.value;
   const created = generate();
   secureHome();
   writeAtomic(manageTokenPath(), created, { mode: 0o600 });
