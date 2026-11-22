@@ -218,7 +218,8 @@ mkdir -p ~/.akapen                # created by you, not by Docker as root
 chmod 700 ~/.akapen
 export UID GID="$(id -g)"         # bash keeps UID unexported and has no GID
 docker compose up -d
-export AKAPEN_PORT=4300           # in the shell that runs akapen add / list, and starts claude (its channel inherits it)
+export AKAPEN_PORT=4300           # in the shell that runs akapen add / list, and starts claude (its channel inherits it).
+                                  # Needed here: the server's record names a pid inside the container, which the host cannot check
 ```
 
 A registration belongs to the Claude Code session that made it (`CLAUDE_CODE_SESSION_ID`), and lasts as long as the session:

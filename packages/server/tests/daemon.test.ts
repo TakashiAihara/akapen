@@ -25,6 +25,7 @@ import { localAddresses } from '@akapen/core/addresses';
 import { collect, holdServeStream, serveStore } from '../../cli/src/channel.ts';
 import { chosenServePort, documentId } from '@akapen/core/documents';
 import { storeDir } from '@akapen/core/store';
+import { processIdentity } from '../../core/src/process.ts';
 
 const TOKEN = 'test-token-for-the-daemon-suite';
 const CLI = join(import.meta.dirname, '..', '..', 'cli', 'src', 'cli.ts');
@@ -824,6 +825,26 @@ describe('akapen serve', () => {
       expect(seen.length).toBeGreaterThan(0);
       expect(seen.every((h) => h === undefined)).toBe(true);
 
+      // The same for a record whose pid lives but names another process: the server's id,
+      // given to somebody else since (#323).
+      seen.length = 0;
+      writeFileSync(
+        join(home, 'serve.json'),
+        JSON.stringify({ port, pid: process.pid, identity: 'another process than this one' }),
+      );
+      await listAsync({ ...env(), AKAPEN_PORT: '' });
+      expect(seen.length).toBeGreaterThan(0);
+      expect(seen.every((h) => h === undefined)).toBe(true);
+      // And it goes to the one the record does name.
+      seen.length = 0;
+      writeFileSync(
+        join(home, 'serve.json'),
+        JSON.stringify({ port, pid: process.pid, identity: processIdentity(process.pid) }),
+      );
+      await listAsync({ ...env(), AKAPEN_PORT: '' });
+      expect(seen).toContain('the-secret-that-must-stay');
+      writeFileSync(join(home, 'serve.json'), JSON.stringify({ port, pid: 2 ** 22 + 1 }));
+
       // Named by AKAPEN_PORT, it is the caller's choice and the secret goes.
       seen.length = 0;
       await listAsync(env({ AKAPEN_PORT: String(port) }));
@@ -964,7 +985,11 @@ describe('akapen serve', () => {
     const record = legacyRecord(file);
     const res = await authed(`${url}api/status`);
     expect(res.status).toBe(409);
-    expect(await res.text()).toContain(`(pid ${process.pid})`);
+    const refusal = await res.text();
+    expect(refusal).toContain(`(pid ${process.pid})`);
+    // Read over the LAN: where the record is, without the path of akapen's home.
+    expect(refusal).toContain('instances/');
+    expect(refusal).not.toContain(home);
     // Not opened at all: opening would have written the first round into the store. Looked up
     // under the server's home, which this process does not have in its environment.
     const rounds = join(home, 'comments', basename(storeDir(file)), 'rounds');
@@ -987,10 +1012,32 @@ describe('akapen serve', () => {
     legacyRecord(file);
     const r = cli(d, ['add', file]);
     expect(r.code).toBe(1);
-    expect(r.err).toContain(`a one-document akapen from an earlier version (pid ${process.pid})`);
+    // With where the record is: something to look at, or to delete.
+    expect(r.err).toContain(
+      `a one-document akapen from an earlier version (pid ${process.pid}, recorded in ${join(home, 'instances', `${process.pid}.json`)})`,
+    );
     expect(JSON.parse(cli(d, ['list', '--json']).out)).toEqual([]);
     // Only the file it serves: another one registers as usual.
     expect(cli(d, ['add', note('other.md')]).code).toBe(0);
+  });
+
+  it('keeps refusing on an old record whose pid lives, however long ago it was written', async () => {
+    const d = await serve();
+    const file = note('note.md');
+    // The time in a record is not set against when the process started: a clock that was
+    // corrected in between would take a running holder for gone.
+    const name = legacyRecord(file);
+    const record = join(home, 'instances', name);
+    writeFileSync(
+      record,
+      JSON.stringify({
+        ...(JSON.parse(readFileSync(record, 'utf8')) as Record<string, unknown>),
+        startedAt: '2026-01-01T00:00:00.000Z',
+      }),
+    );
+    const r = cli(d, ['add', file]);
+    expect(r.code).toBe(1);
+    expect(r.err).toContain(`recorded in ${record}`);
   });
 
   it('leaves the records of one-document akapen where they are, whether their process is there or not', async () => {
@@ -1000,6 +1047,27 @@ describe('akapen serve', () => {
     cli(d, ['add', note('other.md')]);
     cli(d, ['list']);
     expect(readdirSync(join(home, 'instances')).toSorted()).toEqual([gone, alive].toSorted());
+  });
+
+  it('starts beside a record whose pid lives but names another process, and not beside its own', async () => {
+    const first = await serve();
+    const record = join(home, 'serve.json');
+    const own = readFileSync(record, 'utf8');
+    // The running server's record as it is: a second one is refused.
+    await expect(serve()).rejects.toThrow('already running');
+    // The same pid, alive, on a record that names another process: left behind by a crash.
+    writeFileSync(record, JSON.stringify({ ...(JSON.parse(own) as object), identity: 'not this process' }));
+    const second = await serve();
+    expect(second.port).not.toBe(first.port);
+  });
+
+  it('records what names its process beside its pid', async () => {
+    await serve();
+    const rec = JSON.parse(readFileSync(join(home, 'serve.json'), 'utf8')) as {
+      pid: number;
+      identity: string;
+    };
+    expect(rec.identity).toBe(processIdentity(rec.pid));
   });
 
   it('finds a server started on its own port through what it recorded', async () => {

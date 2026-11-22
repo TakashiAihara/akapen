@@ -8,6 +8,7 @@
 import { mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 
+import { processIdentity } from './process.ts';
 import { akapenHome, commentsRoot, storeDir, writeAtomic } from './store.ts';
 
 export type DocumentEntry = {
@@ -84,13 +85,25 @@ export function readServePort(): number | null {
   return readServeRecord()?.port ?? null;
 }
 
-/** What the running server recorded: its port, and its pid when the record has one. */
-export function readServeRecord(): { port: number; pid: number | null } | null {
+/**
+ * What the running server recorded: its port, its pid when the record has one, and what
+ * else names that process when the server could tell (#323). `identity` is compared for
+ * equality and is not a time.
+ */
+export function readServeRecord(): { port: number; pid: number | null; identity: string | null } | null {
   try {
-    const rec = JSON.parse(readFileSync(servePath(), 'utf8')) as { port?: unknown; pid?: unknown };
-    const { port, pid } = rec;
+    const rec = JSON.parse(readFileSync(servePath(), 'utf8')) as {
+      port?: unknown;
+      pid?: unknown;
+      identity?: unknown;
+    };
+    const { port, pid, identity } = rec;
     if (typeof port !== 'number' || !Number.isInteger(port) || port <= 0 || port > 65_535) return null;
-    return { port, pid: typeof pid === 'number' && Number.isInteger(pid) && pid > 0 ? pid : null };
+    return {
+      port,
+      pid: typeof pid === 'number' && Number.isInteger(pid) && pid > 0 ? pid : null,
+      identity: typeof identity === 'string' ? identity : null,
+    };
   } catch {
     return null;
   }
@@ -99,7 +112,8 @@ export function readServeRecord(): { port: number; pid: number | null } | null {
 /**
  * Whether the server this home recorded is still running. A record a crash left behind
  * names a port anyone may hold now. A pid answering EPERM belongs to another user, which a
- * server of this home never is, so it counts as gone.
+ * server of this home never is, so it counts as gone. So does a pid that lives but is not
+ * the process the record names: the server's id, given to a later process.
  */
 export function recordedServerAlive(): boolean {
   return liveServeRecord() !== null;
@@ -111,7 +125,10 @@ function liveServeRecord(): number | null {
   if (rec === null || rec.pid === null) return null;
   try {
     process.kill(rec.pid, 0);
-    return rec.port;
+    // Compared only when both are known: a record from before this was written, or a
+    // platform where the start cannot be read, is judged by the pid alone, as it was.
+    const identity = rec.identity === null ? null : processIdentity(rec.pid);
+    return identity !== null && identity !== rec.identity ? null : rec.port;
   } catch {
     return null;
   }
@@ -132,7 +149,11 @@ export function chosenServePort(): number | null {
 
 export function writeServePort(port: number): void {
   mkdirSync(akapenHome(), { recursive: true });
-  writeAtomic(servePath(), `${JSON.stringify({ port, pid: process.pid })}\n`);
+  const identity = processIdentity(process.pid);
+  writeAtomic(
+    servePath(),
+    `${JSON.stringify({ port, pid: process.pid, ...(identity === null ? {} : { identity }) })}\n`,
+  );
 }
 
 /**

@@ -59,7 +59,9 @@ describe('reading the records of one-document processes', () => {
       origin: { kind: 'claude-code', id: 'abc', cwd: '/x' },
     });
 
-    expect(readInstances()).toEqual([{ pid: process.pid, file: '/notes/plan.md' }]);
+    expect(readInstances()).toEqual([
+      { pid: process.pid, file: '/notes/plan.md', record: join(instancesDir(), `${process.pid}.json`) },
+    ]);
   });
 
   it('leaves out the record of a process that is gone, and does not delete it', () => {
