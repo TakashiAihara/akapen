@@ -716,23 +716,24 @@ describe('akapen serve', () => {
     try {
       // Not spawnSync: the listener lives in this process, and a blocked loop answers nobody.
       const run = (args: string[], extra: NodeJS.ProcessEnv = {}) =>
-        new Promise<{ code: number | null; text: string }>((done) => {
+        new Promise<{ code: number | null; text: string; out: string; err: string }>((done) => {
           const p = spawn('bun', ['run', CLI, ...args], {
             env: env({ AKAPEN_PORT: port, CLAUDE_CODE_SESSION_ID: 'session-a', ...extra }),
             stdio: ['ignore', 'pipe', 'pipe'],
           });
-          let text = '';
-          p.stdout.on('data', (c: Buffer) => (text += c.toString()));
-          p.stderr.on('data', (c: Buffer) => (text += c.toString()));
-          p.on('close', (code) => done({ code, text }));
+          let out = '';
+          let err = '';
+          p.stdout.on('data', (c: Buffer) => (out += c.toString()));
+          p.stderr.on('data', (c: Buffer) => (err += c.toString()));
+          p.on('close', (code) => done({ code, text: out + err, out, err }));
         });
       const listed = await run(['list']);
       expect(listed.text).toContain(`what answers on 127.0.0.1:${port} is not akapen serve`);
       expect(listed.text).not.toContain('refused this command');
-      // For an agent reading the JSON: empty, with the reason beside it.
-      expect((await run(['list', '--json'])).text).toContain(
-        `what answers on 127.0.0.1:${port} is not akapen serve`,
-      );
+      // For an agent reading the JSON: still JSON on stdout, with the reason on stderr.
+      const asJson = await run(['list', '--json']);
+      expect(JSON.parse(asJson.out)).toEqual([]);
+      expect(asJson.err).toContain(`what answers on 127.0.0.1:${port} is not akapen serve`);
       const added = await run(['add', note('note.md')]);
       expect(added.code).toBe(1);
       expect(added.text).toContain(`what answers on 127.0.0.1:${port} is not akapen serve`);

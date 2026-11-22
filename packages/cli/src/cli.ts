@@ -203,7 +203,7 @@ let serveRefused = false;
 
 /**
  * What `akapen serve` has registered, or null when it is not running — or when whatever
- * answers on its port is not it, which is told by the shape of the answer.
+ * answers on its port is not it, which `daemon` asks before it sends anything.
  */
 async function daemonDocuments(token: string | null = clientToken()): Promise<DaemonDocument[] | null> {
   const res = await daemon('/api/documents', {}, token);
