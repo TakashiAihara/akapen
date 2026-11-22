@@ -1084,8 +1084,8 @@ export function startDaemon(opts: DaemonOptions & { manageToken: string }) {
     if (st === undefined ? loadReview(file).currentRound === 0 : !st.isFile())
       return bad(`no such file: ${file}`);
     // Not checked while the file is gone: there is no path to resolve against it, and a root
-    // cleaned away with the file must not keep the round from being served. The root only
-    // says where images are read from, and whoever may register may name any root.
+    // cleaned away with the file must not keep the round from being served. All a root does
+    // is say where the document's images are read from, and a round is served without them.
     if (root !== undefined && st !== undefined) {
       if (!statSync(root, { throwIfNoEntry: false })?.isDirectory())
         return bad(`root is not a directory: ${root}`);

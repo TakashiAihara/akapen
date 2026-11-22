@@ -382,6 +382,8 @@ function unreachable(file: string, documents: DaemonDocument[] | null, consequen
 async function pendingOf(doc: DaemonDocument, all: boolean): Promise<Pending> {
   const res = await daemon(`${docPath(doc.id)}/api/pending${all ? '?all=1' : ''}`);
   if (res === null || !res.ok) {
+    // Registered, but with neither a file nor a round there is nothing the server can open.
+    if (res?.status === 404 && !existsSync(doc.file)) fail(`no such file: ${doc.file}`);
     console.error(`akapen: akapen serve did not hand over the comments on ${doc.file}`);
     process.exit(1);
   }

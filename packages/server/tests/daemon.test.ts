@@ -317,6 +317,8 @@ describe('akapen serve', () => {
     const url = urlIn(cli(d, ['add', file], { CLAUDE_CODE_SESSION_ID: 'session-a' }).out);
     rmSync(file);
     expect((await authed(`${url}api/status`)).status).toBe(404);
+    // The CLI names the cause, not the server.
+    expect(cli(d, ['comments', file]).err).toContain(`no such file: ${file}`);
     // Nor is it handed to the session's channel, which could only be told of a URL that answers 404.
     expect(await (await managed(`${d.base}/api/sessions/session-a/documents`)).json()).toEqual([]);
     const listed = JSON.parse(cli(d, ['list', '--json']).out) as { file: string; missing: boolean }[];
