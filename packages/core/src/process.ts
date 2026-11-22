@@ -36,9 +36,11 @@ export function processIdentity(pid: number): string | null {
   }
   // macOS and the BSDs: `ps` prints when the process began. In one locale and one time zone,
   // whoever asks: the same instant must read the same from a service and from a shell.
-  const ps = spawnSync('ps', ['-o', 'lstart=', '-p', String(pid)], {
+  // By its path, so a service and a shell with another PATH ask the same program.
+  const ps = spawnSync('/bin/ps', ['-o', 'lstart=', '-p', String(pid)], {
     encoding: 'utf8',
     env: { ...process.env, LC_ALL: 'C', TZ: 'UTC' },
+    timeout: 2_000,
   });
   const at = ps.status === 0 ? ps.stdout.trim() : '';
   return at === '' ? null : at;
