@@ -825,6 +825,26 @@ describe('akapen serve', () => {
       expect(seen.length).toBeGreaterThan(0);
       expect(seen.every((h) => h === undefined)).toBe(true);
 
+      // The same for a record whose pid lives but names another process: the server's id,
+      // given to somebody else since (#323).
+      seen.length = 0;
+      writeFileSync(
+        join(home, 'serve.json'),
+        JSON.stringify({ port, pid: process.pid, started: 'another process than this one' }),
+      );
+      await listAsync({ ...env(), AKAPEN_PORT: '' });
+      expect(seen.length).toBeGreaterThan(0);
+      expect(seen.every((h) => h === undefined)).toBe(true);
+      // And it goes to the one the record does name.
+      seen.length = 0;
+      writeFileSync(
+        join(home, 'serve.json'),
+        JSON.stringify({ port, pid: process.pid, started: processIdentity(process.pid) }),
+      );
+      await listAsync({ ...env(), AKAPEN_PORT: '' });
+      expect(seen).toContain('the-secret-that-must-stay');
+      writeFileSync(join(home, 'serve.json'), JSON.stringify({ port, pid: 2 ** 22 + 1 }));
+
       // Named by AKAPEN_PORT, it is the caller's choice and the secret goes.
       seen.length = 0;
       await listAsync(env({ AKAPEN_PORT: String(port) }));
@@ -965,7 +985,11 @@ describe('akapen serve', () => {
     const record = legacyRecord(file);
     const res = await authed(`${url}api/status`);
     expect(res.status).toBe(409);
-    expect(await res.text()).toContain(`(pid ${process.pid})`);
+    const refusal = await res.text();
+    expect(refusal).toContain(`(pid ${process.pid})`);
+    // Read over the LAN: where the record is, without the path of akapen's home.
+    expect(refusal).toContain('instances/');
+    expect(refusal).not.toContain(home);
     // Not opened at all: opening would have written the first round into the store. Looked up
     // under the server's home, which this process does not have in its environment.
     const rounds = join(home, 'comments', basename(storeDir(file)), 'rounds');

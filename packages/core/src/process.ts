@@ -30,10 +30,11 @@ export function processIdentity(pid: number): string | null {
       return null;
     }
   }
-  // macOS and the BSDs: `ps` prints the start as the kernel recorded it when the process began.
+  // macOS and the BSDs: `ps` prints when the process began. In one locale and one time zone,
+  // whoever asks: the same instant must read the same from a service and from a shell.
   const ps = spawnSync('ps', ['-o', 'lstart=', '-p', String(pid)], {
     encoding: 'utf8',
-    env: { ...process.env, LC_ALL: 'C' },
+    env: { ...process.env, LC_ALL: 'C', TZ: 'UTC' },
   });
   const at = ps.status === 0 ? ps.stdout.trim() : '';
   return at === '' ? null : at;
