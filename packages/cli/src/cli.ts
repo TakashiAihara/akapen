@@ -5,7 +5,7 @@ import { resolve } from 'node:path';
 
 import { AdvertiseError, resolveAdvertised } from '@akapen/core/addresses';
 
-import { readServePort, recordedServerAlive } from '@akapen/core/documents';
+import { readServePort, recordedServerAlive, servePath, whatAnswers } from '@akapen/core/documents';
 import { akapenHome, type pendingComments } from '@akapen/core/store';
 import {
   currentToken,
@@ -138,7 +138,22 @@ type DaemonDocument = {
 };
 
 /**
- * A request to `akapen serve` on this machine, or null when nothing answers there.
+ * Set by `daemon` when something that is not akapen serve answered on the port. It asks
+ * before each request, with no credential (#320): the token and the management secret go
+ * to akapen serve, not to whatever holds its port.
+ */
+let somethingElse = false;
+
+/** Why no answer came from akapen serve, for a message: nothing listens there, or something else does. */
+const noAnswer = (): string => {
+  const at = `127.0.0.1:${daemonPort() ?? '(no port: set AKAPEN_PORT for this AKAPEN_HOME)'}`;
+  return somethingElse
+    ? `what answers on ${at} is not akapen serve and was sent nothing (an akapen serve from before this version has to be restarted)`
+    : `akapen serve is not answering on ${at}`;
+};
+
+/**
+ * A request to `akapen serve` on this machine, or null when it is not what answers there.
  *
  * shortcut: always 127.0.0.1, so a server bound to one LAN address only is not found;
  * a registry entry for the server would find it, if that bind ever matters.
@@ -150,6 +165,9 @@ async function daemon(
 ): Promise<Response | null> {
   const port = daemonPort();
   if (port === null) return null;
+  const answers = await whatAnswers(port);
+  somethingElse = answers === 'other';
+  if (answers !== 'serve') return null;
   const manageToken = readManageToken();
   const session = process.env['CLAUDE_CODE_SESSION_ID'] ?? '';
   // Only to the management API: a document's own routes have no use for it.
@@ -185,17 +203,13 @@ let serveRefused = false;
 
 /**
  * What `akapen serve` has registered, or null when it is not running — or when whatever
- * answers on its port is not it, which is told by the shape of the answer.
+ * answers on its port is not it, which `daemon` asks before it sends anything.
  */
 async function daemonDocuments(token: string | null = clientToken()): Promise<DaemonDocument[] | null> {
   const res = await daemon('/api/documents', {}, token);
-  // akapen's own refusals: the token (401), or the management secret / this machine (403).
-  const refusal = res?.status === 401 || res?.status === 403 ? await res.text().catch(() => '') : '';
-  if (
-    (res?.status === 401 && refusal.startsWith('unauthenticated. open the URL akapen printed')) ||
-    (res?.status === 403 &&
-      (refusal.startsWith('the management secret') || refusal.startsWith('documents are managed')))
-  ) {
+  // akapen serve's own refusals, `daemon` having asked that it is the one answering: the
+  // token (401), or the management secret / this machine (403).
+  if (res?.status === 401 || res?.status === 403) {
     serveRefused = true;
     return null;
   }
@@ -287,6 +301,8 @@ if (positional[0] === 'list') {
         ? []
         : documents.filter((d) => d.session === session);
   if (args.json) {
+    // An empty list on stdout either way; a reader of it is told on stderr what it does not mean.
+    if (somethingElse) console.error(`akapen: ${noAnswer()}`);
     console.log(
       JSON.stringify(
         served.map((d) => ({
@@ -317,7 +333,9 @@ if (positional[0] === 'list') {
       serveRefused
         ? `akapen serve is running on port ${daemonPort()} but refused this command (${refusalCause()})`
         : answered === null
-          ? 'no akapen is running'
+          ? somethingElse
+            ? noAnswer()
+            : 'no akapen is running'
           : session === undefined
             ? `akapen serve is running on port ${daemonPort()}; nothing is registered`
             : `no document registered with akapen serve belongs to a session matching ${JSON.stringify(args.session)}`,
@@ -372,7 +390,7 @@ function unreachable(file: string, documents: DaemonDocument[] | null, consequen
     documents === null
       ? serveRefused
         ? `akapen: akapen serve on port ${daemonPort()} refused this command (${refusalCause()}), so ${consequence}`
-        : `akapen: akapen serve is not answering on 127.0.0.1:${daemonPort() ?? '(no port: set AKAPEN_PORT for this AKAPEN_HOME)'}, so ${consequence}`
+        : `akapen: ${noAnswer()}, so ${consequence}`
       : `akapen: ${resolve(file)} is not registered with akapen serve, so ${consequence}; run \`akapen add ${file}\` first`,
   );
   process.exit(1);
@@ -578,9 +596,7 @@ if (positional[0] === 'add') {
     token,
   );
   if (res === null) {
-    console.error(
-      `akapen: akapen serve is not answering on 127.0.0.1:${daemonPort() ?? '(no port: set AKAPEN_PORT for this AKAPEN_HOME)'}; start it (akapen serve) and run this again`,
-    );
+    console.error(`akapen: ${noAnswer()}; start it (akapen serve) and run this again`);
     process.exit(1);
   }
   if (!res.ok) {
@@ -606,7 +622,7 @@ if (positional[0] === 'remove' && args.session !== undefined) {
   });
   if (res === null || !res.ok) {
     console.error(
-      `akapen: removing the documents of ${args.session} failed: ${res === null ? `akapen serve is not answering on 127.0.0.1:${daemonPort()}` : `${res.status} ${await res.text()}`}`,
+      `akapen: removing the documents of ${args.session} failed: ${res === null ? noAnswer() : `${res.status} ${await res.text()}`}`,
     );
     process.exit(1);
   }
@@ -629,7 +645,7 @@ if (positional[0] === 'restore') {
   const res = await daemon(`/api/sessions/${encodeURIComponent(session)}/restore`, { method: 'POST' });
   if (res === null || !res.ok) {
     console.error(
-      `akapen: restore failed: ${res === null ? `akapen serve is not answering on 127.0.0.1:${daemonPort()}` : `${res.status} ${await res.text()}`}`,
+      `akapen: restore failed: ${res === null ? noAnswer() : `${res.status} ${await res.text()}`}`,
     );
     process.exit(1);
   }
@@ -654,7 +670,7 @@ if (positional[0] === 'remove') {
     console.error(
       serveRefused
         ? `akapen: akapen serve on port ${daemonPort()} refused this command (${refusalCause()})`
-        : `akapen: akapen serve is not answering on 127.0.0.1:${daemonPort() ?? '(no port)'}`,
+        : `akapen: ${noAnswer()}`,
     );
     process.exit(1);
   }
@@ -763,31 +779,18 @@ function advertisedFor(bind: string): string | null {
 if (positional[0] === 'serve') {
   if (positional.length > 1) fail(`serve: unexpected ${JSON.stringify(positional.slice(1).join(' '))}`);
   // One server per home: a second would write documents.json from its own copy.
-  // Asked only while the recorded server's process lives: otherwise the port may be anyone's,
-  // and the probe carries the management secret.
+  // Asked only while the recorded server's process lives, and with no credential. A record
+  // a crash left behind names a port anyone may hold now, and is no server here.
   const runningOn = recordedServerAlive() ? readServePort() : null;
-  if (runningOn !== null) {
-    const token = clientToken();
-    const manage = readManageToken();
-    const answer = await fetch(`http://127.0.0.1:${runningOn}/api/documents`, {
-      headers: {
-        ...(token === null ? {} : { authorization: `Bearer ${token}` }),
-        ...(manage === null ? {} : { 'x-akapen-manage': manage }),
-      },
-      signal: AbortSignal.timeout(2_000),
-    }).catch(() => null);
-    // A listing, or akapen's own refusal (a server on another token). Whatever else took the
-    // port after a crash is not a server here.
-    const text = answer === null ? '' : await answer.text().catch(() => '');
-    if (
-      (answer?.ok === true && text.startsWith('[')) ||
-      (answer?.status === 401 && text.startsWith('unauthenticated. open the URL akapen printed')) ||
-      (answer?.status === 403 &&
-        (text.startsWith('the management secret') || text.startsWith('documents are managed')))
-    ) {
-      fail(`akapen serve is already running for ${akapenHome()} on port ${runningOn}`);
-    }
-  }
+  const running = runningOn === null ? 'nothing' : await whatAnswers(runningOn);
+  if (running === 'serve') fail(`akapen serve is already running for ${akapenHome()} on port ${runningOn}`);
+  // The recorded process lives and its port answers, without the marker: an akapen serve
+  // from before the marker, most likely. Starting beside it would be the second writer.
+  if (running === 'other')
+    fail(
+      `the server ${akapenHome()} recorded is running (port ${runningOn}) but does not answer as this version's akapen serve. ` +
+        `Stop it first if it is an akapen serve from before; if it is something else, remove ${servePath()}`,
+    );
   if (args.root !== undefined) fail('serve: --root belongs to akapen add, per document');
   let host: string;
   let port: number;

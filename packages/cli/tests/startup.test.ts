@@ -342,6 +342,9 @@ describe('a taken port', () => {
   }, 30_000);
 });
 
+/** What a stand-in for akapen serve answers with: the CLI sends nothing to a listener without the marker. */
+const AS_SERVE = { 'content-type': 'application/json', 'x-akapen-serve': '1' };
+
 /** A 200 answer with `body` as JSON, for the fake akapen in the resolve tests. */
 const json = (body: unknown): [number, string] => [200, JSON.stringify(body)];
 
@@ -686,7 +689,7 @@ describe('akapen reply and resolve', () => {
             await fetch(`${url}/api/comments/${id}/resolve`, { method: 'POST' });
           }
         }
-        res.writeHead(status, { 'content-type': 'application/json' }).end(body);
+        res.writeHead(status, AS_SERVE).end(body);
       });
     });
     await new Promise<void>((r) => proxy.listen(0, '127.0.0.1', r));
@@ -735,20 +738,17 @@ describe('akapen reply and resolve', () => {
     let replies = 0;
     const fake = createHttpServer((req, res) => {
       if (req.url?.startsWith('/api/documents') || req.url?.includes('/api/pending')) {
-        void relay(port, req).then(({ status, body }) =>
-          res.writeHead(status, { 'content-type': 'application/json' }).end(body),
-        );
+        void relay(port, req).then(({ status, body }) => res.writeHead(status, AS_SERVE).end(body));
         return;
       }
       // Unanswered unless set, to see the CLI give up rather than wait on it.
       if (req.url?.endsWith('/replies')) {
         replies++;
-        if (replyAnswer)
-          res.writeHead(replyAnswer[0], { 'content-type': 'application/json' }).end(replyAnswer[1]);
+        if (replyAnswer) res.writeHead(replyAnswer[0], AS_SERVE).end(replyAnswer[1]);
         return;
       }
       const [status, body] = answer(++resolves);
-      res.writeHead(status, { 'content-type': 'application/json' }).end(body);
+      res.writeHead(status, AS_SERVE).end(body);
     });
     await new Promise<void>((r) => fake.listen(0, '127.0.0.1', r));
     const fakePort = String((fake.address() as { port: number }).port);

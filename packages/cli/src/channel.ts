@@ -16,7 +16,7 @@
 import { spawnSync } from 'node:child_process';
 import { statSync } from 'node:fs';
 
-import { chosenServePort, readServePort } from '@akapen/core/documents';
+import { chosenServePort, readServePort, whatAnswers } from '@akapen/core/documents';
 import { currentToken, readManageToken } from '@akapen/core/token';
 import type { Reply, RoundComment } from '@akapen/shared';
 
@@ -483,6 +483,19 @@ const noteRefusal = (res: Response): void => {
     sayOnce(`akapen serve refused this session (${res.status}); check AKAPEN_TOKEN and AKAPEN_MANAGE_TOKEN`);
 };
 
+/**
+ * Whether akapen serve is what answers on the port, asked before each request that carries
+ * the token and the management secret (#320). Something else there is said once.
+ */
+const servesAt = async (port: number): Promise<boolean> => {
+  const answers = await whatAnswers(port);
+  if (answers === 'other')
+    sayOnce(
+      `what answers on port ${port} is not akapen serve, so nothing is sent to it (an akapen serve from before this version has to be restarted)`,
+    );
+  return answers === 'serve';
+};
+
 const serveHeaders = (): Record<string, string> => {
   const token = currentToken();
   const manage = readManageToken();
@@ -503,7 +516,7 @@ export async function serveStore(sessionId: string): Promise<Store> {
       'akapen serve recorded a port, but its process is not visible from here; set AKAPEN_PORT to reach it',
     );
   try {
-    if (port !== null) {
+    if (port !== null && (await servesAt(port))) {
       const res = await fetch(
         `http://127.0.0.1:${port}/api/sessions/${encodeURIComponent(sessionId)}/documents`,
         { headers: serveHeaders(), redirect: 'manual', signal: AbortSignal.timeout(5_000) },
@@ -563,6 +576,7 @@ export async function holdServeStream(
     const port = chosenServePort();
     try {
       if (port === null) throw new Error('no server recorded');
+      if (!(await servesAt(port))) throw new Error('not akapen serve');
       const res = await fetch(
         `http://127.0.0.1:${port}/api/sessions/${encodeURIComponent(sessionId)}/events`,
         {

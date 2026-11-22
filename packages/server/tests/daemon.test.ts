@@ -688,6 +688,88 @@ describe('akapen serve', () => {
     }
   });
 
+  it('marks an answer that is an error of its own as akapen serve too', async () => {
+    const d = await serve();
+    const file = note('note.md');
+    const url = urlIn(cli(d, ['add', file]).out);
+    // A directory where the file was: opening the document throws.
+    rmSync(file);
+    mkdirSync(file);
+    const res = await authed(`${url}api/doc`);
+    expect(res.status).toBe(500);
+    expect(res.headers.get('x-akapen-serve')).toBe('1');
+    expect((await fetch(`${d.base}/api/documents`)).headers.get('x-akapen-serve')).toBe('1');
+  });
+
+  it('sends no credential to a listener that is not akapen serve, and does not take its refusal for one', async () => {
+    mkdirSync(home, { recursive: true });
+    writeFileSync(join(home, 'manage-token'), 'the-secret-that-must-stay\n', { mode: 0o600 });
+    // As a one-document akapen of an earlier version answers: the same 401, word for word.
+    const carried: string[] = [];
+    const listener = createHttpServer((req, res) => {
+      for (const h of ['authorization', 'x-akapen-manage', 'x-akapen-session'])
+        if (req.headers[h] !== undefined) carried.push(`${req.url} ${h}`);
+      res.writeHead(401).end('unauthenticated. open the URL akapen printed, or run `akapen token`');
+    });
+    await new Promise<void>((done) => listener.listen(0, '127.0.0.1', () => done()));
+    const port = String((listener.address() as { port: number }).port);
+    try {
+      // Not spawnSync: the listener lives in this process, and a blocked loop answers nobody.
+      const run = (args: string[], extra: NodeJS.ProcessEnv = {}) =>
+        new Promise<{ code: number | null; text: string; out: string; err: string }>((done) => {
+          const p = spawn('bun', ['run', CLI, ...args], {
+            env: env({ AKAPEN_PORT: port, CLAUDE_CODE_SESSION_ID: 'session-a', ...extra }),
+            stdio: ['ignore', 'pipe', 'pipe'],
+          });
+          let out = '';
+          let err = '';
+          p.stdout.on('data', (c: Buffer) => (out += c.toString()));
+          p.stderr.on('data', (c: Buffer) => (err += c.toString()));
+          p.on('close', (code) => done({ code, text: out + err, out, err }));
+        });
+      const listed = await run(['list']);
+      expect(listed.text).toContain(`what answers on 127.0.0.1:${port} is not akapen serve`);
+      expect(listed.text).not.toContain('refused this command');
+      // For an agent reading the JSON: still JSON on stdout, with the reason on stderr.
+      const asJson = await run(['list', '--json']);
+      expect(JSON.parse(asJson.out)).toEqual([]);
+      expect(asJson.err).toContain(`what answers on 127.0.0.1:${port} is not akapen serve`);
+      const added = await run(['add', note('note.md')]);
+      expect(added.code).toBe(1);
+      expect(added.text).toContain(`what answers on 127.0.0.1:${port} is not akapen serve`);
+      expect(carried).toEqual([]);
+
+      // Recorded by a process that lives, the port is most likely an akapen serve from before
+      // the marker: a second server does not start beside it, and still sends it nothing.
+      writeFileSync(join(home, 'serve.json'), JSON.stringify({ port: Number(port), pid: process.pid }));
+      const beside = await run(['serve', '-p', '0'], { AKAPEN_PORT: '' });
+      expect(beside.code).toBe(1);
+      expect(beside.text).toContain("does not answer as this version's akapen serve");
+      expect(carried).toEqual([]);
+      rmSync(join(home, 'serve.json'));
+
+      // The channel's two requests, to the same port.
+      const names = ['AKAPEN_HOME', 'AKAPEN_PORT', 'AKAPEN_TOKEN'] as const;
+      const before = names.map((n) => process.env[n]);
+      Object.assign(process.env, { AKAPEN_HOME: home, AKAPEN_PORT: port, AKAPEN_TOKEN: TOKEN });
+      const ctl = new AbortController();
+      try {
+        expect((await serveStore('session-a')).instances()).toEqual([]);
+        void holdServeStream('session-a', () => {}, ctl.signal);
+        await new Promise((r) => setTimeout(r, 300));
+      } finally {
+        ctl.abort();
+        names.forEach((n, i) => {
+          if (before[i] === undefined) delete process.env[n];
+          else process.env[n] = before[i];
+        });
+      }
+      expect(carried).toEqual([]);
+    } finally {
+      await new Promise<void>((done) => listener.close(() => done()));
+    }
+  });
+
   it('does not hand the management secret to whatever holds a port this home never chose', async () => {
     mkdirSync(home, { recursive: true });
     writeFileSync(join(home, 'manage-token'), 'the-secret-that-must-stay\n', { mode: 0o600 });
@@ -695,7 +777,8 @@ describe('akapen serve', () => {
     const listener = createHttpServer((req, res) => {
       const h = req.headers['x-akapen-manage'];
       seen.push(typeof h === 'string' ? h : undefined);
-      res.writeHead(200, { 'content-type': 'application/json' }).end('[]');
+      // The marker: this is about which port the secret may go to, with akapen serve answering there.
+      res.writeHead(200, { 'content-type': 'application/json', 'x-akapen-serve': '1' }).end('[]');
     });
     await new Promise<void>((done) => listener.listen(0, '127.0.0.1', () => done()));
     const port = (listener.address() as { port: number }).port;

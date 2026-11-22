@@ -179,3 +179,34 @@ export function registrationsOf(session: string): Registration[] {
   }
   return out;
 }
+
+/**
+ * The header `akapen serve` puts on every answer of its own, refusals and errors included
+ * (not on what the runtime answers before a request reaches it), and nothing else does.
+ * It is how a client tells the server from whatever else may hold its port (#320): a
+ * one-document akapen of an earlier version answers `/api/documents` with the very same 401.
+ */
+export const SERVE_MARKER = 'x-akapen-serve';
+
+/**
+ * What listens on a port of this machine: `akapen serve`, something else, or nothing.
+ *
+ * Asked without a credential, so that neither the token nor the management secret goes to
+ * a listener that is not the server. It guards against accident, not against a listener
+ * that sets the header: which port the management secret may go to at all is decided before
+ * this, by who chose the port, and the token goes to the default port as it always has.
+ */
+export async function whatAnswers(port: number): Promise<'serve' | 'other' | 'nothing'> {
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/api/documents`, {
+      redirect: 'manual',
+      signal: AbortSignal.timeout(2_000),
+    });
+    const answers = res.headers.get(SERVE_MARKER) === '1' ? 'serve' : 'other';
+    // The headers have said it; a body that does not cancel cleanly changes nothing.
+    await res.body?.cancel().catch(() => {});
+    return answers;
+  } catch {
+    return 'nothing';
+  }
+}
