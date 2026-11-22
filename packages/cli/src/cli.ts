@@ -6,10 +6,12 @@ import { resolve } from 'node:path';
 import { AdvertiseError, resolveAdvertised } from '@akapen/core/addresses';
 
 import {
+  claimHome,
   HomeHeldError,
-  HomeLostError,
+  HomeUnavailableError,
   readServePort,
   recordedServerAlive,
+  releaseHome,
   servePath,
   whatAnswers,
 } from '@akapen/core/documents';
@@ -825,11 +827,15 @@ if (positional[0] === 'serve') {
     fail(err.message);
   }
   const advertisedServe = advertisedFor(host);
-  secureHome();
-  const serveToken = args['no-auth'] ? null : resolveToken(args.token);
   const { startDaemon } = await import('@akapen/server');
   let daemonServer: ReturnType<typeof startDaemon>;
+  let serveToken: string | null;
   try {
+    // Before a token or the management secret is made: of two servers started on a new
+    // home, the one that stops must not have written a secret over the other's.
+    claimHome();
+    secureHome();
+    serveToken = args['no-auth'] ? null : resolveToken(args.token);
     daemonServer = startDaemon({
       host,
       port,
@@ -842,6 +848,8 @@ if (positional[0] === 'serve') {
       ...(args.keymap ? { keymapPath: resolve(args.keymap) } : {}),
     });
   } catch (err) {
+    // Whatever stopped it after the home was taken: not left for the next one to find.
+    releaseHome();
     if (err instanceof ManageTokenError) {
       console.error(`akapen: ${err.message}`);
       process.exit(1);
@@ -853,7 +861,7 @@ if (positional[0] === 'serve') {
           `If pid ${pid} is not akapen serve, remove ${servePath()}`,
       );
     }
-    if (err instanceof HomeLostError) {
+    if (err instanceof HomeUnavailableError) {
       console.error(`akapen: ${err.message}`);
       process.exit(1);
     }

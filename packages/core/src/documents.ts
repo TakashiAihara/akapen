@@ -150,8 +150,8 @@ export class HomeHeldError extends Error {
   }
 }
 
-/** A home another server took from this one: it stops rather than write beside the other. */
-export class HomeLostError extends Error {}
+/** A home this server cannot have, or no longer has: it stops rather than write beside another. */
+export class HomeUnavailableError extends Error {}
 
 /**
  * Take the home for a server that is starting, before it reads anything it will write
@@ -201,7 +201,9 @@ function takingOver(take: () => void): void {
     }
     if (age > TAKEOVER_STALE_MS) rmSync(lock, { recursive: true, force: true });
     else if (waited >= TAKEOVER_WAIT_MS)
-      throw new Error(`another akapen serve is starting for ${akapenHome()}; if none is, remove ${lock}`);
+      throw new HomeUnavailableError(
+        `another akapen serve is starting for ${akapenHome()}; if none is, remove ${lock}`,
+      );
     else Atomics.wait(pause, 0, 0, 50);
   }
   try {

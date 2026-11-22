@@ -798,6 +798,8 @@ describe('akapen serve', () => {
     expect(started.stderr.trim().split('\n')).toHaveLength(1);
     expect(started.stderr.startsWith('akapen: ')).toBe(true);
     expect(readFileSync(stored, 'utf8')).toBe('readable-by-anyone\n');
+    // The home it had taken by then is given back.
+    expect(existsSync(join(home, 'serve.json'))).toBe(false);
 
     // A server running on the very value in the file: sent, it would be let in. It is not sent.
     const d = await serve([], { AKAPEN_MANAGE_TOKEN: 'readable-by-anyone' });
@@ -1092,6 +1094,8 @@ describe('akapen serve', () => {
       // The record is the one that stayed up, and it goes when that one stops.
       const rec = JSON.parse(readFileSync(join(home, 'serve.json'), 'utf8')) as { port: number };
       expect(String(rec.port)).toBe((up[0] as PromiseFulfilledResult<Daemon>).value.port);
+      // The secrets on disk are the ones the server that stayed holds: the other made none.
+      expect(cli((up[0] as PromiseFulfilledResult<Daemon>).value, ['list', '--json']).code).toBe(0);
       await (up[0] as PromiseFulfilledResult<Daemon>).value.stop();
       expect(existsSync(join(home, 'serve.json'))).toBe(false);
     }
@@ -1155,6 +1159,21 @@ describe('akapen serve', () => {
       await exited;
     }
   }, 40_000);
+
+  it('says in one line that another server is starting, when one holds the home for longer than it waits', () => {
+    mkdirSync(join(home, 'serve.json.taking'), { recursive: true });
+    const r = spawnSync('bun', ['run', CLI, 'serve', '-p', '0'], {
+      env: env(),
+      encoding: 'utf8',
+      timeout: 20_000,
+    });
+    expect(r.status).toBe(1);
+    expect(r.stderr.trim()).toBe(
+      `akapen: another akapen serve is starting for ${home}; if none is, remove ${join(home, 'serve.json.taking')}`,
+    );
+    // Stopped before it made anything: no record, no secret.
+    expect(readdirSync(home)).toEqual(['serve.json.taking']);
+  }, 30_000);
 
   it('gives the home back when it cannot listen on its port', async () => {
     const taken = createNetServer();
