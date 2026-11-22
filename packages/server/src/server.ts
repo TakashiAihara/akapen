@@ -1,4 +1,4 @@
-import { readFileSync, realpathSync, rmSync, statSync, watch, existsSync, type FSWatcher } from 'node:fs';
+import { readFileSync, realpathSync, statSync, watch, existsSync, type FSWatcher } from 'node:fs';
 import { basename, dirname, resolve } from 'node:path';
 import { Hono, type Context } from 'hono';
 import { getConnInfo } from 'hono/bun';
@@ -12,6 +12,9 @@ import {
   readDocuments,
   forgetRegistration,
   registrationsOf,
+  claimHome,
+  holdsHome,
+  releaseHome,
   servePath,
   SERVE_MARKER,
   writeDocuments,
@@ -953,7 +956,9 @@ const escapeHtml = (s: string): string => s.replace(/[&<>"']/g, (ch) => `&#${ch.
  */
 export function startDaemon(opts: DaemonOptions & { manageToken: string }) {
   const { manageToken } = opts;
-  // Before anything reads a store: the documents' comments move to comments/ (#305).
+  // Before anything is read that this server will write, the reviews/ rename included:
+  // one server per home, and a second one started at the same moment stops here (#324).
+  claimHome();
   const notRenamed = renameLegacyStore(readInstances().length > 0);
   if (notRenamed !== null) console.error(`akapen: ${notRenamed}`);
   const { app, currentSecret } = guardedApp(opts);
@@ -1019,6 +1024,14 @@ export function startDaemon(opts: DaemonOptions & { manageToken: string }) {
   };
 
   const save = (next: DocumentEntry[]): void => {
+    // Looked at before every write: another server that took the home (two starting on the
+    // same record a crash left) writes documents.json from its own copy, and this one
+    // writing too would lose registrations for both.
+    if (!holdsHome()) {
+      console.error(`akapen: another akapen serve has taken ${servePath()}; this one is stopping`);
+      void stop().finally(() => process.exit(1));
+      throw new Error('this server no longer holds its home');
+    }
     writeDocuments(next);
     entries = next;
   };
@@ -1349,12 +1362,24 @@ export function startDaemon(opts: DaemonOptions & { manageToken: string }) {
 
   serveAssets(app);
 
-  const server = Bun.serve({
-    hostname: opts.host,
-    port: opts.port,
-    idleTimeout: IDLE_TIMEOUT_S,
-    fetch: app.fetch,
-  });
+  let server: ReturnType<typeof Bun.serve>;
+  try {
+    server = Bun.serve({
+      hostname: opts.host,
+      port: opts.port,
+      idleTimeout: IDLE_TIMEOUT_S,
+      fetch: app.fetch,
+    });
+    // Taken by another server between the claim and here: it does not get this one's port written over its record.
+    if (!holdsHome()) {
+      void server.stop(true);
+      throw new Error(`another akapen serve took ${servePath()} while this one was starting`);
+    }
+  } catch (err) {
+    clearInterval(heartbeat);
+    releaseHome();
+    throw err;
+  }
   base = urlsFor(opts.advertised ?? opts.host, server.port ?? opts.port)[0]!;
   if (server.port !== undefined) writeServePort(server.port);
 
@@ -1363,7 +1388,7 @@ export function startDaemon(opts: DaemonOptions & { manageToken: string }) {
     clearInterval(heartbeat);
     stopping = true;
     for (const timer of gone.values()) clearTimeout(timer);
-    rmSync(servePath(), { force: true });
+    releaseHome();
     await server.stop(true);
   };
 

@@ -6,15 +6,19 @@
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import {
   chmodSync,
+  closeSync,
+  constants,
   existsSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readFileSync,
   readdirSync,
   renameSync,
   rmSync,
   statSync,
   writeFileSync,
+  writeSync,
 } from 'node:fs';
 import { createServer as createHttpServer } from 'node:http';
 import { createServer as createNetServer } from 'node:net';
@@ -215,7 +219,7 @@ describe('akapen serve', () => {
 
   it('listens on 4300 or AKAPEN_PORT rather than the port a crashed server recorded', async () => {
     mkdirSync(home, { recursive: true });
-    writeFileSync(join(home, 'serve.json'), JSON.stringify({ port: 1, pid: 1 }));
+    writeFileSync(join(home, 'serve.json'), JSON.stringify({ port: 1, pid: 2 ** 22 + 1 }));
     const proc = spawn('bun', ['run', CLI, 'serve'], {
       env: env({ AKAPEN_PORT: '0' }),
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -252,7 +256,7 @@ describe('akapen serve', () => {
         s.close(() => done(p));
       });
     });
-    writeFileSync(join(home, 'serve.json'), JSON.stringify({ port: 1, pid: 1 }));
+    writeFileSync(join(home, 'serve.json'), JSON.stringify({ port: 1, pid: 2 ** 22 + 1 }));
     const proc = spawn('bun', ['run', CLI, 'serve'], {
       env: env({ AKAPEN_PORT: String(free) }),
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -748,7 +752,11 @@ describe('akapen serve', () => {
       expect(beside.code).toBe(1);
       expect(beside.text).toContain("does not answer as this version's akapen serve");
       expect(carried).toEqual([]);
-      rmSync(join(home, 'serve.json'));
+      // With the recorded process gone, the port is anyone's and this is nobody's server: one starts.
+      writeFileSync(join(home, 'serve.json'), JSON.stringify({ port: Number(port), pid: 2 ** 22 + 1 }));
+      await (await serve()).stop();
+      expect(carried).toEqual([]);
+      rmSync(join(home, 'serve.json'), { force: true });
 
       // The channel's two requests, to the same port.
       const names = ['AKAPEN_HOME', 'AKAPEN_PORT', 'AKAPEN_TOKEN'] as const;
@@ -850,33 +858,24 @@ describe('akapen serve', () => {
       await listAsync(env({ AKAPEN_PORT: String(port) }));
       expect(seen).toContain('the-secret-that-must-stay');
 
-      // serve's own check for a running server, on the same stale record, sends nothing either.
+      // serve's own check for a running server asks the recorded port who it is, with no
+      // credential. What answers as akapen serve there stops it: a server in a container
+      // looks just like this from outside, a pid that is nobody here.
       seen.length = 0;
-      const second = spawn('bun', ['run', CLI, 'serve', '-p', '0'], {
-        env: { ...env(), AKAPEN_PORT: '' },
-        stdio: ['ignore', 'pipe', 'ignore'],
+      const second = await new Promise<{ code: number | null; err: string }>((done) => {
+        const proc = spawn('bun', ['run', CLI, 'serve', '-p', '0'], {
+          env: { ...env(), AKAPEN_PORT: '' },
+          stdio: ['ignore', 'ignore', 'pipe'],
+        });
+        let err = '';
+        proc.stderr.on('data', (c: Buffer) => (err += c.toString()));
+        proc.on('exit', (code) => done({ code, err }));
       });
-      const exited = new Promise<void>((done) => second.on('exit', () => done()));
-      // The recorded process is gone, so this serve has to start; exiting is a failure.
-      let printed = '';
-      try {
-        await Promise.race([
-          exited.then(() => {
-            throw new Error(`serve exited instead of starting:\n${printed}`);
-          }),
-          new Promise<void>((done) =>
-            second.stdout.on('data', (c: Buffer) => {
-              printed += c.toString();
-              if (/url\s+http/.test(printed)) done();
-            }),
-          ),
-          new Promise<void>((_, fail) => setTimeout(() => fail(new Error('serve did not start')), 15_000)),
-        ]);
-      } finally {
-        second.kill();
-        await exited;
-      }
-      expect(seen).toEqual([]);
+      expect(second.code).toBe(1);
+      expect(second.err).toContain(`already running for ${home} on port ${port}`);
+      expect(second.err).toContain(`remove ${join(home, 'serve.json')}`);
+      expect(seen.length).toBeGreaterThan(0);
+      expect(seen.every((h) => h === undefined)).toBe(true);
     } finally {
       await new Promise<void>((done) => listener.close(() => done()));
     }
@@ -1049,16 +1048,127 @@ describe('akapen serve', () => {
     expect(readdirSync(join(home, 'instances')).toSorted()).toEqual([gone, alive].toSorted());
   });
 
-  it('starts beside a record whose pid lives but names another process, and not beside its own', async () => {
+  it('does not start beside a server that answers on the recorded port, whatever its record says of the process', async () => {
     const first = await serve();
     const record = join(home, 'serve.json');
-    const own = readFileSync(record, 'utf8');
-    // The running server's record as it is: a second one is refused.
+    const own = JSON.parse(readFileSync(record, 'utf8')) as { port: number; pid: number };
     await expect(serve()).rejects.toThrow('already running');
-    // The same pid, alive, on a record that names another process: left behind by a crash.
-    writeFileSync(record, JSON.stringify({ ...(JSON.parse(own) as object), identity: 'not this process' }));
-    const second = await serve();
-    expect(second.port).not.toBe(first.port);
+    // As a host sees the record of a server in a container: a pid that is nobody here, or
+    // somebody else. The port still answers as akapen serve, and that decides.
+    for (const seen of [
+      { ...own, identity: 'not this process' },
+      { port: own.port, pid: 2 ** 22 + 1 },
+    ]) {
+      writeFileSync(record, JSON.stringify(seen));
+      await expect(serve()).rejects.toThrow(`already running for ${home} on port ${first.port}`);
+      // Refused before the home was touched.
+      expect(JSON.parse(readFileSync(record, 'utf8'))).toEqual(seen);
+    }
+    writeFileSync(record, JSON.stringify(own));
+  });
+
+  it('starts beside a record whose pid lives but names another process, when nothing answers on its port', async () => {
+    mkdirSync(home, { recursive: true });
+    writeFileSync(
+      join(home, 'serve.json'),
+      JSON.stringify({ port: 1, pid: process.pid, identity: 'not this process' }),
+    );
+    const d = await serve();
+    expect(JSON.parse(readFileSync(join(home, 'serve.json'), 'utf8'))).toMatchObject({
+      port: Number(d.port),
+    });
+  });
+
+  it('lets only one of two servers started at the same moment have the home', async () => {
+    // Each on a port of its own, so the port cannot be what stops the second.
+    for (let round = 0; round < 3; round++) {
+      const started = await Promise.allSettled([serve(), serve()]);
+      const up = started.filter((s) => s.status === 'fulfilled');
+      expect(up).toHaveLength(1);
+      const refusal = String(started.find((s) => s.status === 'rejected')?.reason);
+      expect(refusal).toContain(`akapen serve is already running for ${home}`);
+      // Whichever check stopped it, it says what to remove if that is not this home's server.
+      expect(refusal).toContain(`remove ${join(home, 'serve.json')}`);
+      // The record is the one that stayed up, and it goes when that one stops.
+      const rec = JSON.parse(readFileSync(join(home, 'serve.json'), 'utf8')) as { port: number };
+      expect(String(rec.port)).toBe((up[0] as PromiseFulfilledResult<Daemon>).value.port);
+      await (up[0] as PromiseFulfilledResult<Daemon>).value.stop();
+      expect(existsSync(join(home, 'serve.json'))).toBe(false);
+    }
+  }, 30_000);
+
+  it('stops, without writing, when another server has taken its home', async () => {
+    const d = await serve();
+    cli(d, ['add', note('kept.md')]);
+    const before = readFileSync(join(home, 'documents.json'), 'utf8');
+    // As a second server would have left it, had both taken over the same record of a crash.
+    const theirs = JSON.stringify({ port: 1, pid: process.pid, identity: processIdentity(process.pid) });
+    writeFileSync(join(home, 'serve.json'), theirs);
+    const added = cli(d, ['add', note('lost.md')]);
+    expect(added.code).toBe(1);
+    await until(() => d.output().includes('another akapen serve has taken'));
+    await d.stop();
+    expect(readFileSync(join(home, 'documents.json'), 'utf8')).toBe(before);
+    // Not removed on the way out: it is the other server's.
+    expect(readFileSync(join(home, 'serve.json'), 'utf8')).toBe(theirs);
+  });
+
+  it('does not come up when another server took its home while it was starting', async () => {
+    // A FIFO where the registry is read holds the server between taking the home and
+    // listening, which is where two servers that both took over a crash's record can cross.
+    mkdirSync(home, { recursive: true });
+    const registry = join(home, 'documents.json');
+    expect(spawnSync('mkfifo', [registry]).status).toBe(0);
+    const proc = spawn('bun', ['run', CLI, 'serve'], {
+      env: env({ AKAPEN_PORT: '0' }),
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let err = '';
+    proc.stderr.on('data', (chunk: Buffer) => (err += chunk.toString()));
+    proc.stdout.resume();
+    const exited = new Promise<number | null>((done) => proc.on('exit', (code) => done(code)));
+    try {
+      await until(() => existsSync(join(home, 'serve.json')), 15_000);
+      const theirs = JSON.stringify({ port: 1, pid: process.pid, identity: processIdentity(process.pid) });
+      writeFileSync(join(home, 'serve.json'), theirs);
+      // Opened without waiting for a reader: the server is one by now, or this fails and is tried again.
+      let fd = -1;
+      await until(() => {
+        try {
+          fd = openSync(registry, constants.O_WRONLY | constants.O_NONBLOCK);
+          return true;
+        } catch {
+          return false;
+        }
+      }, 15_000);
+      writeSync(fd, '{"version":1,"documents":[]}');
+      closeSync(fd);
+      expect(await exited).not.toBe(0);
+      expect(err).toContain('while this one was starting');
+      // The other server's record is left as it is.
+      expect(readFileSync(join(home, 'serve.json'), 'utf8')).toBe(theirs);
+    } finally {
+      proc.kill('SIGKILL');
+      await exited;
+    }
+  }, 40_000);
+
+  it('gives the home back when it cannot listen on its port', async () => {
+    const taken = createNetServer();
+    await new Promise<void>((done) => taken.listen(0, '127.0.0.1', () => done()));
+    const port = String((taken.address() as { port: number }).port);
+    try {
+      const r = spawnSync('bun', ['run', CLI, 'serve', '-p', port], {
+        env: env(),
+        encoding: 'utf8',
+        timeout: 15_000,
+      });
+      expect(r.status).toBe(1);
+      expect(r.stderr).toContain(`port ${port} is in use`);
+      expect(existsSync(join(home, 'serve.json'))).toBe(false);
+    } finally {
+      await new Promise<void>((done) => taken.close(() => done()));
+    }
   });
 
   it('records what names its process beside its pid', async () => {

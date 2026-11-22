@@ -5,7 +5,13 @@ import { resolve } from 'node:path';
 
 import { AdvertiseError, resolveAdvertised } from '@akapen/core/addresses';
 
-import { readServePort, recordedServerAlive, servePath, whatAnswers } from '@akapen/core/documents';
+import {
+  HomeHeldError,
+  readServePort,
+  recordedServerAlive,
+  servePath,
+  whatAnswers,
+} from '@akapen/core/documents';
 import { akapenHome, type pendingComments } from '@akapen/core/store';
 import {
   currentToken,
@@ -780,14 +786,19 @@ function advertisedFor(bind: string): string | null {
 if (positional[0] === 'serve') {
   if (positional.length > 1) fail(`serve: unexpected ${JSON.stringify(positional.slice(1).join(' '))}`);
   // One server per home: a second would write documents.json from its own copy.
-  // Asked only while the recorded server's process lives, and with no credential. A record
-  // a crash left behind names a port anyone may hold now, and is no server here.
-  const runningOn = recordedServerAlive() ? readServePort() : null;
+  // The recorded port is asked, with no credential, whatever became of the recorded pid:
+  // a server in a container has a pid that means nothing out here, and it still answers.
+  const runningOn = readServePort();
   const running = runningOn === null ? 'nothing' : await whatAnswers(runningOn);
-  if (running === 'serve') fail(`akapen serve is already running for ${akapenHome()} on port ${runningOn}`);
+  if (running === 'serve')
+    fail(
+      `akapen serve is already running for ${akapenHome()} on port ${runningOn}. ` +
+        `If that is the server of another home, remove ${servePath()}`,
+    );
   // The recorded process lives and its port answers, without the marker: an akapen serve
   // from before the marker, most likely. Starting beside it would be the second writer.
-  if (running === 'other')
+  // With the process gone, the port is anyone's now and is no server here.
+  if (running === 'other' && recordedServerAlive())
     fail(
       `the server ${akapenHome()} recorded is running (port ${runningOn}) but does not answer as this version's akapen serve. ` +
         `Stop it first if it is an akapen serve from before; if it is something else, remove ${servePath()}`,
@@ -833,6 +844,13 @@ if (positional[0] === 'serve') {
     if (err instanceof ManageTokenError) {
       console.error(`akapen: ${err.message}`);
       process.exit(1);
+    }
+    if (err instanceof HomeHeldError) {
+      const { pid, port: theirs } = err.holder;
+      fail(
+        `akapen serve is already running for ${akapenHome()} (pid ${pid}${theirs === null ? ', starting' : `, port ${theirs}`}). ` +
+          `If pid ${pid} is not akapen serve, remove ${servePath()}`,
+      );
     }
     if ((err as { code?: unknown }).code !== 'EADDRINUSE') throw err;
     fail(

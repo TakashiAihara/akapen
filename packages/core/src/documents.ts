@@ -5,7 +5,7 @@
  * server's API, so there is a single writer and no lock. docs/design/multi-document-server.md
  * has the decisions behind it.
  */
-import { mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { linkSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 
 import { processIdentity } from './process.ts';
@@ -91,22 +91,109 @@ export function readServePort(): number | null {
  * equality and is not a time.
  */
 export function readServeRecord(): { port: number; pid: number | null; identity: string | null } | null {
+  const rec = parseServeRecord(readServeText());
+  // Without a port it is a server still starting: nothing to reach yet.
+  return rec === null || rec.port === null ? null : { ...rec, port: rec.port };
+}
+
+type ServeRecord = { port: number | null; pid: number | null; identity: string | null };
+
+const readServeText = (): string | null => {
   try {
-    const rec = JSON.parse(readFileSync(servePath(), 'utf8')) as {
-      port?: unknown;
-      pid?: unknown;
-      identity?: unknown;
-    };
-    const { port, pid, identity } = rec;
-    if (typeof port !== 'number' || !Number.isInteger(port) || port <= 0 || port > 65_535) return null;
+    return readFileSync(servePath(), 'utf8');
+  } catch {
+    return null;
+  }
+};
+
+function parseServeRecord(text: string | null): ServeRecord | null {
+  if (text === null) return null;
+  try {
+    const { port, pid, identity } = JSON.parse(text) as { port?: unknown; pid?: unknown; identity?: unknown };
     return {
-      port,
+      port: typeof port === 'number' && Number.isInteger(port) && port > 0 && port <= 65_535 ? port : null,
       pid: typeof pid === 'number' && Number.isInteger(pid) && pid > 0 ? pid : null,
       identity: typeof identity === 'string' ? identity : null,
     };
   } catch {
     return null;
   }
+}
+
+/** Whether the process a record names is still that process (#323). */
+function recordLives(rec: ServeRecord | null): boolean {
+  if (rec === null || rec.pid === null) return false;
+  try {
+    process.kill(rec.pid, 0);
+    // Compared only when both are known: a record from before this was written, or a
+    // platform where the start cannot be read, is judged by the pid alone, as it was.
+    const identity = rec.identity === null ? null : processIdentity(rec.pid);
+    return identity === null || identity === rec.identity;
+  } catch {
+    return false;
+  }
+}
+
+const ownRecord = (port?: number): string => {
+  const identity = processIdentity(process.pid);
+  return `${JSON.stringify({
+    ...(port === undefined ? {} : { port }),
+    pid: process.pid,
+    ...(identity === null ? {} : { identity }),
+  })}\n`;
+};
+
+/** A home another running server holds: `akapen serve` does not start on it. */
+export class HomeHeldError extends Error {
+  constructor(readonly holder: { pid: number; port: number | null }) {
+    super(`akapen serve is already running for ${akapenHome()} (pid ${holder.pid})`);
+  }
+}
+
+/**
+ * Take the home for a server that is starting, before it reads anything it will write
+ * (#324). The record is the lock: created only if there is none, so of two servers started
+ * at the same moment one fails to create it, finds the other's, and stops.
+ *
+ * Throws `HomeHeldError` when a running server holds the home.
+ *
+ * A record a crash left behind is written over in one step. Two servers that both find
+ * the same one each write over it, and the later write stays: the earlier server sees
+ * that when it looks again (`holdsHome`), which it does once it listens and before every
+ * write, and stops.
+ */
+export function claimHome(): void {
+  mkdirSync(akapenHome(), { recursive: true });
+  // Written beside it and linked into place: the record appears whole or not at all, so
+  // nobody reads one that exists and is still empty, and takes it for a broken one.
+  const whole = `${servePath()}.${process.pid}.claim`;
+  writeFileSync(whole, ownRecord());
+  try {
+    linkSync(whole, servePath());
+    return;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+  } finally {
+    rmSync(whole, { force: true });
+  }
+  const rec = parseServeRecord(readServeText());
+  // A record naming this very pid was left by an earlier process that had it (a container
+  // starts its server on the same pid every time): it cannot be another server running now.
+  if (rec !== null && rec.pid !== null && rec.pid !== process.pid && recordLives(rec))
+    throw new HomeHeldError({ pid: rec.pid, port: rec.port });
+  writeAtomic(servePath(), ownRecord());
+}
+
+/** Whether the record still names this process: the home is this server's to write. */
+export function holdsHome(): boolean {
+  const rec = parseServeRecord(readServeText());
+  if (rec === null || rec.pid !== process.pid) return false;
+  return rec.identity === null || rec.identity === processIdentity(process.pid);
+}
+
+/** Give the home up on the way out. Not another server's record, if it took the home meanwhile. */
+export function releaseHome(): void {
+  if (holdsHome()) rmSync(servePath(), { force: true });
 }
 
 /**
@@ -122,16 +209,7 @@ export function recordedServerAlive(): boolean {
 /** The recorded port, read once with the pid it was checked against. */
 function liveServeRecord(): number | null {
   const rec = readServeRecord();
-  if (rec === null || rec.pid === null) return null;
-  try {
-    process.kill(rec.pid, 0);
-    // Compared only when both are known: a record from before this was written, or a
-    // platform where the start cannot be read, is judged by the pid alone, as it was.
-    const identity = rec.identity === null ? null : processIdentity(rec.pid);
-    return identity !== null && identity !== rec.identity ? null : rec.port;
-  } catch {
-    return null;
-  }
+  return rec !== null && recordLives(rec) ? rec.port : null;
 }
 
 /**
@@ -149,11 +227,7 @@ export function chosenServePort(): number | null {
 
 export function writeServePort(port: number): void {
   mkdirSync(akapenHome(), { recursive: true });
-  const identity = processIdentity(process.pid);
-  writeAtomic(
-    servePath(),
-    `${JSON.stringify({ port, pid: process.pid, ...(identity === null ? {} : { identity }) })}\n`,
-  );
+  writeAtomic(servePath(), ownRecord(port));
 }
 
 /**
