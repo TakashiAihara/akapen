@@ -55,29 +55,13 @@ describe('reading the records of one-document processes', () => {
       host: '0.0.0.0',
       port: 4321,
       file: '/notes/plan.md',
-      startedAt: new Date().toISOString(),
+      startedAt: '2026-08-18T00:00:00.000Z',
       origin: { kind: 'claude-code', id: 'abc', cwd: '/x' },
     });
 
     expect(readInstances()).toEqual([
       { pid: process.pid, file: '/notes/plan.md', record: join(instancesDir(), `${process.pid}.json`) },
     ]);
-  });
-
-  it('leaves out a record written before the process holding its pid started', () => {
-    // The pid of a process that is alive, on a record from long before it started: the
-    // process that wrote it is gone and its id was handed on (#323).
-    write(`${process.pid}.json`, {
-      pid: process.pid,
-      file: '/notes/plan.md',
-      startedAt: new Date(Date.now() - process.uptime() * 1000 - 60_000).toISOString(),
-    });
-    expect(readInstances()).toEqual([]);
-  });
-
-  it('goes by the pid alone when a record says nothing of when it was written', () => {
-    write(`${process.pid}.json`, { pid: process.pid, file: '/notes/plan.md' });
-    expect(readInstances().map((r) => r.pid)).toEqual([process.pid]);
   });
 
   it('leaves out the record of a process that is gone, and does not delete it', () => {

@@ -12,7 +12,6 @@
 
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { processStartedAt } from './process.ts';
 import { akapenHome } from './store.ts';
 
 /** The two things of an old record that anything reads. */
@@ -31,6 +30,13 @@ export function instancesDir(): string {
 /**
  * `kill(pid, 0)` sends no signal; it only asks whether a process with that id is there.
  * `EPERM` means one is, owned by somebody else, which still counts.
+ *
+ * The pid is all there is to go by (#323). A record holds the time it was written, but
+ * setting that against when the process started compares two readings of a clock that may
+ * have been set in between (a machine without a clock of its own starts in the past and is
+ * corrected later), and getting it wrong takes a running holder for gone: a second holder
+ * on its store. A later process given the pid keeps the record alive instead, which the
+ * refusal makes something to act on by saying where the record is.
  */
 function alive(pid: number): boolean {
   try {
@@ -41,20 +47,6 @@ function alive(pid: number): boolean {
   }
 }
 
-/** A record's `startedAt` is written a moment after its process starts; clocks are read to the second. */
-const START_SLACK_MS = 2_000;
-
-/**
- * Whether the process with this id can be the one that wrote a record at `startedAt` (#323).
- * One that started after the record was written was given the id later: the writer is gone,
- * and nothing ever removes its record. Where either time is unknown, the pid decides alone.
- */
-function wrote(pid: number, startedAt: unknown): boolean {
-  const written = typeof startedAt === 'string' ? Date.parse(startedAt) : Number.NaN;
-  const started = Number.isNaN(written) ? null : processStartedAt(pid);
-  return started === null || started <= written + START_SLACK_MS;
-}
-
 /** The records whose process is still there. One that cannot be read is not one. */
 export function readInstances(): InstanceRecord[] {
   const dir = instancesDir();
@@ -63,18 +55,13 @@ export function readInstances(): InstanceRecord[] {
   for (const name of readdirSync(dir)) {
     if (!name.endsWith('.json')) continue;
     try {
-      const parsed = JSON.parse(readFileSync(join(dir, name), 'utf8')) as {
-        pid?: unknown;
-        file?: unknown;
-        startedAt?: unknown;
-      } | null;
+      const parsed = JSON.parse(readFileSync(join(dir, name), 'utf8')) as Partial<InstanceRecord> | null;
       if (
         typeof parsed?.pid === 'number' &&
         Number.isInteger(parsed.pid) &&
         parsed.pid > 0 &&
         typeof parsed.file === 'string' &&
-        alive(parsed.pid) &&
-        wrote(parsed.pid, parsed.startedAt)
+        alive(parsed.pid)
       ) {
         out.push({ pid: parsed.pid, file: parsed.file, record: join(dir, name) });
       }

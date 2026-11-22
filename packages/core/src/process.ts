@@ -8,27 +8,33 @@
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 
-/** When the process with this id started, in milliseconds since the epoch, or null where that cannot be read. */
-export function processStartedAt(pid: number): number | null {
+/**
+ * What stays the same for as long as the process with this id lives and differs for any
+ * other process that ever holds the id, or null where it cannot be read.
+ *
+ * Compared for equality and nothing else. On Linux it is the boot and the tick the process
+ * started at, as the kernel counts them: not a time of day, which moves when the clock is
+ * set (the boot time in `/proc/stat` moves with it), and a clock corrected after a server
+ * started must not make it look like another process.
+ */
+export function processIdentity(pid: number): string | null {
   if (process.platform === 'linux') {
     try {
       const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
       // Counted from after the command name, which may itself hold spaces and brackets:
       // the start time is field 22 of the line, the 20th after the name.
-      const ticks = Number(stat.slice(stat.lastIndexOf(')') + 2).split(' ')[19]);
-      const boot = Number(/^btime (\d+)$/m.exec(readFileSync('/proc/stat', 'utf8'))?.[1]);
-      // shortcut: 100 ticks a second, which is what Linux reports to user space on the
-      // architectures akapen is built for; ask sysconf(_SC_CLK_TCK) if one ever differs.
-      return Number.isFinite(ticks) && Number.isFinite(boot) ? boot * 1000 + ticks * 10 : null;
+      const ticks = stat.slice(stat.lastIndexOf(')') + 2).split(' ')[19];
+      if (ticks === undefined || !/^\d+$/.test(ticks)) return null;
+      return `${readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim()}:${ticks}`;
     } catch {
       return null;
     }
   }
-  // macOS and the BSDs: `ps` prints it, in the C locale as "Sun Nov 22 22:10:01 2026".
+  // macOS and the BSDs: `ps` prints the start as the kernel recorded it when the process began.
   const ps = spawnSync('ps', ['-o', 'lstart=', '-p', String(pid)], {
     encoding: 'utf8',
     env: { ...process.env, LC_ALL: 'C' },
   });
-  const at = ps.status === 0 ? Date.parse(ps.stdout.trim()) : Number.NaN;
-  return Number.isNaN(at) ? null : at;
+  const at = ps.status === 0 ? ps.stdout.trim() : '';
+  return at === '' ? null : at;
 }

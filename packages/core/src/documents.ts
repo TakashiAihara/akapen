@@ -8,7 +8,7 @@
 import { mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 
-import { processStartedAt } from './process.ts';
+import { processIdentity } from './process.ts';
 import { akapenHome, commentsRoot, storeDir, writeAtomic } from './store.ts';
 
 export type DocumentEntry = {
@@ -89,7 +89,7 @@ export function readServePort(): number | null {
  * What the running server recorded: its port, its pid when the record has one, and when
  * that process started when the server could tell (#323).
  */
-export function readServeRecord(): { port: number; pid: number | null; started: number | null } | null {
+export function readServeRecord(): { port: number; pid: number | null; started: string | null } | null {
   try {
     const rec = JSON.parse(readFileSync(servePath(), 'utf8')) as {
       port?: unknown;
@@ -101,7 +101,7 @@ export function readServeRecord(): { port: number; pid: number | null; started: 
     return {
       port,
       pid: typeof pid === 'number' && Number.isInteger(pid) && pid > 0 ? pid : null,
-      started: typeof started === 'number' ? started : null,
+      started: typeof started === 'string' ? started : null,
     };
   } catch {
     return null;
@@ -126,7 +126,7 @@ function liveServeRecord(): number | null {
     process.kill(rec.pid, 0);
     // Compared only when both are known: a record from before this was written, or a
     // platform where the start cannot be read, is judged by the pid alone, as it was.
-    const started = rec.started === null ? null : processStartedAt(rec.pid);
+    const started = rec.started === null ? null : processIdentity(rec.pid);
     return started !== null && started !== rec.started ? null : rec.port;
   } catch {
     return null;
@@ -148,7 +148,7 @@ export function chosenServePort(): number | null {
 
 export function writeServePort(port: number): void {
   mkdirSync(akapenHome(), { recursive: true });
-  const started = processStartedAt(process.pid);
+  const started = processIdentity(process.pid);
   writeAtomic(
     servePath(),
     `${JSON.stringify({ port, pid: process.pid, ...(started === null ? {} : { started }) })}\n`,

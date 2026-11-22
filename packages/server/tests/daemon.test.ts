@@ -25,7 +25,7 @@ import { localAddresses } from '@akapen/core/addresses';
 import { collect, holdServeStream, serveStore } from '../../cli/src/channel.ts';
 import { chosenServePort, documentId } from '@akapen/core/documents';
 import { storeDir } from '@akapen/core/store';
-import { processStartedAt } from '../../core/src/process.ts';
+import { processIdentity } from '../../core/src/process.ts';
 
 const TOKEN = 'test-token-for-the-daemon-suite';
 const CLI = join(import.meta.dirname, '..', '..', 'cli', 'src', 'cli.ts');
@@ -997,10 +997,11 @@ describe('akapen serve', () => {
     expect(cli(d, ['add', note('other.md')]).code).toBe(0);
   });
 
-  it('registers a file whose one-document record names a pid that a later process was given', async () => {
+  it('keeps refusing on an old record whose pid lives, however long ago it was written', async () => {
     const d = await serve();
     const file = note('note.md');
-    // This process is alive, and started long after the record says it was written.
+    // The time in a record is not set against when the process started: a clock that was
+    // corrected in between would take a running holder for gone.
     const name = legacyRecord(file);
     const record = join(home, 'instances', name);
     writeFileSync(
@@ -1011,8 +1012,8 @@ describe('akapen serve', () => {
       }),
     );
     const r = cli(d, ['add', file]);
-    expect(r.code, r.err).toBe(0);
-    expect((await authed(`${urlIn(r.out)}api/status`)).status).toBe(200);
+    expect(r.code).toBe(1);
+    expect(r.err).toContain(`recorded in ${record}`);
   });
 
   it('leaves the records of one-document akapen where they are, whether their process is there or not', async () => {
@@ -1024,13 +1025,13 @@ describe('akapen serve', () => {
     expect(readdirSync(join(home, 'instances')).toSorted()).toEqual([gone, alive].toSorted());
   });
 
-  it('records when its process started beside its pid', async () => {
+  it('records what names its process beside its pid', async () => {
     await serve();
     const rec = JSON.parse(readFileSync(join(home, 'serve.json'), 'utf8')) as {
       pid: number;
-      started: number;
+      started: string;
     };
-    expect(rec.started).toBe(processStartedAt(rec.pid));
+    expect(rec.started).toBe(processIdentity(rec.pid));
   });
 
   it('finds a server started on its own port through what it recorded', async () => {

@@ -3,32 +3,33 @@
  * over: a record that names a dead server's pid must stop counting as that server the
  * moment somebody else holds the number (#323).
  */
-import { spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { readServeRecord, recordedServerAlive, writeServePort } from '../src/documents.ts';
-import { processStartedAt } from '../src/process.ts';
+import { processIdentity } from '../src/process.ts';
 
-describe('when a process started', () => {
-  it('is read for this process, the same each time, and not later than now', () => {
-    const at = processStartedAt(process.pid);
-    expect(at).not.toBeNull();
-    expect(processStartedAt(process.pid)).toBe(at);
-    // Within the second the platform reports it to, and after this process had run for a while.
-    expect(at!).toBeLessThanOrEqual(Date.now() - process.uptime() * 1000 + 1_500);
-    expect(at!).toBeGreaterThan(Date.now() - process.uptime() * 1000 - 5_000);
+describe('what names a process beside its pid', () => {
+  it('is read for this process, and is the same each time', () => {
+    const mine = processIdentity(process.pid);
+    expect(mine).toMatch(/\S/);
+    expect(processIdentity(process.pid)).toBe(mine);
   });
 
-  it('differs for a process started later', () => {
-    const child = spawnSync(process.execPath, ['-e', 'console.log(process.pid); setTimeout(() => {}, 0)'], {
-      encoding: 'utf8',
-    });
-    expect(child.status).toBe(0);
-    // Gone by now: nothing to read for an id nobody holds.
-    expect(processStartedAt(Number(child.stdout.trim()))).toBeNull();
-    expect(processStartedAt(1)).toBeLessThan(processStartedAt(process.pid)!);
+  it('differs for another process, and is not read for one that is gone', async () => {
+    const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], { stdio: 'ignore' });
+    const exited = new Promise<void>((done) => child.on('exit', () => done()));
+    try {
+      const theirs = processIdentity(child.pid!);
+      expect(theirs).toMatch(/\S/);
+      expect(theirs).not.toBe(processIdentity(process.pid));
+    } finally {
+      child.kill();
+      await exited;
+    }
+    expect(processIdentity(child.pid!)).toBeNull();
   });
 });
 
@@ -44,25 +45,25 @@ describe('the server a home recorded', () => {
   });
   const record = (rec: unknown) => writeFileSync(join(home, 'serve.json'), JSON.stringify(rec));
 
-  it('is written with when its process started, and counts as running', () => {
+  it('is written with what names its process, and counts as running', () => {
     writeServePort(4321);
     expect(readServeRecord()).toEqual({
       port: 4321,
       pid: process.pid,
-      started: processStartedAt(process.pid),
+      started: processIdentity(process.pid),
     });
     expect(recordedServerAlive()).toBe(true);
   });
 
-  it('is gone when its pid lives but started at another moment', () => {
-    record({ port: 4321, pid: process.pid, started: processStartedAt(process.pid)! - 60_000 });
+  it('is gone when its pid lives but is another process than the one recorded', () => {
+    record({ port: 4321, pid: process.pid, started: `${processIdentity(process.pid)}0` });
     expect(recordedServerAlive()).toBe(false);
   });
 
-  it('is judged by the pid alone when the record says nothing of the start', () => {
+  it('is judged by the pid alone when the record does not say which process', () => {
     record({ port: 4321, pid: process.pid });
     expect(recordedServerAlive()).toBe(true);
-    record({ port: 4321, pid: 2 ** 22 + 1, started: 1 });
+    record({ port: 4321, pid: 2 ** 22 + 1, started: 'x' });
     expect(recordedServerAlive()).toBe(false);
   });
 });
