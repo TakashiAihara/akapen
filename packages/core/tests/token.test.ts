@@ -8,6 +8,7 @@
  * the running server would look wrong.
  */
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -210,7 +211,7 @@ describe('the stored management secret', () => {
     expect(secretFileFault({ mode: 0o100600, uid: 0 }, 1000)).toBe('it belongs to uid 0, not 1000');
   });
 
-  it('says why once, however often the secret is asked for', async () => {
+  it('says why once, however often the secret is asked for, and again when the reason changes', async () => {
     store(0o644);
     vi.resetModules();
     const fresh = await import('../src/token.ts');
@@ -221,6 +222,11 @@ describe('the stored management secret', () => {
       expect(said.mock.calls.map((c) => String(c[0]))).toEqual([
         expect.stringContaining(`${stored()} is not used: its mode is 644, not 600`),
       ]);
+      chmodSync(stored(), 0o640);
+      expect(fresh.readManageToken()).toBeNull();
+      expect(fresh.readManageToken()).toBeNull();
+      expect(said.mock.calls.map((c) => String(c[0])).at(-1)).toContain('its mode is 640, not 600');
+      expect(said.mock.calls).toHaveLength(2);
     } finally {
       said.mockRestore();
     }
@@ -237,8 +243,16 @@ describe('the stored management secret', () => {
     mkdirSync(stored(), { recursive: true });
     chmodSync(stored(), 0o700);
     expect(readManageToken()).toBeNull();
-    expect(() => resolveManageToken()).toThrow('it cannot be read (EISDIR)');
+    expect(() => resolveManageToken()).toThrow('it is not a regular file');
     expect(statSync(stored()).isDirectory()).toBe(true);
+  });
+
+  it('does not wait on a FIFO left where the secret would be', () => {
+    mkdirSync(home, { recursive: true });
+    expect(spawnSync('mkfifo', ['-m', '600', stored()]).status).toBe(0);
+    // Opening one to read blocks until somebody writes, which nobody will.
+    expect(readManageToken()).toBeNull();
+    expect(() => resolveManageToken()).toThrow('it is not a regular file');
   });
 
   it('writes one where there is none', () => {

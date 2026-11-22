@@ -782,7 +782,9 @@ describe('akapen serve', () => {
       timeout: 15_000,
     });
     expect(started.status).toBe(1);
-    expect(started.stderr).toContain(`${stored} is not used: its mode is 644, not 600`);
+    expect(started.stderr).toContain(
+      `${stored} is not used: its mode is 644, not 600, so it may have been read or replaced`,
+    );
     // Said as akapen says things, in one line: not a stack trace.
     expect(started.stderr.trim().split('\n')).toHaveLength(1);
     expect(started.stderr.startsWith('akapen: ')).toBe(true);
@@ -792,7 +794,9 @@ describe('akapen serve', () => {
     const d = await serve([], { AKAPEN_MANAGE_TOKEN: 'readable-by-anyone' });
     const asked = cli(d, ['comments', note('note.md')]);
     expect(asked.code).toBe(1);
-    expect(asked.err).toContain(`${stored} is not used: its mode is 644, not 600`);
+    expect(asked.err).toContain(
+      `${stored} is not used: its mode is 644, not 600, so it may have been read or replaced`,
+    );
     expect(asked.err).toContain('refused this command');
   });
 

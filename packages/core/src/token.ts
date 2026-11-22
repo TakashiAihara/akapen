@@ -17,7 +17,16 @@
  */
 
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
-import { chmodSync, closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync } from 'node:fs';
+import {
+  chmodSync,
+  closeSync,
+  constants,
+  existsSync,
+  fstatSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import { akapenHome, writeAtomic } from './store.ts';
 
@@ -204,27 +213,31 @@ const errnoOf = (err: unknown): string => String((err as { code?: unknown }).cod
  * read through one descriptor, so the file that was checked is the file that is read. Not
  * checked where there are no uids to compare (Windows). What an ACL grants is not seen.
  *
- * Only a file that is not there counts as none. One that is there and cannot be opened or
- * read (another user's 0600, which this user cannot open to look at; a directory) is a
- * fault as well: taking it for none would have the server write a new secret over it.
+ * Only a file that is not there, or an empty one, counts as none. One that is there and
+ * cannot be opened or read (another user's 0600, which this user cannot open to look at),
+ * or is not a regular file, is a fault as well: taking it for none would have the server
+ * write a new secret over it. Opened without blocking, since opening a FIFO left at the
+ * path would otherwise wait for a writer for ever.
  */
 function storedManageToken(): { value: string | null; fault: string | null } {
   const path = manageTokenPath();
   const unused = (why: string) => ({
     value: null,
-    fault: `${path} is not used: ${why}. Delete it and restart akapen serve, which writes a new one`,
+    fault: `${path} is not used: ${why}. Remove it and restart akapen serve, which writes a new one, or hand the secret in as AKAPEN_MANAGE_TOKEN`,
   });
   let fd: number;
   try {
-    fd = openSync(path, 'r');
+    fd = openSync(path, constants.O_RDONLY | constants.O_NONBLOCK);
   } catch (err) {
     return errnoOf(err) === 'ENOENT'
       ? { value: null, fault: null }
       : unused(`it cannot be opened (${errnoOf(err)})`);
   }
   try {
-    const fault = process.getuid === undefined ? null : secretFileFault(fstatSync(fd), process.getuid());
-    if (fault !== null) return unused(`${fault}, so whoever could read it may hold the secret`);
+    const st = fstatSync(fd);
+    if (!st.isFile()) return unused('it is not a regular file');
+    const fault = process.getuid === undefined ? null : secretFileFault(st, process.getuid());
+    if (fault !== null) return unused(`${fault}, so it may have been read or replaced`);
     const raw = readFileSync(fd, 'utf8').trim();
     return { value: raw === '' ? null : raw, fault: null };
   } catch (err) {
@@ -237,15 +250,15 @@ function storedManageToken(): { value: string | null; fault: string | null } {
 /** A stored management secret that is not used, so a server does not start on a new one without a word. */
 export class ManageTokenError extends Error {}
 
-let faultSaid = false;
+/** The fault last said, so the channel, which reads on every pass, says each one once. */
+let faultSaid: string | null = null;
 
 export function readManageToken(): string | null {
   const given = givenManageToken();
   if (given !== null) return given;
   const stored = storedManageToken();
-  // Once per process: the channel reads it on every pass.
-  if (stored.fault !== null && !faultSaid) console.error(`akapen: ${stored.fault}`);
-  faultSaid ||= stored.fault !== null;
+  if (stored.fault !== null && stored.fault !== faultSaid) console.error(`akapen: ${stored.fault}`);
+  faultSaid = stored.fault;
   return stored.value;
 }
 
