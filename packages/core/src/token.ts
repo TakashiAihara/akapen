@@ -17,7 +17,7 @@
  */
 
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { akapenHome, writeAtomic } from './store.ts';
 
@@ -176,10 +176,54 @@ export function manageTokenPath(): string {
   return join(akapenHome(), 'manage-token');
 }
 
-export function readManageToken(): string | null {
-  // Trimmed as the file is: a blank value is not a secret, and falls through to the file.
+/** `AKAPEN_MANAGE_TOKEN`, handed in on purpose. Trimmed as the file is: a blank value is not a secret. */
+function givenManageToken(): string | null {
   const given = process.env['AKAPEN_MANAGE_TOKEN']?.trim();
-  if (given !== undefined && given !== '') return given;
+  return given === undefined || given === '' ? null : given;
+}
+
+/**
+ * What is wrong with a file holding a secret, or null: a mode that lets anyone but its owner
+ * read or replace it, or an owner who is not the user running this (#322).
+ */
+export function secretFileFault(st: { mode: number; uid: number }, uid: number): string | null {
+  if ((st.mode & 0o077) !== 0) return `its mode is ${(st.mode & 0o777).toString(8)}, not 600`;
+  if (st.uid !== uid) return `it belongs to uid ${st.uid}, not ${uid}`;
+  return null;
+}
+
+/**
+ * Why the stored management secret is not used, or null when it is absent or sound.
+ *
+ * The file lets a request register any file the server's user can read, so one that another
+ * user of the machine could have read, in a shared or copied home, is not a secret any more.
+ * Refused rather than tightened: a chmod would hide that it had been readable. Not checked
+ * where there are no uids to compare (Windows).
+ */
+export function manageTokenFault(): string | null {
+  if (process.getuid === undefined) return null;
+  const st = statSync(manageTokenPath(), { throwIfNoEntry: false });
+  const fault = st === undefined ? null : secretFileFault(st, process.getuid());
+  return fault === null
+    ? null
+    : `${manageTokenPath()} is not used: ${fault}. Whoever could read it may hold the secret: delete it and restart akapen serve, which writes a new one`;
+}
+
+/** A stored management secret that is not used, so a server does not start on a new one without a word. */
+export class ManageTokenError extends Error {}
+
+let faultSaid = false;
+
+export function readManageToken(): string | null {
+  const given = givenManageToken();
+  if (given !== null) return given;
+  const fault = manageTokenFault();
+  if (fault !== null) {
+    // Once per process: the channel reads it on every pass.
+    if (!faultSaid) console.error(`akapen: ${fault}`);
+    faultSaid = true;
+    return null;
+  }
   try {
     const raw = readFileSync(manageTokenPath(), 'utf8').trim();
     return raw === '' ? null : raw;
@@ -190,6 +234,8 @@ export function readManageToken(): string | null {
 
 /** The management secret for a starting server, created on the first start. */
 export function resolveManageToken(): string {
+  const fault = givenManageToken() === null ? manageTokenFault() : null;
+  if (fault !== null) throw new ManageTokenError(fault);
   const existing = readManageToken();
   if (existing !== null) return existing;
   const created = generate();

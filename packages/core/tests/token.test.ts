@@ -7,13 +7,17 @@
  * is the whole credential handed over — the review is one `cat` away, and nothing about
  * the running server would look wrong.
  */
-import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   currentToken,
   generate,
+  ManageTokenError,
+  readManageToken,
+  resolveManageToken,
+  secretFileFault,
   readToken,
   resolveToken,
   rotateToken,
@@ -33,6 +37,7 @@ beforeEach(() => {
   home = join(sandbox, 'home');
   process.env['AKAPEN_HOME'] = home;
   delete process.env['AKAPEN_TOKEN'];
+  delete process.env['AKAPEN_MANAGE_TOKEN'];
 });
 
 afterEach(() => {
@@ -156,5 +161,52 @@ describe('comparing a presented token', () => {
     expect(() => tokensMatch('x', real)).not.toThrow();
     expect(() => tokensMatch('x'.repeat(5_000), real)).not.toThrow();
     expect(tokensMatch('x'.repeat(5_000), real)).toBe(false);
+  });
+});
+
+describe('the stored management secret', () => {
+  const stored = () => join(home, 'manage-token');
+  const store = (mode: number) => {
+    mkdirSync(home, { recursive: true });
+    writeFileSync(stored(), 'kept-management-value\n');
+    // Not the mode option of the write: the umask would take bits off it.
+    chmodSync(stored(), mode);
+  };
+
+  it('is read from a file only its owner can read', () => {
+    store(0o600);
+    expect(readManageToken()).toBe('kept-management-value');
+    expect(resolveManageToken()).toBe('kept-management-value');
+  });
+
+  it.each([0o644, 0o640, 0o604, 0o620, 0o602])('is not read from a file of mode %o', (mode) => {
+    store(mode);
+    expect(readManageToken()).toBeNull();
+  });
+
+  it('does not start a server on a new secret in place of one others could read', () => {
+    store(0o644);
+    expect(() => resolveManageToken()).toThrow(ManageTokenError);
+    expect(() => resolveManageToken()).toThrow('its mode is 644, not 600');
+    expect(readFileSync(stored(), 'utf8')).toBe('kept-management-value\n');
+    expect(statSync(stored()).mode & 0o777).toBe(0o644);
+  });
+
+  it('takes AKAPEN_MANAGE_TOKEN whatever the file is like', () => {
+    store(0o644);
+    process.env['AKAPEN_MANAGE_TOKEN'] = 'handed-in-value';
+    try {
+      expect(readManageToken()).toBe('handed-in-value');
+      expect(resolveManageToken()).toBe('handed-in-value');
+    } finally {
+      delete process.env['AKAPEN_MANAGE_TOKEN'];
+    }
+  });
+
+  it('faults a file that belongs to another user, and no other sound one', () => {
+    expect(secretFileFault({ mode: 0o100600, uid: 1000 }, 1000)).toBeNull();
+    expect(secretFileFault({ mode: 0o100400, uid: 1000 }, 1000)).toBeNull();
+    expect(secretFileFault({ mode: 0o100600, uid: 1001 }, 1000)).toBe('it belongs to uid 1001, not 1000');
+    expect(secretFileFault({ mode: 0o100600, uid: 0 }, 1000)).toBe('it belongs to uid 0, not 1000');
   });
 });
