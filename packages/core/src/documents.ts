@@ -188,7 +188,10 @@ export function claimHome(): void {
 export function holdsHome(): boolean {
   const rec = parseServeRecord(readServeText());
   if (rec === null || rec.pid !== process.pid) return false;
-  return rec.identity === null || rec.identity === processIdentity(process.pid);
+  // A reading that fails now and then must not stop a server whose record nobody replaced:
+  // only a record known to name another process is somebody else's.
+  const identity = rec.identity === null ? null : processIdentity(process.pid);
+  return identity === null || identity === rec.identity;
 }
 
 /** Give the home up on the way out. Not another server's record, if it took the home meanwhile. */

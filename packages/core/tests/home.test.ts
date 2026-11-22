@@ -100,7 +100,10 @@ describe('giving the home up', () => {
     expect(holdsHome()).toBe(false);
     releaseHome();
     expect(read()).toEqual(theirs);
-    // Nor is one with this pid that names another process: a server in another container.
+    // One with this pid that says nothing more is this server's, as a record from before was.
+    write({ port: 4321, pid: process.pid });
+    expect(holdsHome()).toBe(true);
+    // Not one with this pid that names another process: a server in another container.
     write({ port: 4321, pid: process.pid, identity: 'not this process' });
     expect(holdsHome()).toBe(false);
     // A record that names another pid and nothing more is not this server's either.
