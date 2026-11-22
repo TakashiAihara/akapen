@@ -1,4 +1,4 @@
-import { readFileSync, realpathSync, rmSync, statSync, watch, existsSync } from 'node:fs';
+import { readFileSync, realpathSync, rmSync, statSync, watch, existsSync, type FSWatcher } from 'node:fs';
 import { basename, dirname, resolve } from 'node:path';
 import { Hono, type Context } from 'hono';
 import { getConnInfo } from 'hono/bun';
@@ -83,8 +83,8 @@ export type DaemonOptions = {
 /** The cookie the browser is handed once, so nothing after the first visit carries a token. */
 const COOKIE = 'akapen_token';
 
-/** How many times, 200 ms apart, to look for a file renamed away before giving up on it. */
-const REARM_TRIES = 25;
+/** The longest wait between two looks for a file that is gone. The first is 200 ms, doubling from there. */
+const REARM_MAX_MS = 2_000;
 
 /** Under the 10-second idle timeout set on the server, so even a tick late by one interval lands in time. */
 const HEARTBEAT_MS = 3_000;
@@ -156,7 +156,18 @@ type DocumentOptions = {
  * because the request that was checked is the forwarding one, not this one.
  */
 export function openDocument(file: string, opts: DocumentOptions, currentSecret: () => string | null) {
-  let review: Review = ensureRound(file, readFileSync(file, 'utf8'));
+  const readLive = (): string | null => {
+    try {
+      return readFileSync(file, 'utf8');
+    } catch {
+      return null;
+    }
+  };
+
+  // A file that is gone opens on the round the store already holds: a comment on a round
+  // must not depend on the file being there (#319). The caller has checked there is one.
+  const opening = readLive();
+  let review: Review = opening === null ? loadReview(file) : ensureRound(file, opening);
   // What we render is the current round's snapshot, not the live file. Freezing what
   // comments attach to removes, structurally, the path where positions conflict while
   // someone is still writing.
@@ -200,14 +211,6 @@ export function openDocument(file: string, opts: DocumentOptions, currentSecret:
   const heartbeat = setInterval(() => {
     for (const send of clients) send(': ping\n\n');
   }, HEARTBEAT_MS);
-
-  const readLive = (): string | null => {
-    try {
-      return readFileSync(file, 'utf8');
-    } catch {
-      return null;
-    }
-  };
 
   /**
    * Read the file only once it has stopped moving.
@@ -297,21 +300,30 @@ export function openDocument(file: string, opts: DocumentOptions, currentSecret:
    */
   let rearmTimer: ReturnType<typeof setTimeout> | null = null;
   let rearmTries = 0;
+  let watcher: FSWatcher | null = null;
+  const arm = (): boolean => {
+    try {
+      watcher = watch(file, onChange);
+      return true;
+    } catch {
+      return false;
+    }
+  };
   const rearm = (): void => {
     rearmTimer = null;
     if (disposed) return;
-    watcher.close();
-    try {
-      watcher = watch(file, onChange);
+    watcher?.close();
+    watcher = null;
+    if (arm()) {
       rearmTries = 0;
       // What changed while nothing was watching has to be read now: no event will say so.
       onChange('change');
-    } catch {
-      // Not back yet: the rename has not landed. Look again shortly, for a few seconds. A
-      // file deleted for good is left unwatched until the document is removed and added
-      // again, or the server restarts.
-      if (++rearmTries < REARM_TRIES) rearmTimer = setTimeout(rearm, 200);
+      return;
     }
+    // Not there. A rename lands within moments, so the first looks are close together; a
+    // file gone for longer is looked for every REARM_MAX_MS until it is back or the
+    // document is removed, so it is never left unwatched (#319).
+    rearmTimer = setTimeout(rearm, Math.min(200 * 2 ** rearmTries++, REARM_MAX_MS));
   };
   const onChange = (event: string): void => {
     if (event === 'rename' && rearmTimer === null) rearmTimer = setTimeout(rearm, 50);
@@ -324,7 +336,7 @@ export function openDocument(file: string, opts: DocumentOptions, currentSecret:
       notifyChanged();
     }, 80);
   };
-  let watcher = watch(file, onChange);
+  if (!arm()) rearmTimer = setTimeout(rearm, 200);
 
   const app = new Hono<DocEnv>();
 
@@ -627,7 +639,7 @@ export function openDocument(file: string, opts: DocumentOptions, currentSecret:
     clearInterval(heartbeat);
     disposed = true;
     if (rearmTimer) clearTimeout(rearmTimer);
-    watcher.close();
+    watcher?.close();
     // Ended rather than dropped, so a page reading a document that is no longer served
     // sees its stream close at once instead of waiting on the connection to time out.
     for (const end of streamEnds.values()) end();
@@ -954,7 +966,8 @@ export function startDaemon(opts: DaemonOptions & { manageToken: string }) {
     // One already open keeps answering while the file is briefly gone: an editor that
     // replaces it by delete and create must not turn a comment on the round into a 404.
     if (doc === undefined) {
-      if (!existsSync(entry.file)) return null;
+      // A file that is gone is opened from its round. One never opened has no round to show.
+      if (!existsSync(entry.file) && loadReview(entry.file).currentRound === 0) return null;
       // Registered before an earlier version's one-document akapen took the same file: two
       // holders of one store overwrite each other, so it is not opened while that one runs.
       const holder = readInstances().find((r) => r.file === entry.file);
@@ -977,9 +990,9 @@ export function startDaemon(opts: DaemonOptions & { manageToken: string }) {
   /** A row of `GET /api/documents`. Read from the store, so listing opens nothing. */
   const describe = (e: DocumentEntry) => {
     const missing = !existsSync(e.file);
-    const round = missing ? 0 : loadReview(e.file).currentRound;
+    const round = loadReview(e.file).currentRound;
     let title: string | null = null;
-    if (!missing && round > 0) {
+    if (round > 0) {
       try {
         title = documentTitle(buildDoc(e.file, roundContent(e.file, round)));
       } catch {
@@ -993,7 +1006,7 @@ export function startDaemon(opts: DaemonOptions & { manageToken: string }) {
       url: `${base}${pathOf(e.id)}`,
       title,
       round,
-      unresolved: missing ? 0 : pendingComments(e.file).length,
+      unresolved: pendingComments(e.file).length,
       missing,
       added_at: e.addedAt,
     };
@@ -1173,7 +1186,7 @@ export function startDaemon(opts: DaemonOptions & { manageToken: string }) {
     const session = c.req.param('session');
     return c.json(
       entries
-        .filter((e) => e.session === session && existsSync(e.file))
+        .filter((e) => e.session === session)
         .map((e) => Object.assign(describe(e), { comments: pendingComments(e.file) })),
     );
   });

@@ -311,7 +311,7 @@ describe('akapen serve', () => {
     ctl.abort();
   });
 
-  it('stops serving a registered document whose file is gone, and lists it as missing', async () => {
+  it('does not serve a document whose file went before a round was opened, and lists it as missing', async () => {
     const d = await serve();
     const file = note('note.md');
     const url = urlIn(cli(d, ['add', file]).out);
@@ -320,6 +320,51 @@ describe('akapen serve', () => {
     const listed = JSON.parse(cli(d, ['list', '--json']).out) as { file: string; missing: boolean }[];
     expect(listed.map((r) => [r.file, r.missing])).toEqual([[file, true]]);
   });
+
+  it('keeps taking comments on a document whose file is gone, across a restart', async () => {
+    const first = await serve();
+    const file = note('note.md');
+    const url = urlIn(cli(first, ['add', file], { CLAUDE_CODE_SESSION_ID: 'session-a' }).out);
+    expect((await comment(url, 'before')).status).toBe(200);
+    await first.stop();
+    rmSync(file);
+
+    const d = await serve();
+    const again = `${d.base}${new URL(url).pathname}`;
+    expect((await comment(again, 'while it is gone')).status).toBe(200);
+    const listed = JSON.parse(cli(d, ['list', '--json']).out) as Record<string, unknown>[];
+    expect(listed.map((r) => [r['missing'], r['title'], r['round'], r['unresolved']])).toEqual([
+      [true, 'A heading', 1, 2],
+    ]);
+    const docs = (await (await managed(`${d.base}/api/sessions/session-a/documents`)).json()) as {
+      comments: { body: string }[];
+    }[];
+    expect(docs.map((x) => x.comments.map((c) => c.body).toSorted())).toEqual([
+      ['before', 'while it is gone'],
+    ]);
+
+    // Opened with nothing to watch, it still notices the file coming back.
+    writeFileSync(file, '# A heading\n\nwritten back\n');
+    await until(async () => {
+      const doc = (await (await authed(`${again}api/doc`)).json()) as { changed: { changes: number } };
+      return doc.changed.changes > 0;
+    });
+  });
+
+  it('watches again a file that was gone for longer than a save by rename takes', async () => {
+    const d = await serve();
+    const file = note('note.md');
+    const url = urlIn(cli(d, ['add', file]).out);
+    expect((await authed(`${url}api/status`)).status).toBe(200);
+    rmSync(file);
+    // Past the point where looks spaced by doubling alone would have gone quiet for seconds.
+    await new Promise((r) => setTimeout(r, 7_000));
+    writeFileSync(file, '# A heading\n\nwritten back\n');
+    await until(async () => {
+      const doc = (await (await authed(`${url}api/doc`)).json()) as { changed: { changes: number } };
+      return doc.changed.changes > 0;
+    });
+  }, 20_000);
 
   it('serves a document whose name holds characters a URL has to escape', async () => {
     const d = await serve();
