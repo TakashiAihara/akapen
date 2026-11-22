@@ -179,3 +179,30 @@ export function registrationsOf(session: string): Registration[] {
   }
   return out;
 }
+
+/**
+ * The header `akapen serve` puts on every answer, refusals included, and nothing else does.
+ * It is how a client tells the server from whatever else may hold its port (#320): a
+ * one-document akapen of an earlier version answers `/api/documents` with the very same 401.
+ */
+export const SERVE_MARKER = 'x-akapen-serve';
+
+/**
+ * What listens on a port of this machine: `akapen serve`, something else, or nothing.
+ *
+ * Asked without a credential, so that neither the token nor the management secret goes to
+ * a listener that is not the server. A marker is not proof (a listener can send any header);
+ * which port a secret may go to at all is decided before this, by who chose the port.
+ */
+export async function whatAnswers(port: number): Promise<'serve' | 'other' | 'nothing'> {
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/api/documents`, {
+      redirect: 'manual',
+      signal: AbortSignal.timeout(2_000),
+    });
+    await res.body?.cancel();
+    return res.headers.get(SERVE_MARKER) === '1' ? 'serve' : 'other';
+  } catch {
+    return 'nothing';
+  }
+}

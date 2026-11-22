@@ -13,6 +13,7 @@ import {
   forgetRegistration,
   registrationsOf,
   servePath,
+  SERVE_MARKER,
   writeDocuments,
   writeRegistration,
   writeServePort,
@@ -741,6 +742,8 @@ function guardedApp(opts: GuardOptions) {
   app.use('*', async (c, next) => {
     await next();
     c.res.headers.set('referrer-policy', 'no-referrer');
+    // On refusals too: a client asks who is listening before it sends a credential (#320).
+    c.res.headers.set(SERVE_MARKER, '1');
   });
 
   app.use('*', async (c, next) => {
