@@ -5,7 +5,7 @@ import { resolve } from 'node:path';
 
 import { AdvertiseError, resolveAdvertised } from '@akapen/core/addresses';
 
-import { readServePort, recordedServerAlive, whatAnswers } from '@akapen/core/documents';
+import { readServePort, recordedServerAlive, servePath, whatAnswers } from '@akapen/core/documents';
 import { akapenHome, type pendingComments } from '@akapen/core/store';
 import {
   currentToken,
@@ -138,19 +138,18 @@ type DaemonDocument = {
 };
 
 /**
- * What listens on the port, asked once per command and before any credential is sent (#320):
- * the token and the management secret go to akapen serve, not to whatever holds its port.
+ * Set by `daemon` when something that is not akapen serve answered on the port. It asks
+ * before each request, with no credential (#320): the token and the management secret go
+ * to akapen serve, not to whatever holds its port.
  */
-let asked: ReturnType<typeof whatAnswers> | undefined;
-/** Set by `daemon` when something that is not akapen serve answered on the port. */
 let somethingElse = false;
 
 /** Why no answer came from akapen serve, for a message: nothing listens there, or something else does. */
 const noAnswer = (): string => {
-  const port = daemonPort();
+  const at = `127.0.0.1:${daemonPort() ?? '(no port: set AKAPEN_PORT for this AKAPEN_HOME)'}`;
   return somethingElse
-    ? `what answers on 127.0.0.1:${port} is not akapen serve, so nothing was sent to it (an akapen serve from before this version has to be restarted)`
-    : `akapen serve is not answering on 127.0.0.1:${port ?? '(no port: set AKAPEN_PORT for this AKAPEN_HOME)'}`;
+    ? `what answers on ${at} is not akapen serve and was sent nothing (an akapen serve from before this version has to be restarted)`
+    : `akapen serve is not answering on ${at}`;
 };
 
 /**
@@ -166,8 +165,7 @@ async function daemon(
 ): Promise<Response | null> {
   const port = daemonPort();
   if (port === null) return null;
-  asked ??= whatAnswers(port);
-  const answers = await asked;
+  const answers = await whatAnswers(port);
   somethingElse = answers === 'other';
   if (answers !== 'serve') return null;
   const manageToken = readManageToken();
@@ -779,12 +777,18 @@ function advertisedFor(bind: string): string | null {
 if (positional[0] === 'serve') {
   if (positional.length > 1) fail(`serve: unexpected ${JSON.stringify(positional.slice(1).join(' '))}`);
   // One server per home: a second would write documents.json from its own copy.
-  // Asked only while the recorded server's process lives, and by its marker, with no
-  // credential: whatever else took the port after a crash is not a server here.
+  // Asked only while the recorded server's process lives, and with no credential. A record
+  // a crash left behind names a port anyone may hold now, and is no server here.
   const runningOn = recordedServerAlive() ? readServePort() : null;
-  if (runningOn !== null && (await whatAnswers(runningOn)) === 'serve') {
-    fail(`akapen serve is already running for ${akapenHome()} on port ${runningOn}`);
-  }
+  const running = runningOn === null ? 'nothing' : await whatAnswers(runningOn);
+  if (running === 'serve') fail(`akapen serve is already running for ${akapenHome()} on port ${runningOn}`);
+  // The recorded process lives and its port answers, without the marker: an akapen serve
+  // from before the marker, most likely. Starting beside it would be the second writer.
+  if (running === 'other')
+    fail(
+      `the server ${akapenHome()} recorded is running (port ${runningOn}) but does not answer as this version's akapen serve. ` +
+        `Stop it first if it is an akapen serve from before; if it is something else, remove ${servePath()}`,
+    );
   if (args.root !== undefined) fail('serve: --root belongs to akapen add, per document');
   let host: string;
   let port: number;

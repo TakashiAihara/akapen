@@ -200,8 +200,10 @@ export async function whatAnswers(port: number): Promise<'serve' | 'other' | 'no
       redirect: 'manual',
       signal: AbortSignal.timeout(2_000),
     });
-    await res.body?.cancel();
-    return res.headers.get(SERVE_MARKER) === '1' ? 'serve' : 'other';
+    const answers = res.headers.get(SERVE_MARKER) === '1' ? 'serve' : 'other';
+    // The headers have said it; a body that does not cancel cleanly changes nothing.
+    await res.body?.cancel().catch(() => {});
+    return answers;
   } catch {
     return 'nothing';
   }
