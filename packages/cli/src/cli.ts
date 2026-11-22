@@ -365,8 +365,8 @@ type Pending = { current: number; comments: ReturnType<typeof pendingComments> }
  * means for the command ("nothing was written").
  */
 function unreachable(file: string, documents: DaemonDocument[] | null, consequence: string): never {
-  // Asked only once the server has said it is not registered: a registered document whose
-  // file is gone still takes replies (#345).
+  // The disk is looked at only here, once the server has answered that the file is not
+  // registered: a registered document whose file is gone still takes replies (#345).
   if (documents !== null && !existsSync(file)) fail(`no such file: ${file}`);
   console.error(
     documents === null

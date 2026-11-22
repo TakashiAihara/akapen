@@ -165,8 +165,8 @@ export function openDocument(file: string, opts: DocumentOptions, currentSecret:
   };
 
   // A file that is gone opens on the round the store already holds: a comment on a round
-  // must not depend on the file being there (#319). With no round either, reading round 0
-  // below throws, as reading the file did before: the server only opens what `servable` passes.
+  // must not depend on the file being there (#319). With neither a file that can be read nor
+  // a round, reading round 0 below throws, as reading the file did before.
   const opening = readLive();
   let review: Review = opening === null ? loadReview(file) : ensureRound(file, opening);
   // What we render is the current round's snapshot, not the live file. Freezing what
@@ -1083,11 +1083,13 @@ export function startDaemon(opts: DaemonOptions & { manageToken: string }) {
     const st = statSync(file, { throwIfNoEntry: false });
     if (st === undefined ? loadReview(file).currentRound === 0 : !st.isFile())
       return bad(`no such file: ${file}`);
-    if (root !== undefined) {
+    // Not checked while the file is gone: there is no path to resolve against it, and a root
+    // cleaned away with the file must not keep the round from being served. The root only
+    // says where images are read from, and whoever may register may name any root.
+    if (root !== undefined && st !== undefined) {
       if (!statSync(root, { throwIfNoEntry: false })?.isDirectory())
         return bad(`root is not a directory: ${root}`);
-      // Checked when it was first registered; there is nothing to resolve while the file is gone.
-      if (st !== undefined && !isInside(realpathSync(root), realpathSync(file)))
+      if (!isInside(realpathSync(root), realpathSync(file)))
         return bad(`root does not contain the document: ${root}`);
     }
     // A one-document akapen on the same file holds the round and comments in memory and

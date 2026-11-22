@@ -323,6 +323,15 @@ describe('akapen serve', () => {
     expect(listed.map((r) => [r.file, r.missing])).toEqual([[file, true]]);
   });
 
+  it('answers an error, not an empty document, for a path that cannot be read and has no round', async () => {
+    const d = await serve();
+    const file = note('note.md');
+    const url = urlIn(cli(d, ['add', file]).out);
+    rmSync(file);
+    mkdirSync(file);
+    expect((await authed(`${url}api/doc`)).status).toBe(500);
+  });
+
   it('keeps taking comments on a document whose file is gone, across a restart', async () => {
     const first = await serve();
     const file = note('note.md');
@@ -333,7 +342,9 @@ describe('akapen serve', () => {
 
     const d = await serve();
     const again = `${d.base}${new URL(url).pathname}`;
-    const written = (await (await comment(again, 'while it is gone')).json()) as { comment: { id: string } };
+    const answer = await comment(again, 'while it is gone');
+    expect(answer.status).toBe(200);
+    const written = (await answer.json()) as { comment: { id: string } };
     // The agent told about it can answer from the command line as well.
     const replied = cli(d, ['reply', file, written.comment.id, 'seen']);
     expect(replied.code, replied.err).toBe(0);
@@ -988,14 +999,17 @@ describe('sessions on akapen serve', () => {
 
   it('restores a document whose file is gone when its store holds a round', async () => {
     const d = await serve();
-    const file = note('note.md');
-    // With a root, which cannot be checked against a file that is not there.
-    const url = urlIn(cli(d, ['add', file, '--root', sandbox], { CLAUDE_CODE_SESSION_ID: 'session-a' }).out);
+    const file = note('tmp/note.md');
+    // With a root that went with it, as when a temporary directory is cleaned away.
+    const url = urlIn(
+      cli(d, ['add', file, '--root', join(sandbox, 'tmp')], { CLAUDE_CODE_SESSION_ID: 'session-a' }).out,
+    );
     expect((await comment(url, 'before')).status).toBe(200);
     cli(d, ['remove', '--session', 'session-a']);
-    rmSync(file);
+    rmSync(join(sandbox, 'tmp'), { recursive: true });
 
     const restored = cli(d, ['restore', 'session-a']);
+    expect(restored.code, restored.err).toBe(0);
     expect(restored.err).not.toContain('not restored');
     expect(restored.out).toContain(url);
     expect((await comment(url, 'after the resume')).status).toBe(200);
