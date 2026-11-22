@@ -602,7 +602,8 @@ describe('akapen serve', () => {
           });
           let out = '';
           p.stdout.on('data', (c: Buffer) => (out += c.toString()));
-          p.on('exit', () => done(out));
+          // Not `exit`, which can come before the last of stdout has been read.
+          p.on('close', () => done(out));
         });
       // The lowercase exception list wins over the uppercase one, so each is tried as the one already set.
       for (const extra of [{}, { no_proxy: 'example.com' }, { NO_PROXY: 'example.com' }]) {
