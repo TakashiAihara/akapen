@@ -23,12 +23,14 @@ afterEach(() => {
 });
 
 it('counts a recorded server whose pid lives as running when its process cannot be told apart', async () => {
-  const { recordedServerAlive, writeServePort } = await import('../src/documents.ts');
+  const { holdsHome, recordedServerAlive, writeServePort } = await import('../src/documents.ts');
   writeFileSync(
     join(home, 'serve.json'),
     JSON.stringify({ port: 4321, pid: process.pid, identity: 'recorded' }),
   );
   expect(recordedServerAlive()).toBe(true);
+  // Its own record too: a server that cannot read what names it still holds its home.
+  expect(holdsHome()).toBe(true);
   // And writes a record without it, rather than one that could never match.
   writeServePort(4322);
   expect(Object.keys(JSON.parse(readFileSync(join(home, 'serve.json'), 'utf8')) as object)).toEqual([
