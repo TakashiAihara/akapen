@@ -74,6 +74,16 @@ describe('taking the home', () => {
     }
   });
 
+  it('is refused by a server that is still starting, whose record has no port yet', () => {
+    write({ pid: other.pid, identity: processIdentity(other.pid!) });
+    try {
+      claimHome();
+      expect.unreachable('took a home another server was taking');
+    } catch (err) {
+      expect((err as HomeHeldError).holder).toEqual({ pid: other.pid, port: null });
+    }
+  });
+
   it('is refused by a record that names a live pid and nothing more, as one from before did', () => {
     write({ port: 4321, pid: other.pid });
     expect(() => claimHome()).toThrow(HomeHeldError);
