@@ -365,12 +365,15 @@ describe('akapen serve', () => {
       ['before', 'while it is gone'],
     ]);
 
-    // Opened with nothing to watch, it still notices the file coming back.
+    // Opened with nothing to watch, it still notices the file coming back, and goes on
+    // watching it: the look that found it counts one change by itself.
+    const changes = async () =>
+      ((await (await authed(`${again}api/doc`)).json()) as { changed: { changes: number } }).changed.changes;
     writeFileSync(file, '# A heading\n\nwritten back\n');
-    await until(async () => {
-      const doc = (await (await authed(`${again}api/doc`)).json()) as { changed: { changes: number } };
-      return doc.changed.changes > 0;
-    });
+    await until(async () => (await changes()) > 0);
+    const seen = await changes();
+    writeFileSync(file, '# A heading\n\nwritten again\n');
+    await until(async () => (await changes()) > seen);
   });
 
   it('watches again a file that was gone for longer than a save by rename takes', async () => {
@@ -381,11 +384,14 @@ describe('akapen serve', () => {
     rmSync(file);
     // Long enough that looks spaced by doubling alone would next come more than 5 s later.
     await new Promise((r) => setTimeout(r, 7_000));
+    const changes = async () =>
+      ((await (await authed(`${url}api/doc`)).json()) as { changed: { changes: number } }).changed.changes;
     writeFileSync(file, '# A heading\n\nwritten back\n');
-    await until(async () => {
-      const doc = (await (await authed(`${url}api/doc`)).json()) as { changed: { changes: number } };
-      return doc.changed.changes > 0;
-    });
+    await until(async () => (await changes()) > 0);
+    // The look that found it counts one change by itself; the next one needs the watcher.
+    const seen = await changes();
+    writeFileSync(file, '# A heading\n\nwritten again\n');
+    await until(async () => (await changes()) > seen);
   }, 20_000);
 
   it('serves a document whose name holds characters a URL has to escape', async () => {
