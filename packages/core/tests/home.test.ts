@@ -30,6 +30,11 @@ let home: string;
 let other: ChildProcess;
 const record = () => join(home, 'serve.json');
 const write = (rec: unknown) => writeFileSync(record(), JSON.stringify(rec));
+/** The record this process writes: without the identity where that cannot be read. */
+const mine = () => {
+  const identity = processIdentity(process.pid);
+  return { pid: process.pid, ...(identity === null ? {} : { identity }) };
+};
 const read = () => JSON.parse(readFileSync(record(), 'utf8')) as Record<string, unknown>;
 
 beforeEach(() => {
@@ -50,7 +55,7 @@ afterEach(async () => {
 describe('taking the home', () => {
   it('writes a record naming this process, without a port until one is known', () => {
     claimHome();
-    expect(read()).toEqual({ pid: process.pid, identity: processIdentity(process.pid) });
+    expect(read()).toEqual(mine());
     expect(holdsHome()).toBe(true);
     // Nothing left beside it from putting it there.
     expect(readdirSync(home)).toEqual(['serve.json']);
@@ -100,7 +105,7 @@ describe('taking the home', () => {
   ])('takes over a record %s', (_what, left) => {
     write(left());
     claimHome();
-    expect(read()).toEqual({ pid: process.pid, identity: processIdentity(process.pid) });
+    expect(read()).toEqual(mine());
   });
 });
 
@@ -159,7 +164,7 @@ describe('two servers taking the home at once', () => {
     const began = Date.now();
     claimHome();
     expect(Date.now() - began).toBeLessThan(1_000);
-    expect(read()).toEqual({ pid: process.pid, identity: processIdentity(process.pid) });
+    expect(read()).toEqual(mine());
     expect(readdirSync(home)).toEqual(['serve.json']);
   });
 

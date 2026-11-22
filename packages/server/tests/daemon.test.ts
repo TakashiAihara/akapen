@@ -1132,10 +1132,8 @@ describe('akapen serve', () => {
     proc.stdout.resume();
     const exited = new Promise<number | null>((done) => proc.on('exit', (code) => done(code)));
     try {
-      await until(() => existsSync(join(home, 'serve.json')), 15_000);
-      const theirs = JSON.stringify({ port: 1, pid: process.pid, identity: processIdentity(process.pid) });
-      writeFileSync(join(home, 'serve.json'), theirs);
-      // Opened without waiting for a reader: the server is one by now, or this fails and is tried again.
+      // Opened without waiting for a reader, so this fails and is tried again until the
+      // server is one: it has taken the home by then, and is held where it reads the registry.
       let fd = -1;
       await until(() => {
         try {
@@ -1145,6 +1143,8 @@ describe('akapen serve', () => {
           return false;
         }
       }, 15_000);
+      const theirs = JSON.stringify({ port: 1, pid: process.pid, identity: processIdentity(process.pid) });
+      writeFileSync(join(home, 'serve.json'), theirs);
       writeSync(fd, '{"version":1,"documents":[]}');
       closeSync(fd);
       expect(await exited).not.toBe(0);

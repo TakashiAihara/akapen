@@ -954,6 +954,9 @@ const escapeHtml = (s: string): string => s.replace(/[&<>"']/g, (ch) => `&#${ch.
  * it is removed: a file watcher and a 3-second heartbeat timer each. The registry is written here
  * and only here: the CLI goes through `/api/documents`, which makes this the single
  * writer of `documents.json`.
+ *
+ * It takes the home first (`claimHome`) and gives it back itself only when it cannot
+ * listen: a caller that catches anything else thrown here calls `releaseHome`, as the CLI does.
  */
 export function startDaemon(opts: DaemonOptions & { manageToken: string }) {
   const { manageToken } = opts;
