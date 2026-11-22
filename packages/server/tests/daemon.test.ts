@@ -314,9 +314,11 @@ describe('akapen serve', () => {
   it('does not serve a document whose file went before a round was opened, and lists it as missing', async () => {
     const d = await serve();
     const file = note('note.md');
-    const url = urlIn(cli(d, ['add', file]).out);
+    const url = urlIn(cli(d, ['add', file], { CLAUDE_CODE_SESSION_ID: 'session-a' }).out);
     rmSync(file);
     expect((await authed(`${url}api/status`)).status).toBe(404);
+    // Nor is it handed to the session's channel, which could only be told of a URL that answers 404.
+    expect(await (await managed(`${d.base}/api/sessions/session-a/documents`)).json()).toEqual([]);
     const listed = JSON.parse(cli(d, ['list', '--json']).out) as { file: string; missing: boolean }[];
     expect(listed.map((r) => [r.file, r.missing])).toEqual([[file, true]]);
   });
@@ -364,7 +366,7 @@ describe('akapen serve', () => {
     const url = urlIn(cli(d, ['add', file]).out);
     expect((await authed(`${url}api/status`)).status).toBe(200);
     rmSync(file);
-    // Past the point where looks spaced by doubling alone would have gone quiet for seconds.
+    // Long enough that looks spaced by doubling alone would next come more than 5 s later.
     await new Promise((r) => setTimeout(r, 7_000));
     writeFileSync(file, '# A heading\n\nwritten back\n');
     await until(async () => {

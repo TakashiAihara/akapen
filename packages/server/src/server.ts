@@ -83,7 +83,7 @@ export type DaemonOptions = {
 /** The cookie the browser is handed once, so nothing after the first visit carries a token. */
 const COOKIE = 'akapen_token';
 
-/** The longest wait between two looks for a file that is gone. The first is 200 ms, doubling from there. */
+/** The longest wait between two looks for a file that is gone. The waits start at 200 ms and double up to it. */
 const REARM_MAX_MS = 2_000;
 
 /** Under the 10-second idle timeout set on the server, so even a tick late by one interval lands in time. */
@@ -165,7 +165,8 @@ export function openDocument(file: string, opts: DocumentOptions, currentSecret:
   };
 
   // A file that is gone opens on the round the store already holds: a comment on a round
-  // must not depend on the file being there (#319). The caller has checked there is one.
+  // must not depend on the file being there (#319). With no round either, reading round 0
+  // below throws, as reading the file did before: the server only opens what `servable` passes.
   const opening = readLive();
   let review: Review = opening === null ? loadReview(file) : ensureRound(file, opening);
   // What we render is the current round's snapshot, not the live file. Freezing what
@@ -933,6 +934,9 @@ const pathOf = (id: string): string => `/d/${encodeURIComponent(id)}/`;
 /** A registration refused for something wrong with what was asked. */
 const bad = (refused: string) => ({ refused, status: 400 as const });
 
+/** A file that is gone is served from its round (#319). One never opened has no round to show. */
+const servable = (e: DocumentEntry): boolean => existsSync(e.file) || loadReview(e.file).currentRound > 0;
+
 const escapeHtml = (s: string): string => s.replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
 
 /**
@@ -966,8 +970,7 @@ export function startDaemon(opts: DaemonOptions & { manageToken: string }) {
     // One already open keeps answering while the file is briefly gone: an editor that
     // replaces it by delete and create must not turn a comment on the round into a 404.
     if (doc === undefined) {
-      // A file that is gone is opened from its round. One never opened has no round to show.
-      if (!existsSync(entry.file) && loadReview(entry.file).currentRound === 0) return null;
+      if (!servable(entry)) return null;
       // Registered before an earlier version's one-document akapen took the same file: two
       // holders of one store overwrite each other, so it is not opened while that one runs.
       const holder = readInstances().find((r) => r.file === entry.file);
@@ -1191,7 +1194,7 @@ export function startDaemon(opts: DaemonOptions & { manageToken: string }) {
     const session = c.req.param('session');
     return c.json(
       entries
-        .filter((e) => e.session === session)
+        .filter((e) => e.session === session && servable(e))
         .map((e) => Object.assign(describe(e), { comments: pendingComments(e.file) })),
     );
   });
