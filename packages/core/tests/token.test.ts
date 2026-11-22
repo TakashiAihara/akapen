@@ -239,7 +239,7 @@ describe('the stored management secret', () => {
     expect(() => resolveManageToken()).toThrow(ManageTokenError);
     expect(() => resolveManageToken()).toThrow('it cannot be opened (ENOTDIR)');
     rmSync(home);
-    // A directory where the secret would be, sound by mode and owner, so it is the read that fails.
+    // A directory where the secret would be, sound by mode and owner: not a regular file.
     mkdirSync(stored(), { recursive: true });
     chmodSync(stored(), 0o700);
     expect(readManageToken()).toBeNull();
