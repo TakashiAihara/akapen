@@ -250,9 +250,24 @@ describe('the stored management secret', () => {
   it('does not wait on a FIFO left where the secret would be', () => {
     mkdirSync(home, { recursive: true });
     expect(spawnSync('mkfifo', ['-m', '600', stored()]).status).toBe(0);
-    // Opening one to read blocks until somebody writes, which nobody will.
-    expect(readManageToken()).toBeNull();
-    expect(() => resolveManageToken()).toThrow('it is not a regular file');
+    // Opening one to read blocks until somebody writes, which nobody will. In a process of
+    // its own, with a limit: a blocked open stops this one too, and no timer here would fire.
+    const asked = spawnSync(
+      'bun',
+      [
+        '-e',
+        `const t = await import(${JSON.stringify(join(import.meta.dirname, '..', 'src', 'token.ts'))});
+         let thrown = '';
+         try { t.resolveManageToken(); } catch (err) { thrown = String(err.message); }
+         console.log(JSON.stringify({ read: t.readManageToken(), thrown }));`,
+      ],
+      { env: { ...process.env, AKAPEN_HOME: home }, encoding: 'utf8', timeout: 10_000 },
+    );
+    expect(asked.signal).toBeNull();
+    expect(asked.status, asked.stderr).toBe(0);
+    const answered = JSON.parse(asked.stdout) as { read: string | null; thrown: string };
+    expect(answered.read).toBeNull();
+    expect(answered.thrown).toContain('it is not a regular file');
   });
 
   it('writes one where there is none', () => {
