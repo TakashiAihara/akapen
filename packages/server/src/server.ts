@@ -13,6 +13,7 @@ import {
   forgetRegistration,
   registrationsOf,
   claimHome,
+  HomeLostError,
   holdsHome,
   releaseHome,
   servePath,
@@ -1373,7 +1374,7 @@ export function startDaemon(opts: DaemonOptions & { manageToken: string }) {
     // Taken by another server between the claim and here: it does not get this one's port written over its record.
     if (!holdsHome()) {
       void server.stop(true);
-      throw new Error(`another akapen serve took ${servePath()} while this one was starting`);
+      throw new HomeLostError(`another akapen serve took ${servePath()} while this one was starting`);
     }
   } catch (err) {
     clearInterval(heartbeat);

@@ -4,7 +4,15 @@
  * writing documents.json from its own copy.
  */
 import { spawn, type ChildProcess } from 'node:child_process';
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -84,6 +92,73 @@ describe('taking the home', () => {
     claimHome();
     expect(read()).toEqual({ pid: process.pid, identity: processIdentity(process.pid) });
   });
+});
+
+describe('two servers taking the home at once', () => {
+  const lock = () => join(home, 'serve.json.taking');
+
+  it('waits for the other, then reads the record again rather than writing over what it saw', async () => {
+    // A record of a crash, and another server in the middle of taking it over.
+    write({ port: 4321, pid: 2 ** 22 + 1 });
+    mkdirSync(lock());
+    const claiming = spawn(
+      'bun',
+      [
+        '-e',
+        `const d = await import(${JSON.stringify(join(import.meta.dirname, '..', 'src', 'documents.ts'))});
+         try { d.claimHome(); console.log('took it'); }
+         catch (err) { console.log(err instanceof d.HomeHeldError ? 'held by ' + err.holder.pid : String(err)); }`,
+      ],
+      { env: { ...process.env, AKAPEN_HOME: home }, stdio: ['ignore', 'pipe', 'inherit'] },
+    );
+    let said = '';
+    claiming.stdout.on('data', (c: Buffer) => (said += c.toString()));
+    const exited = new Promise<void>((done) => claiming.on('exit', () => done()));
+    try {
+      // Long enough for it to have read the dead record, had it not waited.
+      await new Promise((r) => setTimeout(r, 700));
+      expect(said).toBe('');
+      const theirs = { port: 4322, pid: other.pid, identity: processIdentity(other.pid!) };
+      write(theirs);
+      rmSync(lock(), { recursive: true });
+      await exited;
+      expect(said.trim()).toBe(`held by ${other.pid}`);
+      expect(read()).toEqual(theirs);
+    } finally {
+      claiming.kill();
+      await exited;
+    }
+  }, 15_000);
+
+  it('gives up on one that never finishes, and writes nothing', () => {
+    write({ port: 4321, pid: 2 ** 22 + 1 });
+    mkdirSync(lock());
+    const began = Date.now();
+    expect(() => claimHome()).toThrow(
+      `another akapen serve is starting for ${home}; if none is, remove ${lock()}`,
+    );
+    expect(Date.now() - began).toBeGreaterThanOrEqual(1_900);
+    expect(Date.now() - began).toBeLessThan(6_000);
+    expect(read()).toEqual({ port: 4321, pid: 2 ** 22 + 1 });
+  }, 15_000);
+
+  it('takes over from one that died while taking the home', () => {
+    mkdirSync(lock());
+    const longAgo = new Date(Date.now() - 11_000);
+    utimesSync(lock(), longAgo, longAgo);
+    const began = Date.now();
+    claimHome();
+    expect(Date.now() - began).toBeLessThan(1_000);
+    expect(read()).toEqual({ pid: process.pid, identity: processIdentity(process.pid) });
+    expect(readdirSync(home)).toEqual(['serve.json']);
+  });
+
+  it('does not take one for dead that began a moment ago', () => {
+    mkdirSync(lock());
+    const recent = new Date(Date.now() - 5_000);
+    utimesSync(lock(), recent, recent);
+    expect(() => claimHome()).toThrow('another akapen serve is starting');
+  }, 15_000);
 });
 
 describe('giving the home up', () => {

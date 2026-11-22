@@ -5,7 +5,7 @@
  * server's API, so there is a single writer and no lock. docs/design/multi-document-server.md
  * has the decisions behind it.
  */
-import { linkSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 
 import { processIdentity } from './process.ts';
@@ -150,38 +150,65 @@ export class HomeHeldError extends Error {
   }
 }
 
+/** A home another server took from this one: it stops rather than write beside the other. */
+export class HomeLostError extends Error {}
+
 /**
  * Take the home for a server that is starting, before it reads anything it will write
- * (#324). The record is the lock: created only if there is none, so of two servers started
- * at the same moment one fails to create it, finds the other's, and stops.
+ * (#324). The record is the lock, and looking at it and writing it are done by one server
+ * at a time: of two started at the same moment, the second finds the first's record, which
+ * names a process that lives, and stops. A record a crash left behind is written over.
  *
  * Throws `HomeHeldError` when a running server holds the home.
- *
- * A record a crash left behind is written over in one step. Two servers that both find
- * the same one each write over it, and the later write stays: the earlier server sees
- * that when it looks again (`holdsHome`), which it does once it listens and before every
- * write, and stops.
  */
 export function claimHome(): void {
   mkdirSync(akapenHome(), { recursive: true });
-  // Written beside it and linked into place: the record appears whole or not at all, so
-  // nobody reads one that exists and is still empty, and takes it for a broken one.
-  const whole = `${servePath()}.${process.pid}.claim`;
-  writeFileSync(whole, ownRecord());
-  try {
-    linkSync(whole, servePath());
-    return;
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
-  } finally {
-    rmSync(whole, { force: true });
+  takingOver(() => {
+    const rec = parseServeRecord(readServeText());
+    // A record naming this very pid was left by an earlier process that had it (a container
+    // starts its server on the same pid every time): it cannot be another server running now.
+    if (rec !== null && rec.pid !== null && rec.pid !== process.pid && recordLives(rec))
+      throw new HomeHeldError({ pid: rec.pid, port: rec.port });
+    writeAtomic(servePath(), ownRecord());
+  });
+}
+
+/** How long a server waits for another that is taking the home, which takes no time at all. */
+const TAKEOVER_WAIT_MS = 2_000;
+/** Past this, the directory was left by a server that died inside those few lines. */
+const TAKEOVER_STALE_MS = 10_000;
+
+/**
+ * Run `take` as the only server of this home doing so. A directory is the lock, since
+ * making one fails when it is there, on any filesystem: looking at the record and writing
+ * it are two steps, and a second server between them would write over the first one's.
+ */
+function takingOver(take: () => void): void {
+  const lock = `${servePath()}.taking`;
+  const pause = new Int32Array(new SharedArrayBuffer(4));
+  for (let waited = 0; ; waited += 50) {
+    try {
+      mkdirSync(lock);
+      break;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+    }
+    let age = 0;
+    try {
+      age = Date.now() - statSync(lock).mtimeMs;
+    } catch {
+      // Gone again: the other server is done.
+    }
+    if (age > TAKEOVER_STALE_MS) rmSync(lock, { recursive: true, force: true });
+    else if (waited >= TAKEOVER_WAIT_MS)
+      throw new Error(`another akapen serve is starting for ${akapenHome()}; if none is, remove ${lock}`);
+    else Atomics.wait(pause, 0, 0, 50);
   }
-  const rec = parseServeRecord(readServeText());
-  // A record naming this very pid was left by an earlier process that had it (a container
-  // starts its server on the same pid every time): it cannot be another server running now.
-  if (rec !== null && rec.pid !== null && rec.pid !== process.pid && recordLives(rec))
-    throw new HomeHeldError({ pid: rec.pid, port: rec.port });
-  writeAtomic(servePath(), ownRecord());
+  try {
+    take();
+  } finally {
+    rmSync(lock, { recursive: true, force: true });
+  }
 }
 
 /** Whether the record still names this process: the home is this server's to write. */

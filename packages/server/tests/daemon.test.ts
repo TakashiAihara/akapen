@@ -1144,7 +1144,10 @@ describe('akapen serve', () => {
       writeSync(fd, '{"version":1,"documents":[]}');
       closeSync(fd);
       expect(await exited).not.toBe(0);
-      expect(err).toContain('while this one was starting');
+      // One line, as akapen says things, and no trace of where it was thrown.
+      expect(err.trim()).toBe(
+        `akapen: another akapen serve took ${join(home, 'serve.json')} while this one was starting`,
+      );
       // The other server's record is left as it is.
       expect(readFileSync(join(home, 'serve.json'), 'utf8')).toBe(theirs);
     } finally {
@@ -1169,7 +1172,7 @@ describe('akapen serve', () => {
     } finally {
       await new Promise<void>((done) => taken.close(() => done()));
     }
-  });
+  }, 30_000);
 
   it('records what names its process beside its pid', async () => {
     await serve();

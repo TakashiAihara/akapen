@@ -7,6 +7,7 @@ import { AdvertiseError, resolveAdvertised } from '@akapen/core/addresses';
 
 import {
   HomeHeldError,
+  HomeLostError,
   readServePort,
   recordedServerAlive,
   servePath,
@@ -851,6 +852,10 @@ if (positional[0] === 'serve') {
         `akapen serve is already running for ${akapenHome()} (pid ${pid}${theirs === null ? ', starting' : `, port ${theirs}`}). ` +
           `If pid ${pid} is not akapen serve, remove ${servePath()}`,
       );
+    }
+    if (err instanceof HomeLostError) {
+      console.error(`akapen: ${err.message}`);
+      process.exit(1);
     }
     if ((err as { code?: unknown }).code !== 'EADDRINUSE') throw err;
     fail(
