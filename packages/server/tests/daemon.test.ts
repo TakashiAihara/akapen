@@ -311,15 +311,88 @@ describe('akapen serve', () => {
     ctl.abort();
   });
 
-  it('stops serving a registered document whose file is gone, and lists it as missing', async () => {
+  it('does not serve a document whose file went before a round was opened, and lists it as missing', async () => {
+    const d = await serve();
+    const file = note('note.md');
+    const url = urlIn(cli(d, ['add', file], { CLAUDE_CODE_SESSION_ID: 'session-a' }).out);
+    rmSync(file);
+    expect((await authed(`${url}api/status`)).status).toBe(404);
+    // The CLI names the cause, not the server.
+    expect(cli(d, ['comments', file]).err).toContain(`no such file: ${file}`);
+    // Nor is it handed to the session's channel, which could only be told of a URL that answers 404.
+    expect(await (await managed(`${d.base}/api/sessions/session-a/documents`)).json()).toEqual([]);
+    const listed = JSON.parse(cli(d, ['list', '--json']).out) as { file: string; missing: boolean }[];
+    expect(listed.map((r) => [r.file, r.missing])).toEqual([[file, true]]);
+  });
+
+  it('answers an error, not an empty document, for a path that cannot be read and has no round', async () => {
     const d = await serve();
     const file = note('note.md');
     const url = urlIn(cli(d, ['add', file]).out);
     rmSync(file);
-    expect((await authed(`${url}api/status`)).status).toBe(404);
-    const listed = JSON.parse(cli(d, ['list', '--json']).out) as { file: string; missing: boolean }[];
-    expect(listed.map((r) => [r.file, r.missing])).toEqual([[file, true]]);
+    mkdirSync(file);
+    expect((await authed(`${url}api/doc`)).status).toBe(500);
   });
+
+  it('keeps taking comments on a document whose file is gone, across a restart', async () => {
+    const first = await serve();
+    const file = note('note.md');
+    const url = urlIn(cli(first, ['add', file], { CLAUDE_CODE_SESSION_ID: 'session-a' }).out);
+    expect((await comment(url, 'before')).status).toBe(200);
+    await first.stop();
+    rmSync(file);
+
+    const d = await serve();
+    const again = `${d.base}${new URL(url).pathname}`;
+    const answer = await comment(again, 'while it is gone');
+    expect(answer.status).toBe(200);
+    const written = (await answer.json()) as { comment: { id: string } };
+    // The agent told about it can answer from the command line as well.
+    const replied = cli(d, ['reply', file, written.comment.id, 'seen']);
+    expect(replied.code, replied.err).toBe(0);
+    expect(cli(d, ['comments', file]).out).toContain('while it is gone');
+    const typo = cli(d, ['reply', `${file}.absent`, written.comment.id, 'seen']);
+    expect(typo.code).toBe(1);
+    expect(typo.err).toContain(`no such file: ${file}.absent`);
+    const listed = JSON.parse(cli(d, ['list', '--json']).out) as Record<string, unknown>[];
+    expect(listed.map((r) => [r['missing'], r['title'], r['round'], r['unresolved']])).toEqual([
+      [true, 'A heading', 1, 2],
+    ]);
+    const docs = (await (await managed(`${d.base}/api/sessions/session-a/documents`)).json()) as {
+      comments: { body: string }[];
+    }[];
+    expect(docs.map((x) => x.comments.map((c) => c.body).toSorted())).toEqual([
+      ['before', 'while it is gone'],
+    ]);
+
+    // Opened with nothing to watch, it still notices the file coming back, and goes on
+    // watching it: the look that found it counts one change by itself.
+    const changes = async () =>
+      ((await (await authed(`${again}api/doc`)).json()) as { changed: { changes: number } }).changed.changes;
+    writeFileSync(file, '# A heading\n\nwritten back\n');
+    await until(async () => (await changes()) > 0);
+    const seen = await changes();
+    writeFileSync(file, '# A heading\n\nwritten again\n');
+    await until(async () => (await changes()) > seen);
+  });
+
+  it('watches again a file that was gone for longer than a save by rename takes', async () => {
+    const d = await serve();
+    const file = note('note.md');
+    const url = urlIn(cli(d, ['add', file]).out);
+    expect((await authed(`${url}api/status`)).status).toBe(200);
+    rmSync(file);
+    // Long enough that looks spaced by doubling alone would next come more than 5 s later.
+    await new Promise((r) => setTimeout(r, 7_000));
+    const changes = async () =>
+      ((await (await authed(`${url}api/doc`)).json()) as { changed: { changes: number } }).changed.changes;
+    writeFileSync(file, '# A heading\n\nwritten back\n');
+    await until(async () => (await changes()) > 0);
+    // The look that found it counts one change by itself; the next one needs the watcher.
+    const seen = await changes();
+    writeFileSync(file, '# A heading\n\nwritten again\n');
+    await until(async () => (await changes()) > seen);
+  }, 20_000);
 
   it('serves a document whose name holds characters a URL has to escape', async () => {
     const d = await serve();
@@ -930,6 +1003,24 @@ describe('sessions on akapen serve', () => {
     expect(restored.err).toContain(`not restored: ${gone}: no such file`);
     expect(restored.out).toContain(url);
     expect(restored.out).not.toContain('nothing to restore');
+  });
+
+  it('restores a document whose file is gone when its store holds a round', async () => {
+    const d = await serve();
+    const file = note('tmp/note.md');
+    // With a root that went with it, as when a temporary directory is cleaned away.
+    const url = urlIn(
+      cli(d, ['add', file, '--root', join(sandbox, 'tmp')], { CLAUDE_CODE_SESSION_ID: 'session-a' }).out,
+    );
+    expect((await comment(url, 'before')).status).toBe(200);
+    cli(d, ['remove', '--session', 'session-a']);
+    rmSync(join(sandbox, 'tmp'), { recursive: true });
+
+    const restored = cli(d, ['restore', 'session-a']);
+    expect(restored.code, restored.err).toBe(0);
+    expect(restored.err).not.toContain('not restored');
+    expect(restored.out).toContain(url);
+    expect((await comment(url, 'after the resume')).status).toBe(200);
   });
 
   it('wakes the stream of the session a comment belongs to, and no other', async () => {
