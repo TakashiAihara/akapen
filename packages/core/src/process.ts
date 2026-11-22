@@ -12,6 +12,10 @@ import { readFileSync } from 'node:fs';
  * What stays the same for as long as the process with this id lives and differs for any
  * other process that ever holds the id, or null where it cannot be read.
  *
+ * "Any other" is as fine as the platform counts: a hundredth of a second on Linux, a
+ * second where `ps` is asked, so a later process that got the id within that same second
+ * reads the same there.
+ *
  * Compared for equality and nothing else. On Linux it is the boot and the tick the process
  * started at, as the kernel counts them: not a time of day, which moves when the clock is
  * set (the boot time in `/proc/stat` moves with it), and a clock corrected after a server

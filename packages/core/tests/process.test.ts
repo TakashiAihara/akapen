@@ -25,6 +25,8 @@ describe('what names a process beside its pid', () => {
   });
 
   it('differs for another process, and is not read for one that is gone', async () => {
+    // Where the start is known to the second, this process and the next must not share one.
+    if (process.platform !== 'linux') await new Promise((r) => setTimeout(r, 1_100));
     const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], { stdio: 'ignore' });
     const exited = new Promise<void>((done) => child.on('exit', () => done()));
     try {
