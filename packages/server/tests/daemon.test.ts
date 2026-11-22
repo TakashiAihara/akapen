@@ -581,6 +581,40 @@ describe('akapen serve', () => {
     expect(statSync(join(home, 'manage-token')).mode & 0o777).toBe(0o600);
   });
 
+  it('reaches the server directly when the environment names a proxy', async () => {
+    const d = await serve();
+    const file = note('note.md');
+    cli(d, ['add', file]);
+    const proxied: string[] = [];
+    const proxy = createHttpServer((req, res) => {
+      proxied.push(`${req.url} manage=${String(req.headers['x-akapen-manage'])}`);
+      res.writeHead(502).end();
+    });
+    await new Promise<void>((done) => proxy.listen(0, '127.0.0.1', () => done()));
+    const at = `http://127.0.0.1:${(proxy.address() as { port: number }).port}`;
+    try {
+      // Not spawnSync: the proxy lives in this process, and a blocked loop answers nobody.
+      const list = (extra: NodeJS.ProcessEnv) =>
+        new Promise<string>((done) => {
+          const p = spawn('bun', ['run', CLI, 'list'], {
+            env: env({ AKAPEN_PORT: d.port, HTTP_PROXY: at, http_proxy: at, ...extra }),
+            stdio: ['ignore', 'pipe', 'ignore'],
+          });
+          let out = '';
+          p.stdout.on('data', (c: Buffer) => (out += c.toString()));
+          // Not `exit`, which can come before the last of stdout has been read.
+          p.on('close', () => done(out));
+        });
+      // The lowercase exception list wins over the uppercase one, so each is tried as the one already set.
+      for (const extra of [{}, { no_proxy: 'example.com' }, { NO_PROXY: 'example.com' }]) {
+        expect(await list({ NO_PROXY: '', no_proxy: '', ...extra })).toContain(file);
+        expect(proxied).toEqual([]);
+      }
+    } finally {
+      await new Promise<void>((done) => proxy.close(() => done()));
+    }
+  });
+
   it('does not hand the management secret to whatever holds a port this home never chose', async () => {
     mkdirSync(home, { recursive: true });
     writeFileSync(join(home, 'manage-token'), 'the-secret-that-must-stay\n', { mode: 0o600 });
