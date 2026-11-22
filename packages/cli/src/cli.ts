@@ -18,6 +18,17 @@ import {
 } from '@akapen/core/token';
 import { parseArgs, resolveHost, resolvePort, resolveSession, UsageError, type Args } from './args.ts';
 
+/**
+ * Every request this process makes goes to akapen serve on 127.0.0.1 and carries the token,
+ * most of them the management secret too. Bun's fetch sends a loopback request through
+ * `HTTP_PROXY` like any other (measured on 1.4.0, #321), which would hand both to the proxy.
+ * It has no per-request switch (`proxy: ''` is ignored) and does not notice the variable
+ * being deleted, but it reads the exception list at each request. The lowercase spelling
+ * wins over `NO_PROXY` when both are there, so that is the one set. Replaced rather than
+ * added to: nothing here fetches anywhere else. Before anything is fetched, the channel included.
+ */
+process.env['no_proxy'] = '127.0.0.1';
+
 const USAGE = `akapen — markdown inline review
 
   akapen serve [options]         start the server that serves every registered document
