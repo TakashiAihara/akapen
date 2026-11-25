@@ -243,9 +243,9 @@ export const CommentsPayloadSchema = v.object({
 export type CommentsPayload = v.InferOutput<typeof CommentsPayloadSchema>;
 
 /**
- * The only shape sent over SSE.
+ * The live file moved. Like every event on the stream, it does not carry the document.
  *
- * Putting the document in here would make the receiver rebuild the screen, which
+ * Putting the document in an event would make the receiver rebuild the screen, which
  * destroys the reading position, the focused input, an in-flight IME composition
  * and the text selection — none of it caused by anything the person did.
  */
@@ -271,10 +271,21 @@ export const RoundEventSchema = v.object({
 export type RoundEvent = v.InferOutput<typeof RoundEventSchema>;
 
 /**
+ * A comment, reply or resolve was written, by anyone. A notification only, like the
+ * others: the page fetches the comments it shows instead of reading them off the stream.
+ */
+export const CommentsEventSchema = v.object({ type: v.literal('comments') });
+export type CommentsEvent = v.InferOutput<typeof CommentsEventSchema>;
+
+/**
  * Everything that can arrive on the stream. A receiver matches on `type`, so a kind it
  * was not built for is dropped instead of being read as the one it does know.
  */
-export const ServerEventSchema = v.variant('type', [ChangedEventSchema, RoundEventSchema]);
+export const ServerEventSchema = v.variant('type', [
+  ChangedEventSchema,
+  RoundEventSchema,
+  CommentsEventSchema,
+]);
 export type ServerEvent = v.InferOutput<typeof ServerEventSchema>;
 
 /** What /api/rounds answers with. */

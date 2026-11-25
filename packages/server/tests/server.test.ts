@@ -287,6 +287,57 @@ describe('the event stream', () => {
   }, 30_000);
 });
 
+/** The `comments` frames as they arrived, not as the schema reads them: a schema drops keys it does not know. */
+const commentsFrames = (seen: unknown[]) => seen.filter((e) => (e as { type: string }).type === 'comments');
+
+describe('telling the open screens about a written comment', () => {
+  it('sends a comments event after a comment, a reply and a resolve', async () => {
+    const other = listen(base);
+    try {
+      await until(() => other.seen.length > 0); // the greeting, so the stream is attached
+      const written = await post('/api/comments', { startLine: 5, endLine: 5, body: 'first' });
+      const { comment } = v.parse(CommentsPayloadSchema, await written.json());
+      await until(() => commentsFrames(other.seen).length === 1);
+      expect(commentsFrames(other.seen)).toEqual([{ type: 'comments' }]);
+
+      expect((await post(`/api/comments/${comment.id}/replies`, { body: 'answer' })).ok).toBe(true);
+      await until(() => commentsFrames(other.seen).length === 2);
+      expect(commentsFrames(other.seen)).toEqual([{ type: 'comments' }, { type: 'comments' }]);
+
+      expect((await post(`/api/comments/${comment.id}/resolve`)).ok).toBe(true);
+      await until(() => commentsFrames(other.seen).length === 3);
+      expect(commentsFrames(other.seen)).toEqual([
+        { type: 'comments' },
+        { type: 'comments' },
+        { type: 'comments' },
+      ]);
+    } finally {
+      await other.stop();
+    }
+  });
+
+  it('sends nothing for a write that was refused, while the stream is still delivering', async () => {
+    const other = listen(base);
+    try {
+      await until(() => other.seen.length > 0);
+      expect((await post('/api/comments/no-such-id/replies', { body: 'x' })).status).toBe(404);
+      expect((await post('/api/comments/no-such-id/resolve')).status).toBe(404);
+      expect((await post('/api/comments', { startLine: 900, endLine: 900, body: 'x' })).status).toBe(400);
+      // An event of another kind, sent after the refusals on the same ordered stream: once it
+      // has arrived, any event a refusal sent has arrived too.
+      writeFileSync(work, `${SOURCE}\nan edit that marks the end of the refusals\n`);
+      await until(() => other.seen.some(dirty));
+      expect(commentsFrames(other.seen)).toEqual([]);
+
+      expect((await post('/api/comments', { startLine: 5, endLine: 5, body: 'accepted' })).ok).toBe(true);
+      await until(() => commentsFrames(other.seen).length === 1);
+      expect(commentsFrames(other.seen)).toEqual([{ type: 'comments' }]);
+    } finally {
+      await other.stop();
+    }
+  });
+});
+
 describe('the document', () => {
   it('answers with a payload that satisfies the contract', async () => {
     const res = await fetch(`${base}/api/doc`);
