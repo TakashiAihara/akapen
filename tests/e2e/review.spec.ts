@@ -1075,12 +1075,45 @@ async function carriedOnBehindScreen(
 
 const REFRESH_GET = /\/api\/doc\?round=/;
 
-test('keeps the newer comment when an older refresh answers last', async ({ page, request, akapen }) => {
-  const held = Promise.withResolvers<void>();
-  let calls = 0;
+test('goes on showing comments after a refresh that never got an answer', async ({
+  page,
+  request,
+  akapen,
+}) => {
+  let requests = 0;
   await page.route(REFRESH_GET, async (route) => {
-    if (++calls !== 1) return route.continue();
+    if (++requests !== 1) return route.continue();
+  });
+  await writeElsewhere(request, akapen.url, '/api/comments', {
+    startLine: 14,
+    endLine: 14,
+    body: 'asked for and never answered',
+  });
+  await expect.poll(() => requests).toBe(1);
+  await writeElsewhere(request, akapen.url, '/api/comments', {
+    startLine: 15,
+    endLine: 15,
+    body: 'written during the silence',
+  });
+  // The page gives a refresh ten seconds before it asks again.
+  await expect(page.locator(A.rail).filter({ hasText: 'written during the silence' })).toHaveCount(1, {
+    timeout: 20_000,
+  });
+  await page.unrouteAll({ behavior: 'ignoreErrors' });
+});
+
+test('shows a comment written while a refresh is in flight once that refresh has answered', async ({
+  page,
+  request,
+  akapen,
+}) => {
+  const held = Promise.withResolvers<void>();
+  let requests = 0;
+  let answered = false;
+  await page.route(REFRESH_GET, async (route) => {
+    if (++requests !== 1) return route.continue();
     const answer = await route.fetch();
+    answered = true;
     await held.promise;
     await route.fulfill({ response: answer });
   });
@@ -1089,16 +1122,17 @@ test('keeps the newer comment when an older refresh answers last', async ({ page
     endLine: 14,
     body: 'older write',
   });
-  await expect.poll(() => calls).toBe(1);
+  await expect.poll(() => answered).toBe(true);
   await writeElsewhere(request, akapen.url, '/api/comments', {
     startLine: 15,
     endLine: 15,
     body: 'newer write',
   });
-  await expect(page.locator(A.rail)).toHaveCount(2);
+  await page.waitForTimeout(500);
+  expect(requests).toBe(1);
+  await expect(page.locator(A.rail).filter({ hasText: 'newer write' })).toHaveCount(0);
 
   held.resolve();
-  await page.waitForTimeout(500);
   await expect(page.locator(A.rail).filter({ hasText: 'newer write' })).toHaveCount(1);
   await expect(page.locator(A.rail)).toHaveCount(2);
 });
@@ -1110,9 +1144,11 @@ test('does not put a held answer from another round on a screen that moved on', 
 }) => {
   const held = Promise.withResolvers<void>();
   let calls = 0;
+  let answered = false;
   await page.route(REFRESH_GET, async (route) => {
     if (++calls !== 1) return route.continue();
     const answer = await route.fetch();
+    answered = true;
     await held.promise;
     await route.fulfill({ response: answer });
   });
@@ -1121,7 +1157,7 @@ test('does not put a held answer from another round on a screen that moved on', 
     endLine: 14,
     body: 'written on the first round',
   });
-  await expect.poll(() => calls).toBe(1);
+  await expect.poll(() => answered).toBe(true);
 
   akapen.append('\n## second round\n');
   await page.locator('#nextRound').click();
@@ -1204,7 +1240,8 @@ test('shows a comment written while the stream was down once it reconnects', asy
       1,
     );
   } finally {
-    server.close();
+    // Closing a relay that is already closed throws, which would hide why the test failed.
+    if (server.listening) server.close();
     for (const s of sockets) s.destroy();
   }
 });
@@ -1333,4 +1370,115 @@ test('opens a draft above the comments already in the rail order', async ({ page
   await openDraft(page);
   await expect(page.locator(A.rail)).toHaveCount(2);
   await expect(page.locator(A.rail).first()).toHaveClass(/draft/);
+});
+
+/** The screen is on R002 and a second page has cut R003, so the server is a round ahead of it. */
+async function screenOneRoundBehind(
+  page: Page,
+  akapen: { url: string; append: (text: string) => void },
+): Promise<void> {
+  akapen.append('\n## second round\n');
+  await page.locator('#nextRound').click();
+  await expect(page.locator('#round')).toHaveText('R002');
+  const other = await page.context().newPage();
+  await other.goto(akapen.url);
+  await expect(other.locator('.row').first()).toBeVisible();
+  akapen.append('\n## third round\n');
+  await other.locator('#nextRound').click();
+  await expect(other.locator('#round')).toHaveText('R003');
+  await expect(page.locator('#movedBar')).toBeVisible();
+}
+
+test('carries a comment written elsewhere on an earlier round and not one on the screen own round', async ({
+  page,
+  request,
+  akapen,
+}) => {
+  await screenOneRoundBehind(page, akapen);
+
+  await writeElsewhere(request, akapen.url, '/api/comments', {
+    startLine: 14,
+    endLine: 14,
+    body: 'left open on round one',
+    round: 1,
+  });
+  await expect(page.locator('#railCarried .bubble')).toHaveCount(1);
+  await expect(page.locator('#railCarried .bubble')).toContainText('left open on round one');
+
+  await writeElsewhere(request, akapen.url, '/api/comments', {
+    startLine: 15,
+    endLine: 15,
+    body: 'written on the screen own round',
+    round: 2,
+  });
+  await expect(page.locator(A.rail).filter({ hasText: 'written on the screen own round' })).toHaveCount(1);
+  await expect(page.locator('#railCarried .bubble')).toHaveCount(1);
+  await expect(page.locator('#railCarried')).not.toContainText('written on the screen own round');
+});
+
+test('says a failed resolve on its bubble when a reply landed on it while the request was out', async ({
+  page,
+  request,
+  akapen,
+}) => {
+  const { comment } = await writeElsewhere(request, akapen.url, '/api/comments', {
+    startLine: 14,
+    endLine: 14,
+    body: 'resolve that fails late',
+  });
+  await openSettled(page, akapen.url);
+  const held = Promise.withResolvers<void>();
+  let reached = false;
+  await page.route('**/api/comments/*/resolve', async (route) => {
+    await route.fetch();
+    reached = true;
+    await held.promise;
+    await route.fulfill({ status: 500, body: 'refused' });
+  });
+  const bubble = page.locator(A.rail).filter({ hasText: 'resolve that fails late' });
+  // The button pressed is one an earlier update put there: it was built inside a bubble
+  // that was thrown away, which is the one a late lookup would report on.
+  const replies = `/api/comments/${comment.id}/replies`;
+  await writeElsewhere(request, akapen.url, replies, { body: 'landed before' }, true);
+  await expect(bubble.locator('.reply-body')).toHaveText(['landed before']);
+  await bubble.getByRole('button', { name: 'Resolve' }).click();
+  await expect.poll(() => reached).toBe(true);
+
+  await writeElsewhere(request, akapen.url, replies, { body: 'landed meanwhile' }, true);
+  await expect(bubble.locator('.reply-body')).toHaveText(['landed before', 'landed meanwhile']);
+  held.resolve();
+  await expect(bubble.locator('.bubble-error')).toContainText('update failed');
+});
+
+test('counts a draft sent on an earlier round once when a refresh showed it first', async ({
+  page,
+  akapen,
+}) => {
+  await screenOneRoundBehind(page, akapen);
+
+  const answerHeld = Promise.withResolvers<void>();
+  const refresh = Promise.withResolvers<void>();
+  let reached = false;
+  await page.route('**/api/comments', async (route) => {
+    if (route.request().method() !== 'POST') return route.continue();
+    const answer = await route.fetch();
+    reached = true;
+    await answerHeld.promise;
+    await route.fulfill({ response: answer });
+  });
+  await openDraft(page);
+  await page.locator(A.ta).fill('sent on the earlier round');
+  await page.locator(`${A.draft} button.primary`).click();
+  await expect.poll(() => reached).toBe(true);
+  await expect(page.locator(A.rail).filter({ hasText: 'sent on the earlier round' })).toHaveCount(1);
+
+  await page.route(REFRESH_GET, async (route) => {
+    await refresh.promise;
+    await route.continue();
+  });
+  answerHeld.resolve();
+  await expect(page.locator(A.draft)).toHaveCount(0);
+  await expect(page.locator('#count')).toHaveText('1 open / 1');
+  await expect(page.locator(A.rail)).toHaveCount(1);
+  refresh.resolve();
 });

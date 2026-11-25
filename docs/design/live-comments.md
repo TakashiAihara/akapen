@@ -14,11 +14,12 @@ Issue #353. An open page shows a comment, reply or resolve written elsewhere (an
 
 | Screen state | `comments` | `carried` |
 | --- | --- | --- |
-| On the current round | replaced by the answer's | replaced by the answer's |
-| Behind (another screen cut a round past this one) | replaced by the answer's, which are this screen's round's | only the entries already shown, updated by id; one absent from the answer was resolved and is dropped; none is added, since the answer's list includes this screen's own round |
-| History view | replaced by the answer's, which are that round's | replaced by the answer's, and not shown, as history shows none |
+| On the current round | replaced by the answer's | the answer's entries from rounds before the one on screen, which is all of them |
+| Behind (another screen cut a round past this one) | replaced by the answer's, which are this screen's round's | the answer's entries from rounds before the one on screen, so this screen's own round is left out |
+| History view | replaced by the answer's, which are that round's | same rule, and not shown, as history shows none |
 
-- An answer to an older refresh than the latest one started is dropped, and so is one that arrives after the screen moved to another round.
+- One refresh is in flight at a time. A write that lands meanwhile only makes the page ask once more when the one in flight has answered, so answers cannot arrive out of order. A request is given up after 10 seconds so one that never answers cannot stop every later refresh.
+- An answer that arrives after the screen moved to another round is dropped.
 - A failed refresh says nothing. The next event or reconnect recovers.
 - The answer to the person's own comment, reply or resolve is applied at once, and the page then asks again. That answer was computed before anything written after it, and it can arrive after an update that already showed something newer.
 
@@ -38,3 +39,8 @@ Issue #353. An open page shows a comment, reply or resolve written elsewhere (an
 
 - A bubble that got a reply while it is off screen has no marker saying so.
 - A change to the store that bypasses HTTP (editing the files under the home directory) is not noticed.
+
+## Left as is
+
+- An error message shown on a bubble is cleared by the person's own next successful action, not by an update from elsewhere. An update cannot wipe an error the person has not acted on.
+- Each event costs one `api/doc` fetch per open page, bounded to one in flight plus one queued.

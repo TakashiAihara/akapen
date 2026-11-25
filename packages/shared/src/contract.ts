@@ -243,9 +243,9 @@ export const CommentsPayloadSchema = v.object({
 export type CommentsPayload = v.InferOutput<typeof CommentsPayloadSchema>;
 
 /**
- * The only shape sent over SSE.
+ * The live file moved. Like every event on the stream, it does not carry the document.
  *
- * Putting the document in here would make the receiver rebuild the screen, which
+ * Putting the document in an event would make the receiver rebuild the screen, which
  * destroys the reading position, the focused input, an in-flight IME composition
  * and the text selection — none of it caused by anything the person did.
  */

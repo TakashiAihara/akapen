@@ -724,18 +724,19 @@ function bubbleFor(c: Comment | RoundComment, opts: { past?: boolean } = {}): HT
   btn.addEventListener('click', async (e) => {
     e.stopPropagation();
     btn.disabled = true;
+    // Taken before the request: an update from elsewhere can replace this head meanwhile,
+    // and a button that is no longer in the page cannot say which bubble it belonged to.
+    const host = btn.closest<HTMLElement>('.bubble') ?? box;
     try {
       const res = await fetch(`api/comments/${c.id}/resolve`, { method: 'POST' });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       // The bubble outlives the update that follows, so a failure shown before has to go here.
-      btn.closest('.bubble')?.querySelector(':scope > .bubble-error')?.remove();
+      host.querySelector(':scope > .bubble-error')?.remove();
       if (!state.history) takeAnswer(await decode(res, CommentsPayloadSchema));
       else if (state.round?.viewing) void showRound(state.round.viewing);
     } catch (err) {
       btn.disabled = false;
-      // The head can be moved to the bubble that stayed when this one was rebuilt for an update.
-      const host = btn.closest<HTMLElement>('.bubble');
-      if (host) fail(host, `update failed (${messageOf(err)})`);
+      fail(host, `update failed (${messageOf(err)})`);
     }
   });
   head.append(btn);
@@ -822,7 +823,11 @@ function draftBubble(): HTMLElement {
     // comment landed there; a screen on an earlier round keeps its own and adds this one.
     const id = posted.comment.id;
     if (posted.comments.some((c) => c.id === id)) applyComments(posted);
-    else applyComments({ ...posted, comments: [...state.comments, posted.comment], carried: state.carried });
+    else {
+      // A refresh may have shown it already, so it replaces its own entry instead of joining it.
+      const comments = [...state.comments.filter((c) => c.id !== id), posted.comment];
+      applyComments({ ...posted, comments, carried: state.carried });
+    }
     void refreshComments();
   };
   cancel.addEventListener('click', close);
@@ -1612,35 +1617,47 @@ async function boot() {
   }
 }
 
-/** Bumped by each refresh, so one that answers after a newer began is not used. */
-let refreshes = 0;
+let refreshing = false;
+let refreshWanted = false;
 
 /**
  * Take the comments another screen or an agent wrote, from the round on screen.
  *
+ * One request at a time: a burst of writes asks once more after the one in flight, not
+ * once each, and answers cannot arrive out of order.
+ */
+async function refreshComments(): Promise<void> {
+  if (refreshing) {
+    refreshWanted = true;
+    return;
+  }
+  refreshing = true;
+  try {
+    do {
+      refreshWanted = false;
+      await refreshOnce();
+    } while (refreshWanted);
+  } finally {
+    refreshing = false;
+  }
+}
+
+/**
  * Only comments and carried are read from the answer. The document stays: it is rebuilt
  * when the person asks, and `state.round` with it. A failure is silent, since the next
  * event or reconnect asks again.
  */
-async function refreshComments(): Promise<void> {
-  const mine = ++refreshes;
+async function refreshOnce(): Promise<void> {
   const round = screenRound();
   if (round === null) return;
   try {
-    const res = await fetch(`api/doc?round=${round}`);
+    // A request that never answers would otherwise keep every later refresh from starting.
+    const res = await fetch(`api/doc?round=${round}`, { signal: AbortSignal.timeout(10_000) });
     const payload = await decode(res, DocPayloadSchema);
-    if (mine !== refreshes || screenRound() !== round) return;
-    const answered = payload.carried ?? [];
-    if (isBehind()) {
-      // The answer's carried list holds this screen's own round, which is not carried here.
-      const carried = state.carried.flatMap((x) => {
-        const now = answered.find((y) => y.id === x.id);
-        return now ? [now] : [];
-      });
-      applyComments({ comments: payload.comments, carried });
-    } else {
-      applyComments({ comments: payload.comments, carried: answered });
-    }
+    if (screenRound() !== round) return;
+    // Carried is what an earlier round left open, whichever round this screen is on.
+    const carried = (payload.carried ?? []).filter((y) => y.round < round);
+    applyComments({ comments: payload.comments, carried });
   } catch {
     return;
   }
