@@ -7,7 +7,7 @@ Issue #353. An open page shows a comment, reply or resolve written elsewhere (an
 - The stream gets a third event, `{ "type": "comments" }`, sent after every successful write of the comment store: a new comment, a reply, a resolve.
 - It is a notification only, like `changed` and `round`. It carries no comment.
 - On receiving it the page fetches `api/doc?round=<round on screen>` and takes only the comments (and, where shown, the carried ones) from the answer. Never the document, never the round it was built against.
-- The rail is updated in place, by comment id. A bubble that did not change is not touched. A changed one has its head, body and replies replaced, and its reply form is never removed, re-created or moved. A new one is inserted at its line-order position; existing ones are never moved.
+- The rail is updated in place, by comment id. A bubble that did not change is not touched. A changed one has its head and replies replaced (its text stays, since nothing edits a comment's text), and its reply form is never removed, re-created or moved. A new one is inserted at its line-order position; existing ones are never moved.
 - After a reconnect the page asks again once the path is confirmed, since events were dropped while it was away.
 
 ## What each screen state takes from the answer
@@ -16,10 +16,11 @@ Issue #353. An open page shows a comment, reply or resolve written elsewhere (an
 | --- | --- | --- |
 | On the current round | replaced by the answer's | replaced by the answer's |
 | Behind (another screen cut a round past this one) | replaced by the answer's, which are this screen's round's | only the entries already shown, updated by id; one absent from the answer was resolved and is dropped; none is added, since the answer's list includes this screen's own round |
-| History view | replaced by the answer's, which are that round's | left alone, as history shows none |
+| History view | replaced by the answer's, which are that round's | replaced by the answer's, and not shown, as history shows none |
 
 - An answer to an older refresh than the latest one started is dropped, and so is one that arrives after the screen moved to another round.
 - A failed refresh says nothing. The next event or reconnect recovers.
+- The answer to the person's own comment, reply or resolve is applied at once, and the page then asks again. That answer was computed before anything written after it, and it can arrive after an update that already showed something newer.
 
 ## Why an update must not rebuild the rail
 

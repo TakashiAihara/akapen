@@ -4,6 +4,7 @@
  * Every case here is behaviour that actually broke and was caught by a person or by
  * CodeRabbit. The storage-layer tests caught none of them, so these look at the DOM.
  */
+import { connect, createServer, type AddressInfo, type Socket } from 'node:net';
 import type { APIRequestContext, Locator, Page } from '@playwright/test';
 import { AUTH, expect, test } from './fixtures.ts';
 
@@ -1039,4 +1040,297 @@ test('keeps a reply written elsewhere when the answer to your own reply arrives 
   await expect(bubble.locator('.reply-input')).toHaveValue('');
   await page.waitForTimeout(500);
   await expect(bubble.locator('.reply-body')).toHaveText(['mine from the page', 'theirs from outside']);
+});
+
+/**
+ * A comment on R001 shown as carried on a screen that another one has since moved past.
+ * The screen cut R002 itself and a second page cut R003.
+ */
+async function carriedOnBehindScreen(
+  page: Page,
+  request: APIRequestContext,
+  akapen: { url: string; append: (text: string) => void },
+  body: string,
+): Promise<string> {
+  const { comment } = await writeElsewhere(request, akapen.url, '/api/comments', {
+    startLine: 14,
+    endLine: 14,
+    body,
+  });
+  await openSettled(page, akapen.url);
+  akapen.append('\n## second round\n');
+  await page.locator('#nextRound').click();
+  await expect(page.locator('#round')).toHaveText('R002');
+  await expect(page.locator('#railCarried .bubble')).toHaveCount(1);
+
+  const other = await page.context().newPage();
+  await other.goto(akapen.url);
+  await expect(other.locator('.row').first()).toBeVisible();
+  akapen.append('\n## third round\n');
+  await other.locator('#nextRound').click();
+  await expect(other.locator('#round')).toHaveText('R003');
+  await expect(page.locator('#movedBar')).toBeVisible();
+  return comment.id;
+}
+
+const REFRESH_GET = /\/api\/doc\?round=/;
+
+test('keeps the newer comment when an older refresh answers last', async ({ page, request, akapen }) => {
+  const held = Promise.withResolvers<void>();
+  let calls = 0;
+  await page.route(REFRESH_GET, async (route) => {
+    if (++calls !== 1) return route.continue();
+    const answer = await route.fetch();
+    await held.promise;
+    await route.fulfill({ response: answer });
+  });
+  await writeElsewhere(request, akapen.url, '/api/comments', {
+    startLine: 14,
+    endLine: 14,
+    body: 'older write',
+  });
+  await expect.poll(() => calls).toBe(1);
+  await writeElsewhere(request, akapen.url, '/api/comments', {
+    startLine: 15,
+    endLine: 15,
+    body: 'newer write',
+  });
+  await expect(page.locator(A.rail)).toHaveCount(2);
+
+  held.resolve();
+  await page.waitForTimeout(500);
+  await expect(page.locator(A.rail).filter({ hasText: 'newer write' })).toHaveCount(1);
+  await expect(page.locator(A.rail)).toHaveCount(2);
+});
+
+test('does not put a held answer from another round on a screen that moved on', async ({
+  page,
+  request,
+  akapen,
+}) => {
+  const held = Promise.withResolvers<void>();
+  let calls = 0;
+  await page.route(REFRESH_GET, async (route) => {
+    if (++calls !== 1) return route.continue();
+    const answer = await route.fetch();
+    await held.promise;
+    await route.fulfill({ response: answer });
+  });
+  await writeElsewhere(request, akapen.url, '/api/comments', {
+    startLine: 14,
+    endLine: 14,
+    body: 'written on the first round',
+  });
+  await expect.poll(() => calls).toBe(1);
+
+  akapen.append('\n## second round\n');
+  await page.locator('#nextRound').click();
+  await expect(page.locator('#round')).toHaveText('R002');
+  await expect(page.locator('#railCarried .bubble')).toHaveCount(1);
+
+  held.resolve();
+  await page.waitForTimeout(500);
+  await expect(page.locator(A.rail)).toHaveCount(0);
+  await expect(page.locator('#railCarried .bubble')).toHaveCount(1);
+});
+
+test('drops a carried comment resolved elsewhere from a screen another one moved past', async ({
+  page,
+  request,
+  akapen,
+}) => {
+  const id = await carriedOnBehindScreen(page, request, akapen, 'carried then resolved');
+  await writeElsewhere(request, akapen.url, `/api/comments/${id}/resolve`);
+  await expect(page.locator('#railCarried .bubble')).toHaveCount(0);
+});
+
+test('shows a reply written elsewhere on a carried comment of a screen another one moved past', async ({
+  page,
+  request,
+  akapen,
+}) => {
+  const id = await carriedOnBehindScreen(page, request, akapen, 'carried then answered');
+  await writeElsewhere(
+    request,
+    akapen.url,
+    `/api/comments/${id}/replies`,
+    { body: 'answer to a carried one' },
+    true,
+  );
+  await expect(page.locator('#railCarried .bubble .reply-body')).toHaveText('answer to a carried one');
+  await expect(page.locator('#railCarried .bubble')).toHaveCount(1);
+});
+
+test('shows a comment written while the stream was down once it reconnects', async ({
+  page,
+  request,
+  akapen,
+}) => {
+  // The browser reaches the server through a relay that this test can cut and bring back.
+  // Going offline in the browser leaves a stream that is already open running.
+  const target = new URL(akapen.url);
+  const sockets = new Set<Socket>();
+  const relay = () =>
+    createServer((client) => {
+      const upstream = connect(Number(target.port), '127.0.0.1');
+      for (const s of [client, upstream]) {
+        sockets.add(s);
+        s.on('error', () => {});
+      }
+      client.pipe(upstream);
+      upstream.pipe(client);
+      client.on('close', () => upstream.destroy());
+      upstream.on('close', () => client.destroy());
+    });
+  let server = relay();
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  const port = (server.address() as AddressInfo).port;
+  const viewer = await page.context().newPage();
+  try {
+    await openSettled(viewer, `http://127.0.0.1:${port}${target.pathname}`);
+
+    server.close();
+    for (const s of sockets) s.destroy();
+    await expect(viewer.locator('#otherDocBar')).toBeVisible();
+    await writeElsewhere(request, akapen.url, '/api/comments', {
+      startLine: 14,
+      endLine: 14,
+      body: 'written while the stream was down',
+    });
+    server = relay();
+    await new Promise<void>((r) => server.listen(port, '127.0.0.1', r));
+    await expect(viewer.locator('#otherDocBar')).toBeHidden({ timeout: 15_000 });
+    await expect(viewer.locator(A.rail).filter({ hasText: 'written while the stream was down' })).toHaveCount(
+      1,
+    );
+  } finally {
+    server.close();
+    for (const s of sockets) s.destroy();
+  }
+});
+
+test('keeps a comment written elsewhere when the answer to your own comment arrives late', async ({
+  page,
+  request,
+  akapen,
+}) => {
+  const held = Promise.withResolvers<void>();
+  let reached = false;
+  await page.route('**/api/comments', async (route) => {
+    if (route.request().method() !== 'POST') return route.continue();
+    const answer = await route.fetch();
+    reached = true;
+    await held.promise;
+    await route.fulfill({ response: answer });
+  });
+  await openDraft(page);
+  await page.locator(A.ta).fill('my own comment from the page');
+  await page.locator(`${A.draft} button.primary`).click();
+  await expect.poll(() => reached).toBe(true);
+
+  await writeElsewhere(request, akapen.url, '/api/comments', {
+    startLine: 15,
+    endLine: 15,
+    body: 'their comment from outside',
+  });
+  await expect(page.locator(A.rail)).toHaveCount(2);
+  held.resolve();
+  await expect(page.locator(A.draft)).toHaveCount(0);
+  await page.waitForTimeout(500);
+  await expect(page.locator(A.rail)).toHaveCount(2);
+  await expect(page.locator(A.rail).filter({ hasText: 'their comment from outside' })).toHaveCount(1);
+});
+
+test('leaves the head of a comment alone when another comment gets a reply', async ({
+  page,
+  request,
+  akapen,
+}) => {
+  await writeElsewhere(request, akapen.url, '/api/comments', {
+    startLine: 14,
+    endLine: 14,
+    body: 'untouched one',
+  });
+  const { comment } = await writeElsewhere(request, akapen.url, '/api/comments', {
+    startLine: 15,
+    endLine: 15,
+    body: 'answered one',
+  });
+  await openSettled(page, akapen.url);
+  const untouched = page.locator(A.rail).filter({ hasText: 'untouched one' });
+  await untouched
+    .getByRole('button', { name: 'Resolve' })
+    .evaluate((n) => n.setAttribute('data-same-node', 'yes'));
+
+  await writeElsewhere(
+    request,
+    akapen.url,
+    `/api/comments/${comment.id}/replies`,
+    { body: 'reply elsewhere' },
+    true,
+  );
+  await expect(page.locator(A.rail).filter({ hasText: 'answered one' }).locator('.reply-body')).toHaveText(
+    'reply elsewhere',
+  );
+  await expect(untouched.getByRole('button', { name: 'Resolve' })).toHaveAttribute('data-same-node', 'yes');
+});
+
+test('puts a comment written elsewhere above a later one in the rail order', async ({
+  page,
+  request,
+  akapen,
+}) => {
+  await writeElsewhere(request, akapen.url, '/api/comments', {
+    startLine: 16,
+    endLine: 16,
+    body: 'on the later line',
+  });
+  await openSettled(page, akapen.url);
+  await expect(page.locator(A.rail)).toHaveCount(1);
+
+  await writeElsewhere(request, akapen.url, '/api/comments', {
+    startLine: 14,
+    endLine: 14,
+    body: 'on the earlier line',
+  });
+  await expect(page.locator(A.rail)).toHaveCount(2);
+  await expect(page.locator(A.rail).first()).toContainText('on the earlier line');
+  await expect(page.locator(A.rail).last()).toContainText('on the later line');
+});
+
+test('counts the carried comments left after one is resolved elsewhere', async ({
+  page,
+  request,
+  akapen,
+}) => {
+  for (const [i, body] of ['carried alpha', 'carried beta'].entries()) {
+    await writeElsewhere(request, akapen.url, '/api/comments', { startLine: 14 + i, endLine: 14 + i, body });
+  }
+  const alpha = await page.evaluate(async () => {
+    const all = (await (await fetch('api/comments')).json()) as { id: string; body: string }[];
+    return all.find((c) => c.body === 'carried alpha')?.id;
+  });
+  await openSettled(page, akapen.url);
+  akapen.append('\n## second round\n');
+  await page.locator('#nextRound').click();
+  await expect(page.locator('#round')).toHaveText('R002');
+  await expect(page.locator('#railCarried h2')).toHaveText('2 unresolved from earlier rounds');
+
+  await writeElsewhere(request, akapen.url, `/api/comments/${alpha}/resolve`);
+  await expect(page.locator('#railCarried .bubble')).toHaveCount(1);
+  await expect(page.locator('#railCarried h2')).toHaveText('1 unresolved from earlier rounds');
+});
+
+test('opens a draft above the comments already in the rail order', async ({ page, request, akapen }) => {
+  await writeElsewhere(request, akapen.url, '/api/comments', {
+    startLine: 14,
+    endLine: 14,
+    body: 'already shown',
+  });
+  await openSettled(page, akapen.url);
+  await expect(page.locator(A.rail)).toHaveCount(1);
+
+  await openDraft(page);
+  await expect(page.locator(A.rail)).toHaveCount(2);
+  await expect(page.locator(A.rail).first()).toHaveClass(/draft/);
 });

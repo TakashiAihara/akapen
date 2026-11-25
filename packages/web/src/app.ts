@@ -843,23 +843,15 @@ function draftBubble(): HTMLElement {
 function renderRail() {
   const existing = anchoredEl.querySelector<HTMLElement>('.bubble.draft');
   if (!draft) {
-    if (existing) {
-      bubbleSizes.unobserve(existing);
-      existing.remove();
-    }
+    existing?.remove();
   } else if (
     !existing ||
     (existing as HTMLElement).dataset['line'] !== String(draft.startLine) ||
     (existing as HTMLElement).dataset['end'] !== String(draft.endLine)
   ) {
     // Rebuild only when the range changed. No composition is in flight then, so removing it is safe
-    if (existing) {
-      bubbleSizes.unobserve(existing);
-      existing.remove();
-    }
-    const box = draftBubble();
-    anchoredEl.prepend(box);
-    bubbleSizes.observe(box);
+    existing?.remove();
+    anchoredEl.prepend(draftBubble());
   }
 
   // Line order, so the tab order follows what is drawn. Layout uses data-line, not this order.
@@ -867,8 +859,12 @@ function renderRail() {
     anchoredEl,
     state.comments.toSorted((a, b) => a.startLine - b.startLine),
     (c) => bubbleFor(c),
-    true,
   );
+  // The old bubbles are gone from the page; still watched, they would be kept alive.
+  // Observing calls back once more: one extra layout per render, and the rail is rendered
+  // on comment updates, not on keystrokes.
+  bubbleSizes.disconnect();
+  for (const b of anchoredEl.querySelectorAll('.bubble')) bubbleSizes.observe(b);
   renderCarried();
 }
 
@@ -887,7 +883,6 @@ function reconcileBubbles<T extends Comment | RoundComment>(
   host: HTMLElement,
   list: T[],
   build: (c: T) => HTMLElement,
-  watchSize: boolean,
 ): void {
   const shown = new Map<string, HTMLElement>();
   const wanted = new Set(list.map((c) => c.id));
@@ -896,7 +891,6 @@ function reconcileBubbles<T extends Comment | RoundComment>(
     if (wanted.has(id)) {
       shown.set(id, b);
     } else {
-      if (watchSize) bubbleSizes.unobserve(b);
       b.remove();
     }
   }
@@ -916,7 +910,6 @@ function reconcileBubbles<T extends Comment | RoundComment>(
     shown.set(c.id, fresh);
     const next = list.slice(i + 1).find((x) => shown.has(x.id));
     host.insertBefore(fresh, next ? (shown.get(next.id) ?? null) : null);
-    if (watchSize) bubbleSizes.observe(fresh);
   });
 }
 
@@ -952,7 +945,7 @@ function renderCarried() {
   const heading = carriedEl.querySelector(':scope > h2');
   if (heading) heading.textContent = text;
   else carriedEl.prepend(el('h2', null, text));
-  reconcileBubbles(carriedEl, carried, (c) => bubbleFor(c, { past: true }), false);
+  reconcileBubbles(carriedEl, carried, (c) => bubbleFor(c, { past: true }));
 }
 
 /**
