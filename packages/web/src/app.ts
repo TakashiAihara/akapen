@@ -241,17 +241,24 @@ function renderMoved() {
  * since and, on a screen another one moved past, is not this screen's comments at all
  * (#175).
  *
- * The page then asks again, so what was written meanwhile shows without the rail having
- * been replaced under a reply box. That is also what takes a carried comment that is now
- * resolved off the carried rail, by the same rule as one resolved elsewhere.
+ * Even that one comment can be behind: the answer may arrive after a refresh that already
+ * showed a later reply or resolve of it. So the page asks again, which also takes a
+ * carried comment that is now resolved off the carried rail.
  */
 function takeAnswer(answer: CommentsPayload) {
+  ownWrites++;
   const { id, resolved, replies } = answer.comment;
-  const comments = state.comments.map((x) => (x.id === id ? { ...x, resolved, replies } : x));
-  const carried = state.carried.map((x) => (x.id === id ? { ...x, resolved, replies } : x));
-  applyComments({ comments, carried });
+  const take = <T extends Comment>(x: T): T => (x.id === id ? { ...x, resolved, replies } : x);
+  applyComments({ comments: state.comments.map(take), carried: state.carried.map(take) });
   void refreshComments();
 }
+
+/**
+ * How many answers to the person's own writes have been applied. A refresh that started
+ * before one was computed before that write, and applying it would take back what the
+ * answer just showed; the refresh each answer asks for runs after it instead.
+ */
+let ownWrites = 0;
 
 /** The round the document on screen was read from, which is where a comment written on it goes. */
 function screenRound(): number | null {
@@ -590,7 +597,7 @@ function stopClick(e: Event): void {
  * document and its line anchors, and "this could not be fixed, and here is why" is
  * about work already handed over — the case that matters most.
  */
-function repliesFor(c: Comment | RoundComment, past: boolean): HTMLElement {
+function repliesFor(c: Comment | RoundComment): HTMLElement {
   const wrap = el('div', 'replies');
   for (const r of c.replies ?? []) {
     const item = el('div', `reply${r.authorKind === 'agent' ? ' from-agent' : ''}`);
@@ -639,12 +646,7 @@ function repliesFor(c: Comment | RoundComment, past: boolean): HTMLElement {
       ta.value = '';
       // The form outlives the update that follows, so a failure shown before has to go here.
       form.querySelector('.bubble-error')?.remove();
-      // The response always carries the *current* round's comments, whichever round the
-      // parent was in. The history view cannot use them, since its bubbles are that
-      // round's own: applying them would swap the round on screen for the current one, so
-      // the round is opened again instead. Everywhere else `takeAnswer` decides.
-      if ((past || state.history) && state.round?.viewing) void showRound(state.round.viewing, c.id);
-      else takeAnswer(payload);
+      takeAnswer(payload);
     } catch (err) {
       // Keep what was typed. Losing it leaves no way to get the words back.
       send.disabled = false;
@@ -721,17 +723,19 @@ function bubbleFor(c: Comment | RoundComment, opts: { past?: boolean } = {}): HT
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       // The bubble outlives the update that follows, so a failure shown before has to go here.
       host.querySelector(':scope > .bubble-error')?.remove();
-      if (!state.history) takeAnswer(await decode(res, CommentsPayloadSchema));
-      else if (state.round?.viewing) void showRound(state.round.viewing);
+      takeAnswer(await decode(res, CommentsPayloadSchema));
     } catch (err) {
-      btn.disabled = false;
       fail(host, `update failed (${messageOf(err)})`);
+    } finally {
+      // The head is not replaced when the answer shows the state it already had, so
+      // nothing else would bring the button back.
+      btn.disabled = false;
     }
   });
   head.append(btn);
 
   box.append(head, foldedBody('bubble-body', c.body));
-  box.append(repliesFor(c, opts.past === true));
+  box.append(repliesFor(c));
   // If only a mouse can expand the collapsed body, the keyboard cannot read past 12em
   box.tabIndex = 0;
   box.addEventListener('click', () => {
@@ -809,10 +813,13 @@ function draftBubble(): HTMLElement {
     sel = null;
     paintSelection();
     // Only this comment is taken from the answer, which was computed before anything written
-    // since and may be another round's list. A refresh may have shown it already, so it
-    // replaces its own entry instead of joining it.
+    // since and may be another round's list. A refresh may have shown it already, and what
+    // that showed is no older than the answer.
     const id = posted.comment.id;
-    const comments = [...state.comments.filter((c) => c.id !== id), posted.comment];
+    const comments = state.comments.some((c) => c.id === id)
+      ? state.comments
+      : [...state.comments, posted.comment];
+    ownWrites++;
     applyComments({ comments, carried: state.carried });
     void refreshComments();
   };
@@ -1640,6 +1647,12 @@ function hasTypedReply(id: string): boolean {
   return !!box?.value.trim();
 }
 
+async function fetchRound(n: number): Promise<DocPayload> {
+  // A request that never answers would otherwise keep every later refresh from starting.
+  const res = await fetch(`api/doc?round=${n}`, { signal: AbortSignal.timeout(10_000) });
+  return decode(res, DocPayloadSchema);
+}
+
 /**
  * Only comments and carried are read from the answer. The document stays: it is rebuilt
  * when the person asks, and `state.round` with it. A failure is silent, since the next
@@ -1648,23 +1661,27 @@ function hasTypedReply(id: string): boolean {
 async function refreshOnce(): Promise<void> {
   const round = screenRound();
   if (round === null) return;
+  const mine = ownWrites;
   try {
-    // A request that never answers would otherwise keep every later refresh from starting.
-    const res = await fetch(`api/doc?round=${round}`, { signal: AbortSignal.timeout(10_000) });
-    const payload = await decode(res, DocPayloadSchema);
+    const payload = await fetchRound(round);
+    const answered = payload.carried;
+    // Carried is what an earlier round left open, whichever round this screen is on. History
+    // shows only its count, which was taken from the unfiltered list.
+    const carried = state.history ? answered : answered.filter((y) => y.round < round);
+    // One resolved elsewhere stays while a reply is being typed under it, so the text is
+    // not lost with it. It is read from its own round: it is resolved there, with what
+    // was written with the resolve.
+    const gone = state.carried.filter((x) => !carried.some((y) => y.id === x.id) && hasTypedReply(x.id));
+    const kept = (
+      await Promise.all(
+        gone.map(async (x) => {
+          const now = (await fetchRound(x.round)).comments.find((c) => c.id === x.id);
+          return now ? [{ ...now, round: x.round }] : [];
+        }),
+      )
+    ).flat();
     if (screenRound() !== round) return;
-    const answered = payload.carried ?? [];
-    if (state.history) {
-      // Shown only as a count, and the count was taken from the unfiltered list.
-      applyComments({ comments: payload.comments, carried: answered });
-      return;
-    }
-    // Carried is what an earlier round left open, whichever round this screen is on.
-    const carried = answered.filter((y) => y.round < round);
-    // One resolved elsewhere stays while a reply is being typed under it, so the text is not lost with it.
-    const kept = state.carried.flatMap((x) =>
-      !carried.some((y) => y.id === x.id) && hasTypedReply(x.id) ? [{ ...x, resolved: true }] : [],
-    );
+    if (ownWrites !== mine) return;
     applyComments({ comments: payload.comments, carried: [...carried, ...kept] });
   } catch {
     return;
