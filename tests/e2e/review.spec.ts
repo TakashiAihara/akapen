@@ -765,3 +765,278 @@ test('marks a reply sent with a session as the agent, and names the session', as
   await expect(reply.locator('.session')).toHaveText(session.slice(0, 8));
   await expect(reply.locator('.session')).toHaveAttribute('title', session);
 });
+
+/** A write made from outside the page, as an agent or another tab would make it. */
+async function writeElsewhere(
+  request: APIRequestContext,
+  url: string,
+  path: string,
+  data?: object,
+  agent = false,
+) {
+  const res = await request.post(`${url}${path}`, {
+    headers: agent ? { ...AUTH, 'x-akapen-session': '00000000-0000-4000-8000-000000000000' } : AUTH,
+    ...(data === undefined ? {} : { data }),
+  });
+  expect(res.ok()).toBe(true);
+  return (await res.json()) as { comment: { id: string } };
+}
+
+test('shows a reply written elsewhere without a reload', async ({ page, request, akapen }) => {
+  const { comment } = await writeElsewhere(request, akapen.url, '/api/comments', {
+    startLine: 14,
+    endLine: 14,
+    body: 'asked on the open page',
+  });
+  await openSettled(page, akapen.url);
+  const bubble = page.locator(A.rail).filter({ hasText: 'asked on the open page' });
+  await expect(bubble.locator('.reply')).toHaveCount(0);
+
+  await writeElsewhere(
+    request,
+    akapen.url,
+    `/api/comments/${comment.id}/replies`,
+    { body: 'answered from outside' },
+    true,
+  );
+  await expect(bubble.locator('.reply-body')).toHaveText('answered from outside');
+  await expect(bubble.locator('.reply .kind')).toHaveText('agent');
+});
+
+test('shows a comment and a resolve written elsewhere without a reload', async ({
+  page,
+  request,
+  akapen,
+}) => {
+  await expect(page.locator(A.rail)).toHaveCount(0);
+  const { comment } = await writeElsewhere(request, akapen.url, '/api/comments', {
+    startLine: 14,
+    endLine: 14,
+    body: 'written in another tab',
+  });
+  const bubble = page.locator(A.rail).filter({ hasText: 'written in another tab' });
+  await expect(bubble).toHaveCount(1);
+  await expect(page.locator('#count')).toHaveText('1 open / 1');
+
+  await writeElsewhere(request, akapen.url, `/api/comments/${comment.id}/resolve`);
+  await expect(bubble).toHaveClass(/resolved/);
+  await expect(page.locator('#count')).toHaveText('0 open / 1');
+});
+
+test('keeps a half-typed reply when another reply lands on the same thread', async ({
+  page,
+  request,
+  akapen,
+}) => {
+  const { comment } = await writeElsewhere(request, akapen.url, '/api/comments', {
+    startLine: 14,
+    endLine: 14,
+    body: 'thread with a reply box',
+  });
+  await openSettled(page, akapen.url);
+  const bubble = page.locator(A.rail).filter({ hasText: 'thread with a reply box' });
+  const box = bubble.locator('.reply-input');
+  await bubble.hover();
+  await box.fill('half of a reply');
+  await box.evaluate((n) => n.setAttribute('data-same-node', 'yes'));
+
+  await writeElsewhere(
+    request,
+    akapen.url,
+    `/api/comments/${comment.id}/replies`,
+    { body: 'arrived meanwhile' },
+    true,
+  );
+  await expect(bubble.locator('.reply-body')).toHaveText('arrived meanwhile');
+  await expect(box).toHaveValue('half of a reply');
+  await expect(box).toBeFocused();
+  await expect(box).toHaveAttribute('data-same-node', 'yes');
+});
+
+test('keeps a half-typed comment when a comment is written elsewhere', async ({ page, request, akapen }) => {
+  await openDraft(page);
+  await page.locator(A.ta).fill('half of a comment');
+  await page.locator(A.ta).evaluate((n) => n.setAttribute('data-same-node', 'yes'));
+
+  await writeElsewhere(request, akapen.url, '/api/comments', {
+    startLine: 14,
+    endLine: 14,
+    body: 'arrived from outside',
+  });
+  await expect(page.locator(A.rail).filter({ hasText: 'arrived from outside' })).toHaveCount(1);
+  await expect(page.locator(A.ta)).toHaveValue('half of a comment');
+  await expect(page.locator(A.ta)).toBeFocused();
+  await expect(page.locator(A.ta)).toHaveAttribute('data-same-node', 'yes');
+});
+
+test('keeps its own round on a screen another one moved past when a reply lands on it', async ({
+  page,
+  request,
+  akapen,
+}) => {
+  const { comment } = await writeElsewhere(request, akapen.url, '/api/comments', {
+    startLine: 14,
+    endLine: 14,
+    body: 'filed on the first round',
+  });
+  await openSettled(page, akapen.url);
+  await expect(page.locator(A.rail)).toHaveCount(1);
+
+  const other = await page.context().newPage();
+  await other.goto(akapen.url);
+  await expect(other.locator('.row').first()).toBeVisible();
+  akapen.append('\n## cut while both screens were open\n');
+  await other.locator('#nextRound').click();
+  await expect(other.locator('#round')).toHaveText('R002');
+  await expect(page.locator('#movedBar')).toBeVisible();
+
+  await writeElsewhere(
+    request,
+    akapen.url,
+    `/api/comments/${comment.id}/replies`,
+    { body: 'late reply from outside' },
+    true,
+  );
+  const bubble = page.locator(A.rail).filter({ hasText: 'filed on the first round' });
+  await expect(bubble.locator('.reply-body')).toHaveText('late reply from outside');
+  await expect(page.locator(A.rail)).toHaveCount(1);
+  await expect(page.locator('#railCarried .bubble')).toHaveCount(0);
+  await expect(page.locator('#round')).toHaveText('R001');
+});
+
+test('keeps showing the round in history and picks up a reply written elsewhere', async ({
+  page,
+  request,
+  akapen,
+}) => {
+  const { comment } = await writeElsewhere(request, akapen.url, '/api/comments', {
+    startLine: 14,
+    endLine: 14,
+    body: 'said on the closed round',
+  });
+  await openSettled(page, akapen.url);
+  akapen.append('\n## second round heading\n');
+  await page.locator('#nextRound').click();
+  await expect(page.locator('#round')).toHaveText('R002');
+  await page.locator('#roundPick').selectOption('1');
+  await expect(page.locator('#round')).toHaveText('R001');
+  const bubble = page.locator(A.rail).filter({ hasText: 'said on the closed round' });
+  await expect(bubble).toHaveCount(1);
+
+  await writeElsewhere(
+    request,
+    akapen.url,
+    `/api/comments/${comment.id}/replies`,
+    { body: 'reply to a closed round' },
+    true,
+  );
+  await expect(bubble.locator('.reply-body')).toHaveText('reply to a closed round');
+  await expect(page.locator(A.rail)).toHaveCount(1);
+  await expect(page.locator('#round')).toHaveText('R001');
+});
+
+test('folds a bubble that stops being active when the draft is cancelled', async ({
+  page,
+  request,
+  akapen,
+}) => {
+  await writeElsewhere(request, akapen.url, '/api/comments', {
+    startLine: 14,
+    endLine: 14,
+    body: 'to be selected',
+  });
+  await openSettled(page, akapen.url);
+  const bubble = page.locator(A.rail).filter({ hasText: 'to be selected' });
+  await openDraft(page);
+  await bubble.click();
+  await expect(bubble).toHaveClass(/active/);
+
+  await page.locator(`${A.draft} button:not(.primary)`).click();
+  await expect(page.locator(A.draft)).toHaveCount(0);
+  await expect(bubble).not.toHaveClass(/active/);
+});
+
+test('drops a failed resolve message once a later resolve works', async ({ page, request, akapen }) => {
+  await writeElsewhere(request, akapen.url, '/api/comments', {
+    startLine: 14,
+    endLine: 14,
+    body: 'resolve twice',
+  });
+  await openSettled(page, akapen.url);
+  let calls = 0;
+  await page.route('**/api/comments/*/resolve', (route) =>
+    ++calls === 1 ? route.fulfill({ status: 500, body: 'refused' }) : route.continue(),
+  );
+  const bubble = page.locator(A.rail).filter({ hasText: 'resolve twice' });
+  await bubble.getByRole('button', { name: 'Resolve' }).click();
+  await expect(bubble.locator('.bubble-error')).toHaveText('update failed (HTTP 500)');
+
+  await bubble.getByRole('button', { name: 'Resolve' }).click();
+  await expect(bubble).toHaveClass(/resolved/);
+  await expect(bubble.locator('.bubble-error')).toHaveCount(0);
+});
+
+test('drops a failed reply message once a later reply works', async ({ page, request, akapen }) => {
+  await writeElsewhere(request, akapen.url, '/api/comments', {
+    startLine: 14,
+    endLine: 14,
+    body: 'reply twice',
+  });
+  await openSettled(page, akapen.url);
+  let calls = 0;
+  await page.route('**/api/comments/*/replies', (route) =>
+    ++calls === 1 ? route.fulfill({ status: 500, body: 'refused' }) : route.continue(),
+  );
+  const bubble = page.locator(A.rail).filter({ hasText: 'reply twice' });
+  await bubble.hover();
+  await bubble.locator('.reply-input').fill('second try');
+  await bubble.locator('.reply-send').click();
+  await expect(bubble.locator('.bubble-error')).toHaveCount(1);
+  await expect(bubble.locator('.bubble-error')).toContainText('reply failed');
+
+  await bubble.locator('.reply-send').click();
+  await expect(bubble.locator('.reply-body')).toHaveText('second try');
+  await expect(bubble.locator('.bubble-error')).toHaveCount(0);
+});
+
+test('keeps a reply written elsewhere when the answer to your own reply arrives late', async ({
+  page,
+  request,
+  akapen,
+}) => {
+  const { comment } = await writeElsewhere(request, akapen.url, '/api/comments', {
+    startLine: 14,
+    endLine: 14,
+    body: 'two replies race',
+  });
+  await openSettled(page, akapen.url);
+  let reached = false;
+  const held = Promise.withResolvers<void>();
+  const gate = held.promise;
+  await page.route('**/api/comments/*/replies', async (route) => {
+    if (route.request().headers()['x-akapen-session'] !== undefined) return route.continue();
+    const answer = await route.fetch();
+    reached = true;
+    await gate;
+    await route.fulfill({ response: answer });
+  });
+  const bubble = page.locator(A.rail).filter({ hasText: 'two replies race' });
+  await bubble.hover();
+  await bubble.locator('.reply-input').fill('mine from the page');
+  await bubble.locator('.reply-send').click();
+  await expect.poll(() => reached).toBe(true);
+
+  await writeElsewhere(
+    request,
+    akapen.url,
+    `/api/comments/${comment.id}/replies`,
+    { body: 'theirs from outside' },
+    true,
+  );
+  await expect(bubble.locator('.reply-body')).toHaveText(['mine from the page', 'theirs from outside']);
+  held.resolve();
+  // The box is emptied just before the late answer is applied; the rollback, if any, stays.
+  await expect(bubble.locator('.reply-input')).toHaveValue('');
+  await page.waitForTimeout(500);
+  await expect(bubble.locator('.reply-body')).toHaveText(['mine from the page', 'theirs from outside']);
+});

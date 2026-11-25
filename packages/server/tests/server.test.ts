@@ -287,6 +287,47 @@ describe('the event stream', () => {
   }, 30_000);
 });
 
+const comments = (seen: unknown[]) => seen.filter((e) => (e as { type: string }).type === 'comments').length;
+
+describe('telling the open screens about a written comment', () => {
+  it('sends a comments event after a comment, a reply and a resolve', async () => {
+    const other = listen(base);
+    try {
+      await until(() => other.seen.length > 0); // the greeting, so the stream is attached
+      const written = await post('/api/comments', { startLine: 5, endLine: 5, body: 'first' });
+      const { comment } = v.parse(CommentsPayloadSchema, await written.json());
+      await until(() => comments(other.seen) === 1);
+      expect(v.parse(ServerEventSchema, other.seen.at(-1))).toEqual({ type: 'comments' });
+
+      expect((await post(`/api/comments/${comment.id}/replies`, { body: 'answer' })).ok).toBe(true);
+      await until(() => comments(other.seen) === 2);
+
+      expect((await post(`/api/comments/${comment.id}/resolve`)).ok).toBe(true);
+      await until(() => comments(other.seen) === 3);
+    } finally {
+      await other.stop();
+    }
+  });
+
+  it('sends nothing for a write that was refused, while the stream is still delivering', async () => {
+    const other = listen(base);
+    try {
+      await until(() => other.seen.length > 0);
+      expect((await post('/api/comments/no-such-id/replies', { body: 'x' })).status).toBe(404);
+      expect((await post('/api/comments/no-such-id/resolve')).status).toBe(404);
+      expect((await post('/api/comments', { startLine: 900, endLine: 900, body: 'x' })).status).toBe(400);
+      // Written after the refusals: if the refused ones had sent an event, there would be
+      // more than this one by the time it arrives, and the stream is shown to be alive.
+      expect((await post('/api/comments', { startLine: 5, endLine: 5, body: 'accepted' })).ok).toBe(true);
+      await until(() => comments(other.seen) >= 1);
+      await new Promise((r) => setTimeout(r, 200));
+      expect(comments(other.seen)).toBe(1);
+    } finally {
+      await other.stop();
+    }
+  });
+});
+
 describe('the document', () => {
   it('answers with a payload that satisfies the contract', async () => {
     const res = await fetch(`${base}/api/doc`);

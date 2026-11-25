@@ -415,6 +415,7 @@ export function openDocument(file: string, opts: DocumentOptions, currentSecret:
     saveComments(file, n, next);
     opts.onWrite?.();
     if (current) comments = next;
+    notify({ type: 'comments' });
     // Just answer. The author's own screen updates locally.
     return c.json({ comment, comments, carried: carriedOver(file) });
   });
@@ -427,6 +428,7 @@ export function openDocument(file: string, opts: DocumentOptions, currentSecret:
     });
     if (!updated) return c.text('not found', 404);
     if (updated.round === review.currentRound) comments = loadComments(file, review.currentRound);
+    notify({ type: 'comments' });
     return c.json({ comment: updated, comments, carried: carriedOver(file) });
   });
 
@@ -454,6 +456,7 @@ export function openDocument(file: string, opts: DocumentOptions, currentSecret:
     if (!added) return c.text('not found', 404);
     opts.onWrite?.();
     if (added.comment.round === review.currentRound) comments = loadComments(file, review.currentRound);
+    notify({ type: 'comments' });
     return c.json({ comment: added.comment, comments, carried: carriedOver(file) });
   });
 

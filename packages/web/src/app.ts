@@ -189,7 +189,7 @@ nextRoundBtn.addEventListener('click', async () => {
 });
 
 /** Update after only comments changed. The document is left alone. */
-function applyComments(payload: CommentsPayload) {
+function applyComments(payload: Pick<CommentsPayload, 'comments' | 'carried'>) {
   state = {
     ...state,
     comments: payload.comments ?? state.comments,
@@ -251,14 +251,17 @@ function isBehind(): boolean {
 function takeAnswer(answer: CommentsPayload) {
   if (!isBehind()) {
     applyComments(answer);
-    return;
+  } else {
+    const fresh = answer.comment;
+    const comments = state.comments.map((x) => (x.id === fresh.id ? { ...x, ...fresh } : x));
+    const carried = state.carried.flatMap((x) =>
+      x.id !== fresh.id ? [x] : fresh.resolved ? [] : [{ ...x, ...fresh }],
+    );
+    applyComments({ ...answer, comments, carried });
   }
-  const fresh = answer.comment;
-  const comments = state.comments.map((x) => (x.id === fresh.id ? { ...x, ...fresh } : x));
-  const carried = state.carried.flatMap((x) =>
-    x.id !== fresh.id ? [x] : fresh.resolved ? [] : [{ ...x, ...fresh }],
-  );
-  applyComments({ ...answer, comments, carried });
+  // The answer was computed before anything written since, and may arrive after an update
+  // that already showed it, which it would roll back until the next event.
+  void refreshComments();
 }
 
 /** The round the document on screen was read from, which is where a comment written on it goes. */
@@ -645,6 +648,8 @@ function repliesFor(c: Comment | RoundComment, past: boolean): HTMLElement {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const payload = await decode(res, CommentsPayloadSchema);
       ta.value = '';
+      // The form outlives the update that follows, so a failure shown before has to go here.
+      form.querySelector('.bubble-error')?.remove();
       // The response always carries the *current* round's comments, whichever round the
       // parent was in. The history view cannot use them, since its bubbles are that
       // round's own: applying them would swap the round on screen for the current one, so
@@ -722,11 +727,15 @@ function bubbleFor(c: Comment | RoundComment, opts: { past?: boolean } = {}): HT
     try {
       const res = await fetch(`api/comments/${c.id}/resolve`, { method: 'POST' });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      // The bubble outlives the update that follows, so a failure shown before has to go here.
+      btn.closest('.bubble')?.querySelector(':scope > .bubble-error')?.remove();
       if (!state.history) takeAnswer(await decode(res, CommentsPayloadSchema));
       else if (state.round?.viewing) void showRound(state.round.viewing);
     } catch (err) {
       btn.disabled = false;
-      fail(box, `update failed (${messageOf(err)})`);
+      // The head can be moved to the bubble that stayed when this one was rebuilt for an update.
+      const host = btn.closest<HTMLElement>('.bubble');
+      if (host) fail(host, `update failed (${messageOf(err)})`);
     }
   });
   head.append(btn);
@@ -814,6 +823,7 @@ function draftBubble(): HTMLElement {
     const id = posted.comment.id;
     if (posted.comments.some((c) => c.id === id)) applyComments(posted);
     else applyComments({ ...posted, comments: [...state.comments, posted.comment], carried: state.carried });
+    void refreshComments();
   };
   cancel.addEventListener('click', close);
   submit.addEventListener('click', send);
@@ -831,32 +841,98 @@ function draftBubble(): HTMLElement {
  * Focus and caret position survive for free as a result.
  */
 function renderRail() {
-  for (const b of anchoredEl.querySelectorAll('.bubble:not(.draft)')) b.remove();
-
   const existing = anchoredEl.querySelector<HTMLElement>('.bubble.draft');
   if (!draft) {
-    existing?.remove();
+    if (existing) {
+      bubbleSizes.unobserve(existing);
+      existing.remove();
+    }
   } else if (
     !existing ||
     (existing as HTMLElement).dataset['line'] !== String(draft.startLine) ||
     (existing as HTMLElement).dataset['end'] !== String(draft.endLine)
   ) {
     // Rebuild only when the range changed. No composition is in flight then, so removing it is safe
-    existing?.remove();
-    anchoredEl.append(draftBubble());
+    if (existing) {
+      bubbleSizes.unobserve(existing);
+      existing.remove();
+    }
+    const box = draftBubble();
+    anchoredEl.prepend(box);
+    bubbleSizes.observe(box);
   }
 
-  // Append in line order. Layout uses data-line so this does not affect drawing, but the
-  // tab order follows DOM order, and without matching it the keyboard jumps around.
-  for (const c of state.comments.toSorted((a, b) => a.startLine - b.startLine)) {
-    anchoredEl.append(bubbleFor(c));
-  }
-  // The old bubbles are gone from the page; still watched, they would be kept alive.
-  // Observing calls back once more: one extra layout per render, and the rail is rendered
-  // on comment updates, not on keystrokes.
-  bubbleSizes.disconnect();
-  for (const b of anchoredEl.querySelectorAll('.bubble')) bubbleSizes.observe(b);
+  // Line order, so the tab order follows what is drawn. Layout uses data-line, not this order.
+  reconcileBubbles(
+    anchoredEl,
+    state.comments.toSorted((a, b) => a.startLine - b.startLine),
+    (c) => bubbleFor(c),
+    true,
+  );
   renderCarried();
+}
+
+/** What each bubble on screen was built from, to tell an unchanged comment from a changed one. */
+const shownAs = new WeakMap<HTMLElement, string>();
+
+/**
+ * Bring the bubbles in `host` to `list` without rebuilding the ones that stay.
+ *
+ * A comment can now change under a reader who is typing in its reply box. A node that
+ * leaves the DOM, or is appended again, loses its focus, caret and any IME composition, so
+ * a bubble that stays is patched in place and its reply form is never touched. A new one is
+ * inserted before the next bubble that is there, never by moving the others.
+ */
+function reconcileBubbles<T extends Comment | RoundComment>(
+  host: HTMLElement,
+  list: T[],
+  build: (c: T) => HTMLElement,
+  watchSize: boolean,
+): void {
+  const shown = new Map<string, HTMLElement>();
+  const wanted = new Set(list.map((c) => c.id));
+  for (const b of host.querySelectorAll<HTMLElement>(':scope > .bubble:not(.draft)')) {
+    const id = b.dataset['id'] ?? '';
+    if (wanted.has(id)) {
+      shown.set(id, b);
+    } else {
+      if (watchSize) bubbleSizes.unobserve(b);
+      b.remove();
+    }
+  }
+  list.forEach((c, i) => {
+    const json = JSON.stringify(c);
+    const box = shown.get(c.id);
+    if (box) {
+      // `active` is cleared elsewhere without going through setActive, and a rebuilt bubble
+      // used to pick the right state up from it.
+      box.classList.toggle('active', c.id === active);
+      if (shownAs.get(box) !== json) patchBubble(box, build(c));
+      shownAs.set(box, json);
+      return;
+    }
+    const fresh = build(c);
+    shownAs.set(fresh, json);
+    shown.set(c.id, fresh);
+    const next = list.slice(i + 1).find((x) => shown.has(x.id));
+    host.insertBefore(fresh, next ? (shown.get(next.id) ?? null) : null);
+    if (watchSize) bubbleSizes.observe(fresh);
+  });
+}
+
+/**
+ * Take a freshly built bubble's head and replies, keeping the old reply form. The body
+ * stays: nothing edits a comment's text.
+ */
+function patchBubble(box: HTMLElement, fresh: HTMLElement): void {
+  box.classList.toggle('resolved', fresh.classList.contains('resolved'));
+  const [head, , replies] = [...box.children];
+  const [freshHead, , freshReplies] = [...fresh.children];
+  if (!head || !replies || !freshHead || !freshReplies) return;
+  head.replaceWith(freshHead);
+  for (const r of replies.querySelectorAll(':scope > .reply')) r.remove();
+  const form = replies.querySelector(':scope > .reply-form');
+  for (const r of freshReplies.querySelectorAll(':scope > .reply')) replies.insertBefore(r, form);
 }
 
 /**
@@ -865,16 +941,18 @@ function renderRail() {
  * "gone from the screen" would otherwise read as "dealt with".
  */
 function renderCarried() {
-  carriedEl.textContent = '';
   const carried = state.history ? [] : state.carried;
   if (!carried.length) {
+    carriedEl.textContent = '';
     carriedEl.hidden = true;
     return;
   }
   carriedEl.hidden = false;
-  const h = el('h2', null, `${carried.length} unresolved from earlier rounds`);
-  carriedEl.append(h);
-  for (const c of carried) carriedEl.append(bubbleFor(c, { past: true }));
+  const text = `${carried.length} unresolved from earlier rounds`;
+  const heading = carriedEl.querySelector(':scope > h2');
+  if (heading) heading.textContent = text;
+  else carriedEl.prepend(el('h2', null, text));
+  reconcileBubbles(carriedEl, carried, (c) => bubbleFor(c, { past: true }), false);
 }
 
 /**
@@ -1541,6 +1619,40 @@ async function boot() {
   }
 }
 
+/** Bumped by each refresh, so one that answers after a newer began is not used. */
+let refreshes = 0;
+
+/**
+ * Take the comments another screen or an agent wrote, from the round on screen.
+ *
+ * Only comments and carried are read from the answer. The document stays: it is rebuilt
+ * when the person asks, and `state.round` with it. A failure is silent, since the next
+ * event or reconnect asks again.
+ */
+async function refreshComments(): Promise<void> {
+  const mine = ++refreshes;
+  const round = screenRound();
+  if (round === null) return;
+  try {
+    const res = await fetch(`api/doc?round=${round}`);
+    const payload = await decode(res, DocPayloadSchema);
+    if (mine !== refreshes || screenRound() !== round) return;
+    const answered = payload.carried ?? [];
+    if (isBehind()) {
+      // The answer's carried list holds this screen's own round, which is not carried here.
+      const carried = state.carried.flatMap((x) => {
+        const now = answered.find((y) => y.id === x.id);
+        return now ? [now] : [];
+      });
+      applyComments({ comments: payload.comments, carried });
+    } else {
+      applyComments({ comments: payload.comments, carried: answered });
+    }
+  } catch {
+    return;
+  }
+}
+
 /**
  * SSE delivers notifications only. Rebuilding the screen here would destroy the reading
  * position, the focused input, an in-flight IME composition and the text selection —
@@ -1567,6 +1679,10 @@ sse.addEventListener('message', (e) => {
     // touched, which is the thing rounds are for avoiding.
     noteServerRound(parsed.output.n);
     renderMoved();
+    return;
+  }
+  if (parsed.output.type === 'comments') {
+    void refreshComments();
     return;
   }
   if (!state.history) renderBanner(parsed.output);
@@ -1624,6 +1740,7 @@ const checkPath = async (): Promise<void> => {
     noteServerRound(payload.round.n);
     renderMoved();
     if (!state.history) renderBanner(payload.changed);
+    void refreshComments();
   } catch {
     if (mine !== checks) return;
     // The stream may stay up with no reconnect to ask again, so ask again here.
