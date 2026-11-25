@@ -1035,7 +1035,8 @@ test('keeps a reply written elsewhere when the answer to your own reply arrives 
   );
   await expect(bubble.locator('.reply-body')).toHaveText(['mine from the page', 'theirs from outside']);
   held.resolve();
-  // The box is emptied just before the late answer is applied; the rollback, if any, stays.
+  // The box is emptied just before the late answer is applied. That answer lacks their reply,
+  // and it is the refresh the page then asks for that brings it back.
   await expect(bubble.locator('.reply-input')).toHaveValue('');
   await page.waitForTimeout(500);
   await expect(bubble.locator('.reply-body')).toHaveText(['mine from the page', 'theirs from outside']);
@@ -1593,6 +1594,8 @@ test('keeps a reply box typed in under a comment another one wrote while your ow
   await box.evaluate((n) => n.setAttribute('data-same-node', 'yes'));
 
   held.resolve();
+  // The page empties its own reply box when it applies the answer, so this is after that.
+  await expect(mine.locator('.reply-input')).toHaveValue('');
   await expect(mine.locator('.reply-body')).toHaveText('sent from the page');
   await expect(box).toHaveAttribute('data-same-node', 'yes');
   await expect(box).toHaveValue('half typed under the new one');
