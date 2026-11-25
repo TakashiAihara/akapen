@@ -1540,6 +1540,13 @@ test('shows a reply written while an earlier round was being opened', async ({ p
     await held.promise;
     await route.fulfill({ response: answer });
   });
+  // The refresh the event starts on the screen that is still R002, answered after the write.
+  let oldScreenRefreshed = false;
+  await page.route(/\/api\/doc\?round=2$/, async (route) => {
+    const answer = await route.fetch();
+    oldScreenRefreshed = true;
+    await route.fulfill({ response: answer });
+  });
   await page.locator('#roundPick').selectOption('1');
   await expect.poll(() => answered).toBe(true);
 
@@ -1550,7 +1557,7 @@ test('shows a reply written while an earlier round was being opened', async ({ p
     { body: 'written while opening' },
     true,
   );
-  await page.waitForTimeout(500);
+  await expect.poll(() => oldScreenRefreshed).toBe(true);
   held.resolve();
   await expect(page.locator('#round')).toHaveText('R001');
   await expect(page.locator(A.rail).locator('.reply-body')).toHaveText('written while opening');
@@ -1859,7 +1866,14 @@ test('lets a resolve be pressed again when the comment was already resolved else
   await page.waitForTimeout(300);
   await expect(bubble).not.toHaveClass(/resolved/);
 
+  const toggled = page.waitForResponse(
+    (r) => r.url().endsWith(`/api/comments/${comment.id}/resolve`) && r.request().method() === 'POST',
+  );
   await bubble.getByRole('button', { name: 'Resolve' }).click();
+  expect((await toggled).ok()).toBe(true);
+  const stored = await request.get(`${akapen.url}/api/comments`, { headers: AUTH });
+  const now = ((await stored.json()) as { id: string; resolved: boolean }[]).find((c) => c.id === comment.id);
+  expect(now?.resolved).toBe(false);
   await expect(bubble.getByRole('button', { name: 'Resolve' })).toBeEnabled();
   await expect(bubble).not.toHaveClass(/resolved/);
   released.resolve();
@@ -1944,8 +1958,8 @@ test('asks again when the refresh that carried a write from elsewhere is discard
   request,
   akapen,
 }) => {
-  const gates = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
-  const answered = [false, false];
+  const gates = [Promise.withResolvers<void>(), Promise.withResolvers<void>(), Promise.withResolvers<void>()];
+  const answered = [false, false, false];
   let requests = 0;
   await page.route(REFRESH_GET, async (route) => {
     const n = requests++;
@@ -1988,6 +2002,13 @@ test('asks again when the refresh that carried a write from elsewhere is discard
   posted.resolve();
   await expect(page.locator(A.rail).filter({ hasText: 'sent from the page meanwhile' })).toHaveCount(1);
   gates[1]?.resolve();
+  // The second answer has W in it. It is not applied, and the repair run that follows is held.
+  await expect.poll(() => answered[2]).toBe(true);
+  await page.waitForTimeout(300);
+  await expect(
+    page.locator(A.rail).filter({ hasText: 'W written while the first refresh was out' }),
+  ).toHaveCount(0);
+  gates[2]?.resolve();
 
   await expect(
     page.locator(A.rail).filter({ hasText: 'W written while the first refresh was out' }),

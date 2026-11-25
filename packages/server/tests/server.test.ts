@@ -287,7 +287,8 @@ describe('the event stream', () => {
   }, 30_000);
 });
 
-const comments = (seen: unknown[]) => seen.filter((e) => (e as { type: string }).type === 'comments').length;
+/** The `comments` frames as they arrived, not as the schema reads them: a schema drops keys it does not know. */
+const commentsFrames = (seen: unknown[]) => seen.filter((e) => (e as { type: string }).type === 'comments');
 
 describe('telling the open screens about a written comment', () => {
   it('sends a comments event after a comment, a reply and a resolve', async () => {
@@ -296,15 +297,20 @@ describe('telling the open screens about a written comment', () => {
       await until(() => other.seen.length > 0); // the greeting, so the stream is attached
       const written = await post('/api/comments', { startLine: 5, endLine: 5, body: 'first' });
       const { comment } = v.parse(CommentsPayloadSchema, await written.json());
-      await until(() => comments(other.seen) === 1);
-      // The frame as it arrived, not as the schema reads it: a schema drops keys it does not know.
-      expect(other.seen.at(-1)).toEqual({ type: 'comments' });
+      await until(() => commentsFrames(other.seen).length === 1);
+      expect(commentsFrames(other.seen)).toEqual([{ type: 'comments' }]);
 
       expect((await post(`/api/comments/${comment.id}/replies`, { body: 'answer' })).ok).toBe(true);
-      await until(() => comments(other.seen) === 2);
+      await until(() => commentsFrames(other.seen).length === 2);
+      expect(commentsFrames(other.seen)).toEqual([{ type: 'comments' }, { type: 'comments' }]);
 
       expect((await post(`/api/comments/${comment.id}/resolve`)).ok).toBe(true);
-      await until(() => comments(other.seen) === 3);
+      await until(() => commentsFrames(other.seen).length === 3);
+      expect(commentsFrames(other.seen)).toEqual([
+        { type: 'comments' },
+        { type: 'comments' },
+        { type: 'comments' },
+      ]);
     } finally {
       await other.stop();
     }
@@ -317,12 +323,15 @@ describe('telling the open screens about a written comment', () => {
       expect((await post('/api/comments/no-such-id/replies', { body: 'x' })).status).toBe(404);
       expect((await post('/api/comments/no-such-id/resolve')).status).toBe(404);
       expect((await post('/api/comments', { startLine: 900, endLine: 900, body: 'x' })).status).toBe(400);
-      // Written after the refusals: if the refused ones had sent an event, there would be
-      // more than this one by the time it arrives, and the stream is shown to be alive.
+      // An event of another kind, sent after the refusals on the same ordered stream: once it
+      // has arrived, any event a refusal sent has arrived too.
+      writeFileSync(work, `${SOURCE}\nan edit that marks the end of the refusals\n`);
+      await until(() => other.seen.some(dirty));
+      expect(commentsFrames(other.seen)).toEqual([]);
+
       expect((await post('/api/comments', { startLine: 5, endLine: 5, body: 'accepted' })).ok).toBe(true);
-      await until(() => comments(other.seen) >= 1);
-      await new Promise((r) => setTimeout(r, 200));
-      expect(comments(other.seen)).toBe(1);
+      await until(() => commentsFrames(other.seen).length === 1);
+      expect(commentsFrames(other.seen)).toEqual([{ type: 'comments' }]);
     } finally {
       await other.stop();
     }

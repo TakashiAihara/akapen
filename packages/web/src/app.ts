@@ -254,9 +254,10 @@ function takeAnswer(answer: CommentsPayload) {
 }
 
 /**
- * How many answers to the person's own writes have been applied. A refresh that started
- * before one was computed before that write, and applying it would take back what the
- * answer just showed; the refresh each answer asks for runs after it instead.
+ * How many answers to the person's own writes have been applied. A refresh in flight when
+ * one is applied is discarded, though it may in fact have been computed after the write:
+ * the page cannot tell which side of it, and one from before it would take back what the
+ * answer just showed. The refresh each answer asks for runs after it instead.
  */
 let ownWrites = 0;
 

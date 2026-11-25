@@ -22,7 +22,7 @@ Issue #353. An open page shows a comment, reply or resolve written elsewhere (an
 - An answer that arrives after the screen moved to another round is dropped.
 - A failed refresh says nothing. The next event or reconnect recovers.
 - The answer to the person's own comment, reply or resolve updates only that comment. The rest of the answer was computed before anything written after it, and replacing the rail with it would rebuild a bubble that write created, with anything typed in its reply box. Even that one comment can be behind what a refresh already showed, so the page then asks again.
-- A refresh that began before the person's own answer was applied is not applied: it was computed before that write and would take back what the answer showed. The refresh the answer asks for runs after it.
+- A refresh that was in flight when the person's own answer was applied is not applied. The rule is conservative: such a refresh may in fact have been computed after the write on the server, but the page cannot tell which side of the write it was computed on, and one from before it would take back what the answer showed. The refresh the answer asks for runs after it.
 - The same holds in the history view: a reply or resolve there no longer reopens the round, so a draft open in it stays.
 - A refresh follows every screen install (boot, opening a round, the next-round click), since an event that arrived while the payload was in flight was spent on the old screen and the payload may predate the write.
 - In history the answer's carried list is taken as it is, since the count shown there is taken from the unfiltered list.
@@ -48,6 +48,6 @@ Issue #353. An open page shows a comment, reply or resolve written elsewhere (an
 ## Left as is
 
 - An error message shown on a bubble is cleared by the person's own next successful action, not by an update from elsewhere. An update cannot wipe an error the person has not acted on.
-- Each event costs one `api/doc` fetch per open page, whole payload included, bounded to one in flight plus one queued.
+- Each event costs one refresh pass per open page, bounded to one in flight plus one follow-up: events that arrive during a pass schedule a single follow-up pass, however many there are. A pass is one `api/doc` request, whole payload included, plus one per kept carried comment's round, each with its own 10 second limit.
 - A state change from elsewhere replaces a head whose own request is still out, so the button can be pressed again. A resolve that is pressed is toggled by the server each time.
 - A bubble's button is re-enabled when its request is over, since the head is not replaced when the answer shows the state it already had.
