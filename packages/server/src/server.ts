@@ -416,7 +416,8 @@ export function openDocument(file: string, opts: DocumentOptions, currentSecret:
     opts.onWrite?.();
     if (current) comments = next;
     notify({ type: 'comments' });
-    // Just answer. The author's own screen updates locally.
+    // The author's screen takes its own comment from this answer. The event is for the
+    // other screens, and for the author's one to catch up with what was written meanwhile.
     return c.json({ comment, comments, carried: carriedOver(file) });
   });
 

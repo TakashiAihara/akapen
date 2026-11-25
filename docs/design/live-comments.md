@@ -7,7 +7,7 @@ Issue #353. An open page shows a comment, reply or resolve written elsewhere (an
 - The stream gets a third event, `{ "type": "comments" }`, sent after every successful write of the comment store: a new comment, a reply, a resolve.
 - It is a notification only, like `changed` and `round`. It carries no comment.
 - On receiving it the page fetches `api/doc?round=<round on screen>` and takes only the comments (and, where shown, the carried ones) from the answer. Never the document, never the round it was built against.
-- The rail is updated in place, by comment id. A bubble that did not change is not touched. A changed one has its head and replies replaced (its text stays, since nothing edits a comment's text), and its reply form is never removed, re-created or moved. A new one is inserted at its line-order position; existing ones are never moved.
+- The rail is updated in place, by comment id. A bubble that did not change is not touched. A changed one has its replies replaced, and its head only when the resolved state changed (its text stays, since nothing edits a comment's text), and its reply form is never removed, re-created or moved. A new one is inserted at its line-order position; existing ones are never moved.
 - After a reconnect the page asks again once the path is confirmed, since events were dropped while it was away.
 
 ## What each screen state takes from the answer
@@ -21,7 +21,10 @@ Issue #353. An open page shows a comment, reply or resolve written elsewhere (an
 - One refresh is in flight at a time. A write that lands meanwhile only makes the page ask once more when the one in flight has answered, so answers cannot arrive out of order. A request is given up after 10 seconds so one that never answers cannot stop every later refresh.
 - An answer that arrives after the screen moved to another round is dropped.
 - A failed refresh says nothing. The next event or reconnect recovers.
-- The answer to the person's own comment, reply or resolve is applied at once, and the page then asks again. That answer was computed before anything written after it, and it can arrive after an update that already showed something newer.
+- The answer to the person's own comment, reply or resolve updates only that comment, and the page then asks again. The rest of the answer was computed before anything written after it, and replacing the rail with it would rebuild a bubble that write created, with anything typed in its reply box.
+- A refresh follows every screen install (boot, opening a round, the next-round click), since an event that arrived while the payload was in flight was spent on the old screen and the payload may predate the write.
+- In history the answer's carried list is taken as it is, since the count shown there is taken from the unfiltered list.
+- A carried comment resolved elsewhere stays, marked resolved, while its reply box holds text, and goes once the text is sent or cleared. Only unresolved entries are counted.
 
 ## Why an update must not rebuild the rail
 

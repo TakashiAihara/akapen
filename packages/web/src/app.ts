@@ -233,34 +233,23 @@ function renderMoved() {
   movedBarEl.hidden = false;
 }
 
-/** True when another screen cut a round past the one this screen still shows. */
-function isBehind(): boolean {
-  return !state.history && serverRound !== null && state.round != null && serverRound !== state.round.n;
-}
-
 /**
  * Take the answer to a resolve or a reply.
  *
- * The answer always carries the current round's comments. On a screen that is on the
- * current round they replace the rail. On a screen another one moved past, they are not
- * this screen's comments, and applying them put the newer round's rail beside the older
- * document (#175). There only the one comment that changed is taken over, from the
- * answer's `comment`, which is that comment as it now is. A carried one that is now
- * resolved leaves the carried rail, as it does on a screen that is current.
+ * Only the one comment that changed is taken over, from the answer's `comment`, which is
+ * that comment as it now is. The rest of the answer was computed before anything written
+ * since and, on a screen another one moved past, is not this screen's comments at all
+ * (#175).
+ *
+ * The page then asks again, so what was written meanwhile shows without the rail having
+ * been replaced under a reply box. That is also what takes a carried comment that is now
+ * resolved off the carried rail, by the same rule as one resolved elsewhere.
  */
 function takeAnswer(answer: CommentsPayload) {
-  if (!isBehind()) {
-    applyComments(answer);
-  } else {
-    const fresh = answer.comment;
-    const comments = state.comments.map((x) => (x.id === fresh.id ? { ...x, ...fresh } : x));
-    const carried = state.carried.flatMap((x) =>
-      x.id !== fresh.id ? [x] : fresh.resolved ? [] : [{ ...x, ...fresh }],
-    );
-    applyComments({ ...answer, comments, carried });
-  }
-  // The answer was computed before anything written since, and may arrive after an update
-  // that already showed it, which it would roll back until the next event.
+  const { id, resolved, replies } = answer.comment;
+  const comments = state.comments.map((x) => (x.id === id ? { ...x, resolved, replies } : x));
+  const carried = state.carried.map((x) => (x.id === id ? { ...x, resolved, replies } : x));
+  applyComments({ comments, carried });
   void refreshComments();
 }
 
@@ -377,7 +366,7 @@ function escapeHtml(s: string): string {
 
 // Logging a failure to the console only makes it look, to the person who clicked, like nothing happened
 function fail(box: HTMLElement, message: string) {
-  box.querySelector('.bubble-error')?.remove();
+  box.querySelector(':scope > .bubble-error')?.remove();
   box.append(el('div', 'bubble-error', escapeHtml(message)));
   layoutRail();
 }
@@ -549,7 +538,7 @@ function markCommentedRows() {
 
 function updateCount() {
   const open = state.comments.filter((c) => !c.resolved).length;
-  const carried = state.carried.length;
+  const carried = state.carried.filter((c) => !c.resolved).length;
   countEl.textContent = `${open} open / ${state.comments.length}${carried ? ` (+ ${carried} earlier)` : ''}`;
 }
 
@@ -819,15 +808,12 @@ function draftBubble(): HTMLElement {
     // Collapse the selection but keep the line focus: jumping around ruins writing several in a row
     sel = null;
     paintSelection();
-    // The answer carries the current round's comments. They are this screen's only when the
-    // comment landed there; a screen on an earlier round keeps its own and adds this one.
+    // Only this comment is taken from the answer, which was computed before anything written
+    // since and may be another round's list. A refresh may have shown it already, so it
+    // replaces its own entry instead of joining it.
     const id = posted.comment.id;
-    if (posted.comments.some((c) => c.id === id)) applyComments(posted);
-    else {
-      // A refresh may have shown it already, so it replaces its own entry instead of joining it.
-      const comments = [...state.comments.filter((c) => c.id !== id), posted.comment];
-      applyComments({ ...posted, comments, carried: state.carried });
-    }
+    const comments = [...state.comments.filter((c) => c.id !== id), posted.comment];
+    applyComments({ comments, carried: state.carried });
     void refreshComments();
   };
   cancel.addEventListener('click', close);
@@ -919,15 +905,18 @@ function reconcileBubbles<T extends Comment | RoundComment>(
 }
 
 /**
- * Take a freshly built bubble's head and replies, keeping the old reply form. The body
- * stays: nothing edits a comment's text.
+ * Take a freshly built bubble's replies, and its head when the state changed, keeping the
+ * old reply form. The body stays: nothing edits a comment's text.
  */
 function patchBubble(box: HTMLElement, fresh: HTMLElement): void {
+  const resolvedChanged = box.classList.contains('resolved') !== fresh.classList.contains('resolved');
   box.classList.toggle('resolved', fresh.classList.contains('resolved'));
   const [head, , replies] = [...box.children];
   const [freshHead, , freshReplies] = [...fresh.children];
   if (!head || !replies || !freshHead || !freshReplies) return;
-  head.replaceWith(freshHead);
+  // Only the resolve button depends on the state; replacing it on every reply would take
+  // the focus off it, and put an enabled button where one with a request out stood.
+  if (resolvedChanged) head.replaceWith(freshHead);
   for (const r of replies.querySelectorAll(':scope > .reply')) r.remove();
   const form = replies.querySelector(':scope > .reply-form');
   for (const r of freshReplies.querySelectorAll(':scope > .reply')) replies.insertBefore(r, form);
@@ -946,7 +935,7 @@ function renderCarried() {
     return;
   }
   carriedEl.hidden = false;
-  const text = `${carried.length} unresolved from earlier rounds`;
+  const text = `${carried.filter((c) => !c.resolved).length} unresolved from earlier rounds`;
   const heading = carriedEl.querySelector(':scope > h2');
   if (heading) heading.textContent = text;
   else carriedEl.prepend(el('h2', null, text));
@@ -1600,6 +1589,9 @@ function applyPayload(payload: DocPayload) {
   renderMoved();
   noteStaleDraft();
   window.scrollTo(0, y);
+  // An event that came while this payload was in flight was spent on the old screen, and
+  // the payload may predate the write it told of.
+  void refreshComments();
 }
 
 // The first render fetches the document once, here. After that the document DOM is
@@ -1642,6 +1634,12 @@ async function refreshComments(): Promise<void> {
   }
 }
 
+/** True while something is typed and unsent in the reply box under a carried comment. */
+function hasTypedReply(id: string): boolean {
+  const box = carriedEl.querySelector<HTMLTextAreaElement>(`:scope > .bubble[data-id="${id}"] .reply-input`);
+  return !!box?.value.trim();
+}
+
 /**
  * Only comments and carried are read from the answer. The document stays: it is rebuilt
  * when the person asks, and `state.round` with it. A failure is silent, since the next
@@ -1655,9 +1653,19 @@ async function refreshOnce(): Promise<void> {
     const res = await fetch(`api/doc?round=${round}`, { signal: AbortSignal.timeout(10_000) });
     const payload = await decode(res, DocPayloadSchema);
     if (screenRound() !== round) return;
+    const answered = payload.carried ?? [];
+    if (state.history) {
+      // Shown only as a count, and the count was taken from the unfiltered list.
+      applyComments({ comments: payload.comments, carried: answered });
+      return;
+    }
     // Carried is what an earlier round left open, whichever round this screen is on.
-    const carried = (payload.carried ?? []).filter((y) => y.round < round);
-    applyComments({ comments: payload.comments, carried });
+    const carried = answered.filter((y) => y.round < round);
+    // One resolved elsewhere stays while a reply is being typed under it, so the text is not lost with it.
+    const kept = state.carried.flatMap((x) =>
+      !carried.some((y) => y.id === x.id) && hasTypedReply(x.id) ? [{ ...x, resolved: true }] : [],
+    );
+    applyComments({ comments: payload.comments, carried: [...carried, ...kept] });
   } catch {
     return;
   }

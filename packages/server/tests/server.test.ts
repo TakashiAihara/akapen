@@ -297,7 +297,8 @@ describe('telling the open screens about a written comment', () => {
       const written = await post('/api/comments', { startLine: 5, endLine: 5, body: 'first' });
       const { comment } = v.parse(CommentsPayloadSchema, await written.json());
       await until(() => comments(other.seen) === 1);
-      expect(v.parse(ServerEventSchema, other.seen.at(-1))).toEqual({ type: 'comments' });
+      // The frame as it arrived, not as the schema reads it: a schema drops keys it does not know.
+      expect(other.seen.at(-1)).toEqual({ type: 'comments' });
 
       expect((await post(`/api/comments/${comment.id}/replies`, { body: 'answer' })).ok).toBe(true);
       await until(() => comments(other.seen) === 2);
